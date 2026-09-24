@@ -56,4 +56,4 @@ Built on [pi](https://github.com/earendil-works/pi) by Earendil Works. Performan
 
 ## License
 
-Not chosen yet.
+[MIT](LICENSE)
