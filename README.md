@@ -42,9 +42,10 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 
 ## Open questions
 
-- Desktop shell: Electron or Tauri.
-- UI framework.
-- Whether to embed pi's SDK instead of running one process per thread, if memory becomes the bottleneck.
+[docs/stack.md](docs/stack.md) picks the stack and shows the evidence. It uses Electron and React with React Compiler, and runs one `pi --mode rpc` process per thread from an Electron utility process. Still open:
+
+- Can React keep streaming markdown smooth? Framework benchmarks favor Solid, but nothing has measured a long reply streaming through the markdown renderer inside Electron. If React falls short, Solid is the fallback.
+- How much memory do real pi setups use? The numbers so far are for bare pi with extensions, skills and context files turned off. The answer decides how many idle pi processes Tondo keeps alive.
 
 ## The name
 
