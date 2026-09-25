@@ -42,6 +42,22 @@ export async function launchTondo(): Promise<Tondo> {
 }
 
 /**
+ * Keeps the window on top and focused. Electron throttles timers and
+ * animation frames in windows you can't see, so any test that counts on
+ * frames needs this.
+ */
+export async function bringToFront({ app, page }: Tondo): Promise<void> {
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) throw new Error("Tondo has no window to bring to the front");
+    window.setAlwaysOnTop(true);
+    electronApp.focus({ steal: true });
+    window.focus();
+  });
+  await page.waitForFunction(() => document.visibilityState === "visible" && document.hasFocus());
+}
+
+/**
  * Replaces `shell.openExternal` in the main process so a test can see which
  * URL the app tried to open, without opening a browser. The returned function
  * resolves with the first URL passed to it.
