@@ -4,7 +4,7 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** just started. There is no code to run yet.
+**Status:** early. The app opens an empty window, and [docs/plan.md](docs/plan.md) lays out the rest of the build. [AGENTS.md](AGENTS.md) lists the commands.
 
 ## Goals
 
@@ -54,6 +54,8 @@ A tondo is a circular painting or relief, a form that became popular in 15th-cen
 ## Credits
 
 Built on [pi](https://github.com/earendil-works/pi) by Earendil Works. Performance ideas borrowed from [T3 Code](https://github.com/pingdotgg/t3code). Tondo is not affiliated with either project.
+
+Some of Tondo's code is adapted from T3 Code, which is MIT licensed, Copyright (c) 2026 T3 Tools Inc. Each adapted file says which T3 file it came from in its header comment.
 
 ## License
 
