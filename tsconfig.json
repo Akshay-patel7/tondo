@@ -1,7 +1,9 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // Node runs the scripts as they are, so their imports name .ts and .mts files.
+    "allowImportingTsExtensions": true
   },
-  "include": ["*.ts", "scripts/**/*.mts"]
+  "include": ["*.ts", "scripts/**/*.ts", "scripts/**/*.mts"]
 }

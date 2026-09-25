@@ -14,7 +14,8 @@
     "format:check": "oxfmt --check",
     "test": "vitest run",
     "e2e": "electron-vite build && playwright test",
-    "smoke": "electron-vite build && node scripts/smoke.mts"
+    "smoke": "electron-vite build && node scripts/smoke.mts",
+    "fixtures": "node scripts/record-fixtures.mts"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.87.1",
