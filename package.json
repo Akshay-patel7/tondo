@@ -13,6 +13,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
+    "bench": "vitest bench --run --reporter=verbose",
     "e2e": "electron-vite build && playwright test",
     "smoke": "electron-vite build && node scripts/smoke.mts",
     "fixtures": "node scripts/record-fixtures.mts"

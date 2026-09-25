@@ -1,4 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  // The root tsconfig checks these, with Node types.
+  "exclude": ["**/*.test.ts", "**/*.bench.ts"]
 }
