@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* The title bar is hidden, so the header is where the window gets dragged. */
+@utility app-drag {
+  -webkit-app-region: drag;
+}
