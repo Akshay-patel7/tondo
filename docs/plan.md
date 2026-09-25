@@ -10,7 +10,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 
 | Stage | Delivers | Size | Status |
 |---|---|---|---|
-| 0 | Foundation: toolchain, secure window, test layers, CI | M | In review |
+| 0 | Foundation: toolchain, secure window, test layers, CI | M | Done |
 | 1 | Streaming spike that settles React vs Solid | L | Not started |
 | 2 | Host process and MessagePort transport | S | Not started |
 | 3 | pi supervisor | M | Not started |
