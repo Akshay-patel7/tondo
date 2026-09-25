@@ -12,15 +12,19 @@ pnpm 12.6.0 comes from `packageManager` in package.json, and Node 24.15.0 from `
 |---|---|
 | `pnpm install` | Installs dependencies. Electron downloads its binary the first time it runs, or when you run `pnpm exec install-electron`. |
 | `pnpm dev` | Runs the app with hot reload. |
+| `pnpm dev:web` | Serves only the renderer with Vite, on port 5173 by default, so you can check it in Chrome. The fixture player stands in for pi. |
 | `pnpm build` | Builds main, preload, host and renderer into `out/`. |
 | `pnpm typecheck` | Runs tsc on the root config and on each layer's config. |
 | `pnpm lint` | Runs oxlint. Warnings fail. |
 | `pnpm format` | Formats with oxfmt. `pnpm format:check` only checks. |
 | `pnpm test` | Runs the Vitest unit tests, `src/**/*.test.ts`. |
+| `pnpm bench` | Runs the Vitest benchmarks, `src/**/*.bench.ts`. |
 | `pnpm smoke` | Builds, launches the app, and fails on startup errors in Electron's log. |
 | `pnpm e2e` | Builds, then drives the app with Playwright. Screenshots go to `test-results/`. |
+| `pnpm perf` | Builds, then measures streaming against the performance budgets in docs/plan.md. It takes about 10 minutes and keeps the window on top, so ask before running it. Results go to `.dev/perf/<time>/`. |
+| `pnpm fixtures` | Re-records `fixtures/` by running the pinned pi offline with the faux provider. |
 
-CI runs everything except `dev` and `format` on macOS and Ubuntu (.github/workflows/ci.yml). On Linux, smoke and e2e need a display, so CI wraps them in `xvfb-run`.
+CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` on macOS and Ubuntu (.github/workflows/ci.yml). `perf` stays local because its numbers depend on the machine. On Linux, smoke and e2e need a display, so CI wraps them in `xvfb-run`.
 
 ## Layers
 

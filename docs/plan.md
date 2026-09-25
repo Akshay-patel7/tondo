@@ -11,7 +11,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | Stage | Delivers | Size | Status |
 |---|---|---|---|
 | 0 | Foundation: toolchain, secure window, test layers, CI | M | Done |
-| 1 | Streaming spike that settles React vs Solid | L | Not started |
+| 1 | Streaming spike that settles React vs Solid | L | In review |
 | 2 | Host process and MessagePort transport | S | Not started |
 | 3 | pi supervisor | M | Not started |
 | 4 | First usable thread | M | Not started |
@@ -137,7 +137,7 @@ These are fixed now, before Stage 1 measures anything. They're measured on this 
 | Input to paint while streaming, p95 | 32 ms or less |
 | Switch to a thread whose pi is running | Transcript painted at the bottom within 100 ms |
 | Cold start | Window interactive within 1 s |
-| Memory | Measured with macOS `footprint`, not RSS. Stage 1 sets the baseline, and a regression over 10% fails. |
+| Memory | Measured with macOS `footprint`, not RSS, right after collecting garbage in every JavaScript heap. Stage 1 sets the baseline (recorded in docs/stack.md), and a regression over 10% fails. |
 
 Each scenario runs three times and the median counts. I also report a run at 4x CPU slowdown as a stand-in for slower machines. It informs; it doesn't gate.
 
@@ -209,12 +209,12 @@ Verify first:
 Build:
 - A fixture recorder: a script that runs real pi with the faux provider and saves its stdout. Fixtures: a 20,000-token reply with code blocks, tables and lists at 200 and 1,000 tokens per second, tool calls, thinking, an error and an abort. Plus a 1,000-message transcript in `get_messages` form.
 - Thread reducer v0 in `src/shared`: pi events in, thread state out. Text built from deltas gets replaced by the `*_end` content and by `message_end.message`, which are authoritative. Unit tests run on the fixtures, and a bench measures throughput.
-- A fixture player in a Web Worker, standing in for the host. It replays at recorded timing and posts one batch per frame. It also lets the renderer run in plain Chrome, which is how I QA it with the chrome_* tools.
-- The timeline on Legend List 3.4, set up like T3's: `estimatedItemSize`, `initialScrollAtEnd`, `maintainScrollAtEnd` (off while you read history) and `maintainVisibleContentPosition`. Only the streaming row re-renders.
+- A fixture player in a Web Worker, standing in for the host. It replays at recorded timing and posts one batch every 1/60 s, the timer the host will use, and the renderer commits at most one state change per animation frame. It also lets the renderer run in plain Chrome, which is how I QA it with the chrome_* tools.
+- The timeline on Legend List 3.4, set up like T3's: `estimatedItemSize`, `initialScrollAtEnd`, `maintainScrollAtEnd` (off while you read history) and `maintainVisibleContentPosition`. Only the streaming row re-renders. It ends Legend List's opening scroll as soon as the list is ready (see Gotchas).
 - Markdown through streamdown, and code through @streamdown/code (Shiki).
-- A perf harness and its `pnpm perf` script. Playwright `_electron` drives the scenario in a visible window, the page records frame deltas, long tasks and event timing, and the results go to JSON and to a table in the report.
+- A perf harness and its `pnpm perf` script. Playwright `_electron` drives the scenario in a visible window, the page records frame deltas, long tasks and event timing, and the results go to JSON and to a table in the report. It also times cold start and a thread switch, with a Reopen button standing in for the switch until Stage 5, and reads memory with `footprint` after collecting garbage.
 - Mitigations, re-measured after each one, stopping as soon as the budgets pass:
-  1. Per-frame batching, the baseline.
+  1. Per-frame batching, the baseline. It met every budget, so 2 to 5 weren't built.
   2. T3's paragraph pacing: deliver finished paragraphs and closed code blocks, at most one delivery every 400 ms, and flush at 24,000 buffered characters. These are T3's constants.
   3. Incremental markdown: cache the parsed prefix at each closed top-level code fence followed by a blank line, as T3's `markdown-incremental.ts` does.
   4. Highlight a code block only once it closes.
@@ -222,6 +222,8 @@ Build:
 
 Gotchas:
 - Legend List's web issues: [#468](https://github.com/LegendApp/legend-list/issues/468) (content position isn't held when a header changes height in Chrome), [#463](https://github.com/LegendApp/legend-list/issues/463) (position isn't held when prepending near the bottom) and [#337](https://github.com/LegendApp/legend-list/issues/337) (scroll-at-end animation options). Loading the whole transcript at once, with no prepend paging, sidesteps #463.
+- Legend List keeps its `initialScrollAtEnd` scroll alive for 2 s after the list is ready. A row added in that window restarts it with position upkeep off, so about 1,000 unmeasured rows are re-estimated at once and the view jumps about 325,000 px up the transcript for one frame. Any imperative scroll ends it, so the timeline calls `scrollToEnd` in `onReady`.
+- `maintainScrollAtEnd` scrolls in the animation frame after the content grows, so the newest line can sit partly hidden for a frame or two. In two runs of the scroll test at 1,000 tokens per second, about 6% of frames ended more than 40 px short of the end, by at most 228 px, and the list caught up within 17 ms each time.
 - zustand 5: a selector that returns a new object on every render loops until React throws "Maximum update depth exceeded". Use atomic selectors or `useShallow`.
 - streamdown on Tailwind 4 needs `@source` lines for the streamdown and @streamdown/code dist files, relative to the CSS file. Without them its styles silently disappear.
 - Usage numbers are cumulative and can stay at 0 until the message ends.
@@ -229,7 +231,7 @@ Gotchas:
 
 Done when:
 - The perf report meets every budget at both rates (three runs, medians), plus the 4x slowdown numbers for information.
-- Reducer tests and the bench pass. Scroll behavior has tests: it opens at the bottom, stays at the bottom while streaming, and holds position while you read history.
+- Reducer tests and the bench pass. Scroll behavior has tests: it opens at the bottom, stays at the bottom while streaming (never more than 40 px short of the end for over 100 ms, the thread-switch budget), and holds position while you read history.
 - The report includes screenshots taken mid-stream.
 - docs/stack.md records the outcome: React confirmed, or Solid chosen by you.
 

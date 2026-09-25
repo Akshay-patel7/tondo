@@ -11,7 +11,7 @@ The frameworks and libraries Tondo is built on, and the evidence behind each cho
 | UI framework | React with React Compiler | react 19.3.0, babel-plugin-react-compiler 1.0.0 |
 | Transcript list | @legendapp/list, with @tanstack/react-virtual as the fallback | 3.4.0, 3.14.13 |
 | Markdown | streamdown with @streamdown/code | 2.6.0, 1.1.1 |
-| Code highlighting | Shiki | 4.4.3 |
+| Code highlighting | Shiki 3, through @streamdown/code | 4.4.3 (Tondo runs 3.23.0, see [Libraries](#libraries)) |
 | Diffs | @pierre/diffs with its worker pool | 1.4.3 |
 | Composer | A textarea first, then TipTap once the composer needs @file and /command chips | @tiptap/react 3.31.3 |
 | Components and styling | Base UI, shadcn and Tailwind CSS | @base-ui/react 1.8.0, shadcn 4.21.0, tailwindcss 4.3.3 |
@@ -93,13 +93,13 @@ On the same time scale, Vue Vapor 3.6 beta scored 1.12, Vue 3.5 scored 1.31, Pre
 React is still the pick, because the gaps that matter most don't show up in Tondo's busiest code:
 
 - A virtualized transcript keeps a few dozen messages mounted, so the 10,000-row and row-swap cases where React loses most never happen.
-- Streaming changes one message at a time. With deltas committed once per animation frame, markdown parsing should take most of each frame, and that costs the same in any framework. This is an expectation, not a measurement (see [Open questions](#open-questions)).
+- Streaming changes one message at a time. With deltas committed once per animation frame, markdown parsing should take most of each frame, and that costs the same in any framework. The Stage 1 spike in docs/plan.md measured the whole case, and React stayed within every budget (see [Measurements](#measurements)).
 - The framework's memory difference is a few MB. One pi process is 80 MB or more.
 - T3 Code, the performance bar for Tondo, runs React 19.2 with React Compiler 1.0 (from `apps/web/package.json` at commit e67abcf7).
 
 The libraries favor React, and they cover the hardest parts of the app. streamdown (4.4 million downloads a week), Legend List, Base UI and shadcn are React-only, and TipTap ships React and Vue bindings. Solid's closest markdown options are solid-markdown (14.7k downloads a week) and solid-streamdown (87 a week). Its main component library, Kobalte, is at 0.13, and Solid itself is partway to 2.0 (2.0.0-rc.9 is out). OpenCode's UI is Solid, which shows Solid works for an agent app, but more of it would have to be built by hand.
 
-Solid is the fallback if React can't keep streaming smooth. It would cut framework time by about 30% and framework memory in half. The price is a hand-built markdown renderer and components.
+Solid was the fallback if React couldn't keep streaming smooth. It would cut framework time by about 30% and framework memory in half, at the price of a hand-built markdown renderer and components. React met every budget with per-frame batching alone, so React is confirmed and there is no Solid build.
 
 The others:
 
@@ -109,9 +109,9 @@ The others:
 
 ## Libraries
 
-- **@legendapp/list 3.4** for the transcript. T3 Code uses it, and it has props for chat (`maintainScrollAtEnd`, `maintainVisibleContentPosition`, `alignItemsAtEnd`, `onStartReached`; see the [chat example](https://legendapp.com/open-source/list/v3/react/examples/chat/)). Web support arrived in 3.0 (the changelog says "Feat: Web support", entry point `@legendapp/list/react`), but its README still describes it as React Native only. That mismatch is why @tanstack/react-virtual stays as the fallback. It has a [chat guide](https://tanstack.com/virtual/latest/docs/chat) that covers keeping the view anchored to the end.
-- **streamdown 2.6** for markdown. It replaces react-markdown, which T3 Code uses, and is built for streaming. It splits text into blocks and [memoizes](https://streamdown.ai/docs/memoization) each one, so only the growing block re-renders. It also completes unterminated syntax while text is still arriving. Code highlighting comes from the separate @streamdown/code package.
-- **Shiki 4.4** for code. @pierre/diffs is built on it, so code blocks and diffs highlight the same way. It ships a JavaScript regex engine as well as the default Oniguruma WebAssembly engine.
+- **@legendapp/list 3.4** for the transcript. T3 Code uses it, and it has props for chat (`maintainScrollAtEnd`, `maintainVisibleContentPosition`, `alignItemsAtEnd`, `onStartReached`; see the [chat example](https://legendapp.com/open-source/list/v3/react/examples/chat/)). Web support arrived in 3.0 (the changelog says "Feat: Web support", entry point `@legendapp/list/react`), but its README still describes it as React Native only. That mismatch is why @tanstack/react-virtual stays as the fallback. It has a [chat guide](https://tanstack.com/virtual/latest/docs/chat) that covers keeping the view anchored to the end. T3 Code patches three web problems in Legend List 3.3.5 (end spacing when the tail size is unknown, row reordering and scroll-adjust padding). 3.4.0 fixes all three, so Tondo uses it unpatched.
+- **streamdown 2.6** for markdown. It replaces react-markdown, which T3 Code uses, and is built for streaming. It splits text into blocks and [memoizes](https://streamdown.ai/docs/memoization) each one, so only the growing block re-renders. It also completes unterminated syntax while text is still arriving. Code highlighting comes from the separate @streamdown/code package. Model output is untrusted, and streamdown 2.6.0 sanitizes it with rehype-sanitize and GitHub's schema. That drops `script`, `style` and `iframe` elements, `on*` attributes, and `javascript:` and `data:` URLs. Links open only after a confirmation dialog, which is on by default. Tondo's CSP (`img-src 'self'`) blocks remote images.
+- **Shiki 3.23** for code, because @streamdown/code 1.1.1 depends on `shiki ^3.19.0`. Shiki 4.4.3 is the latest. @pierre/diffs is built on Shiki too and accepts 3 or 4 (`^3.0.0 || ^4.0.0` in 1.4.3 and 1.5.1), so code blocks and diffs can share one copy and highlight the same way. Shiki ships a JavaScript regex engine as well as the default Oniguruma WebAssembly engine. @streamdown/code uses the JavaScript one, so Tondo's CSP needs no `'wasm-unsafe-eval'`. In the built app, code highlighted with no WebAssembly requests and no CSP errors (checked 2026-09-25).
 - **@pierre/diffs 1.4** for diffs. T3 Code uses it. Its worker pool (`@pierre/diffs/worker`) runs syntax highlighting for diffs and files in web workers, off the UI thread.
 - **TipTap 3** for the composer, once it needs @file and /command chips. T3 Code uses it. A textarea is enough before then.
 - **Base UI 1.8, shadcn 4.21 and Tailwind CSS 4.3** for components and styling. T3 Code uses Base UI and Tailwind, and shadcn can generate its components on Base UI. Install `@base-ui/react`. `@base-ui-components/react` is the deprecated old name.
@@ -172,10 +172,27 @@ The RSS sum explains the popular charts. [Elanis' comparison](https://github.com
 
 **Bare pi.** Command: `pi --mode rpc --no-extensions --no-skills --no-context-files --no-session --offline` with a fresh `PI_CODING_AGENT_DIR`. The first `get_state` reply came in 120 to 149 ms. Footprint was 80 to 86 MB and RSS 125 to 131 MB.
 
+**Streaming a long reply.** The Stage 1 spike measured this with `pnpm perf` on 2026-09-25. It plays a recorded pi run into the built app. The reply is 20,000 tokens, 80,483 characters of markdown with code blocks, tables and lists, and it streams into a 1,000-message transcript while the harness types into the composer at about 10 keys a second. The window stays visible and in front. The display runs at 120 Hz, so a frame is 8.3 ms. Medians of 3 runs:
+
+| | 1,000 tokens/s | 200 tokens/s | Budget |
+|---|---|---|---|
+| Frame time, p95 | 10.0 ms | 10.0 ms | 16.7 ms |
+| Frame time, p99 | 10.3 ms | 10.3 ms | 33 ms |
+| Longest frame | 10.4 ms | 10.7 ms | |
+| Tasks over 50 ms | None | None | None of 100 ms or more |
+| Input to paint, p95 | 32 ms | 32 ms | 32 ms |
+
+No frame in any run took longer than 10.8 ms, so none missed a refresh. Input to paint landed exactly on the budget. Chromium reports Event Timing durations in 8 ms steps, so the next step up, 40 ms, would fail. An earlier run of the same build measured 24 ms, with frame time p95 of 9.2 ms. A/B runs showed that the harness changes made since then don't move either number, so the difference comes from the machine's state, not from Tondo.
+
+A Reopen button stands in for switching threads until Stage 5. Reopening mid-stream painted the transcript at the bottom in 65 ms (budget 100 ms). Cold start, from launch to an interactive window, took 239 ms (budget 1 s).
+
+At 4x CPU slowdown, which informs but doesn't gate, one run at each rate gave frame time p95 of 27 and 25 ms, p99 of 35 and 33 ms, longest frames of 60 and 52 ms, and input to paint p95 of 48 and 40 ms. No task took 100 ms or more (the longest took 53 ms), and the switch took 312 ms.
+
+Memory sets the baseline for later stages. Before each reading the harness collects garbage in every JavaScript heap: the main process, the page and the player's worker. It's the collection DevTools' "Collect garbage" runs. Summed over Tondo's processes, footprint was 254 MiB with the transcript open. After the reply it was 464 MiB at 1,000 tokens/s and 475 MiB at 200 tokens/s, and the renderer alone grew from about 65 MiB to 143 and 161 MiB. No reading varied by more than 5% across its three runs, half the 10% regression the budget allows. Without the collection, the renderer's reading at 200 tokens/s varied by 19%. The GPU process gives back about 160 MiB in the 9 seconds after a stream ends, so the after numbers show memory as a stream ends, not at rest.
+
 **Utility process layout.** See [Where pi runs](#where-pi-runs).
 
 ## Open questions
 
-- **Can React keep streaming markdown smooth?** The benchmarks above favor Solid, but nothing has measured the case that matters here: a long reply streaming through streamdown inside Electron. A one-day test would settle it. Stream a 20,000-token reply through a React version and a Solid version and record frame times.
 - **How much memory do real pi setups use?** All the pi numbers here have extensions, skills and context files turned off. The answer decides how many idle pi processes Tondo keeps alive.
 - **How do real screens compare?** The empty-window numbers come from a trivial hidden page, not a real app.
