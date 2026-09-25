@@ -4,3 +4,7 @@
 # `require("electron")` runs, or when `pnpm exec install-electron` runs.
 allowBuilds:
   esbuild: true
+  # pi (a devDependency for its RPC types and the fixture recorder) pulls these
+  # in. Neither build script is needed.
+  "@google/genai": false
+  protobufjs: false
