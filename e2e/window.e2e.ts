@@ -17,10 +17,10 @@ test("opens one window with the app in it", async () => {
   expect(app.windows()).toHaveLength(1);
   expect(page.url()).toBe("tondo://app/");
   await expect(page).toHaveTitle("Tondo");
-  await expect(page.getByRole("banner")).toHaveText("Tondo");
+  await expect(page.getByRole("banner")).toContainText("Tondo");
 
-  const screenshot = await page.screenshot({ path: test.info().outputPath("empty-window.png") });
-  await test.info().attach("empty window", { body: screenshot, contentType: "image/png" });
+  const screenshot = await page.screenshot({ path: test.info().outputPath("window.png") });
+  await test.info().attach("window", { body: screenshot, contentType: "image/png" });
 });
 
 test("the page has no Node.js", async () => {

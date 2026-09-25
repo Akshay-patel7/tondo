@@ -7,6 +7,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:web": "vite --config vite.renderer.config.ts",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json && tsc -p src/shared && tsc -p src/main && tsc -p src/preload && tsc -p src/host && tsc -p src/renderer && tsc -p e2e",
     "lint": "oxlint --deny-warnings",
