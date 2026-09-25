@@ -10,7 +10,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 
 | Stage | Delivers | Size | Status |
 |---|---|---|---|
-| 0 | Foundation: toolchain, secure window, test layers, CI | M | Not started |
+| 0 | Foundation: toolchain, secure window, test layers, CI | M | In review |
 | 1 | Streaming spike that settles React vs Solid | L | Not started |
 | 2 | Host process and MessagePort transport | S | Not started |
 | 3 | pi supervisor | M | Not started |
@@ -24,8 +24,6 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 11 | Git actions: branches, worktrees, pull requests | L | Not started |
 | 12 | Visual design, onboarding, polish | L | Not started |
 | 13 | Packaging, signing, updates | M | Not started |
-
-Stage 0 starts when you say go.
 
 S is one working session, M is two to four, L is five or more. These are guesses until Stages 0 and 1 calibrate them. Each stage also notes how much code T3 has for the same area, counted as non-test TypeScript lines at the pinned commit. T3 supports more agents and features than Tondo v1 needs, so those numbers are ceilings, not targets.
 
@@ -158,21 +156,22 @@ Verify first:
 
 Build:
 - `package.json` with `"packageManager": "pnpm@12.6.0"` and the exact versions from docs/stack.md, rechecked with `npm view` that day. @pierre/diffs has already moved from 1.4.3 to 1.5.0. No `"type": "module"`.
-- `pnpm-workspace.yaml` with `allowBuilds` set to true for electron and esbuild, and false for anything else that asks. node-pty joins in Stage 10. pnpm's defaults stay: strict build review and a one-day minimum release age.
+- `pnpm-workspace.yaml` with `allowBuilds` set to true for esbuild, and false for anything else that asks. Electron 44 has no install script, so it needs no entry. node-pty joins in Stage 10. pnpm's defaults stay: strict build review and a one-day minimum release age.
 - electron-vite 5 on Vite 7, @vitejs/plugin-react 5.2 running babel-plugin-react-compiler 1.0 through its `babel` option, and Tailwind 4 through @tailwindcss/vite.
 - Main, preload and host bundle as CommonJS, and the renderer as ESM. The preload bundles all its dependencies.
 - One tsconfig per layer, each listing its `types` explicitly.
 - oxlint with per-layer import restrictions. typescript-eslint is out, since TS 7 has no compiler API until 7.1.
 - A secure window: `contextIsolation` and `sandbox` on, `nodeIntegration` off. The app loads from `tondo://` through `protocol.handle` with a strict CSP. Navigation, `window.open` and permission requests are denied, and http and https links open in the default browser. Every IPC handler checks its sender. macOS gets `hiddenInset` with traffic lights. Linux gets `hidden` with `titleBarOverlay`, since the window controls overlay works on Linux ([electron#41769](https://github.com/electron/electron/pull/41769)).
 - A dev profile: `pnpm dev` keeps app data in `.dev/userData`, with a single-instance lock per profile.
-- Scripts: `dev`, `build`, `typecheck`, `lint`, `test`, `e2e`, `smoke`, `perf`.
+- Scripts: `dev`, `build`, `typecheck`, `lint`, `format`, `test`, `e2e`, `smoke`. `perf` comes with Stage 1's harness, because a perf script with no scenarios can only fail.
 - A smoke test modeled on T3's. It launches the built app with `ELECTRON_ENABLE_LOGGING=1`, waits for a ready line the renderer prints after first paint, and fails on "Cannot find module", "MODULE_NOT_FOUND", "Refused to execute", "Uncaught Error", "Uncaught TypeError" or "Uncaught ReferenceError". Its deadline only bounds failure.
 - A Playwright `_electron` e2e skeleton that saves screenshots to `test-results/`.
 - GitHub Actions for macOS and Ubuntu: install, typecheck, lint, unit, build, smoke, e2e. The repo is public, so macOS minutes are free. The workflow first runs on Stage 0's pull request.
 - AGENTS.md with the commands, layer rules, verification rules, the dev profile and the rule for landing stages. `.gitignore` gains `node_modules/`, `out/`, `.dev/` and `test-results/`.
 
 Gotchas:
-- pnpm fails the install on unreviewed build scripts (`ERR_PNPM_IGNORED_BUILDS`). If Electron's postinstall never ran, launching fails with "Electron failed to install correctly, please delete node_modules/electron and try installing again". The fix is to allow the build, then run `pnpm rebuild electron` ([pnpm build settings](https://pnpm.io/settings/build)).
+- pnpm fails the install on unreviewed build scripts (`ERR_PNPM_IGNORED_BUILDS`) ([pnpm build settings](https://pnpm.io/settings/build)).
+- Electron 44 has no postinstall. It downloads its binary the first time `require("electron")` runs, or when `pnpm exec install-electron` runs, which CI does as its own step. A failed download says "Electron failed to install correctly. Please delete `node_modules/electron` and run "npx install-electron --no" manually."
 - electron-vite 5 accepts Vite 5 to 7. @vitejs/plugin-react 6 requires Vite 8 and has no `babel` option, so the React Compiler goes through plugin-react 5.2.
 - electron-vite 5 replaced `externalizeDepsPlugin` with `build.externalizeDeps`, and anything in devDependencies gets bundled ([docs](https://electron-vite.org/guide/dependency-handling)).
 - Sandboxed preloads can't use ESM and get only a few Node modules. A missing one fails with "Unable to load preload scripts -> Error: module not found". `"type": "module"` would make electron-vite emit the preload as `.mjs`, which a sandboxed preload can't load.
@@ -213,7 +212,7 @@ Build:
 - A fixture player in a Web Worker, standing in for the host. It replays at recorded timing and posts one batch per frame. It also lets the renderer run in plain Chrome, which is how I QA it with the chrome_* tools.
 - The timeline on Legend List 3.4, set up like T3's: `estimatedItemSize`, `initialScrollAtEnd`, `maintainScrollAtEnd` (off while you read history) and `maintainVisibleContentPosition`. Only the streaming row re-renders.
 - Markdown through streamdown, and code through @streamdown/code (Shiki).
-- A perf harness. Playwright `_electron` drives the scenario in a visible window, the page records frame deltas, long tasks and event timing, and the results go to JSON and to a table in the report.
+- A perf harness and its `pnpm perf` script. Playwright `_electron` drives the scenario in a visible window, the page records frame deltas, long tasks and event timing, and the results go to JSON and to a table in the report.
 - Mitigations, re-measured after each one, stopping as soon as the budgets pass:
   1. Per-frame batching, the baseline.
   2. T3's paragraph pacing: deliver finished paragraphs and closed code blocks, at most one delivery every 400 ms, and flush at 24,000 buffered characters. These are T3's constants.
