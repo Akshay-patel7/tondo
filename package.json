@@ -16,6 +16,7 @@
     "test": "vitest run",
     "bench": "vitest bench --run --reporter=verbose",
     "e2e": "electron-vite build && playwright test",
+    "perf": "electron-vite build && playwright test --config playwright.perf.config.ts",
     "smoke": "electron-vite build && node scripts/smoke.mts",
     "fixtures": "node scripts/record-fixtures.mts"
   },
