@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Tests run in Node, and the callbacks they pass to page.evaluate run in the page.
+    "lib": ["ES2024", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}
