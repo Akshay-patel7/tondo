@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+          - os: ubuntu-24.04
+            # Electron needs a display, and the runner has none.
+            display: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24"
+    steps:
+      - uses: actions/checkout@v7
+
+      # Installs the pnpm from package.json's packageManager field and the Node
+      # from .tool-versions, then runs pnpm install --frozen-lockfile.
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .tool-versions
+          cache: true
+          require-lockfile: true
+
+      # Electron 44 has no install script. It downloads its binary on first use.
+      - name: Download Electron
+        run: pnpm exec install-electron
+
+      # Ubuntu 24.04's AppArmor policy blocks the user namespaces Electron's
+      # sandbox needs, and Electron won't launch without it.
+      - name: Allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm build
+      - run: ${{ matrix.display }} pnpm smoke
+      - run: ${{ matrix.display }} pnpm e2e
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore

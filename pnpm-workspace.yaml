@@ -1,0 +1,6 @@
+# pnpm fails the install when a dependency wants to run a build script that
+# isn't listed here (strictDepBuilds). Allow only what Tondo needs.
+# Electron 44 has no install script: it downloads its binary the first time
+# `require("electron")` runs, or when `pnpm exec install-electron` runs.
+allowBuilds:
+  esbuild: true

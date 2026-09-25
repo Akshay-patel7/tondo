@@ -1,0 +1,40 @@
+{
+  "name": "tondo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A fast desktop app for the pi coding agent",
+  "license": "MIT",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/shared && tsc -p src/main && tsc -p src/preload && tsc -p src/host && tsc -p src/renderer && tsc -p e2e",
+    "lint": "oxlint --deny-warnings",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run",
+    "e2e": "electron-vite build && playwright test",
+    "smoke": "electron-vite build && node scripts/smoke.mts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.13.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "babel-plugin-react-compiler": "1.0.0",
+    "electron": "44.4.5",
+    "electron-vite": "5.0.0",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "7.3.6",
+    "vitest": "5.0.1"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "productName": "Tondo"
+}
