@@ -2,6 +2,7 @@ import { app, BrowserWindow, session } from "electron";
 import path from "node:path";
 import { startHost, type Host } from "./host";
 import { resolveUserDataDir } from "./profile";
+import { reloadWhenRendererDies } from "./rendererRecovery";
 import {
   denyAllPermissions,
   handleAppProtocol,
@@ -33,6 +34,7 @@ if (!app.requestSingleInstanceLock()) {
   const openMainWindow = () => {
     const window = createMainWindow(rendererUrl, path.join(__dirname, "../preload/index.js"));
     mainWindow = window;
+    reloadWhenRendererDies(window.webContents);
     // Every page load gets its own port to the host.
     window.webContents.on("dom-ready", () => host?.connect(window.webContents));
   };
