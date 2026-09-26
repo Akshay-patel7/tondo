@@ -245,10 +245,18 @@ export async function recordSwitch(page: Page, bottomPx: number): Promise<() => 
   return () => handle.evaluate(({ done }) => done);
 }
 
-/** Bytes, from macOS `footprint`: all of Tondo's processes, and the renderer alone. */
+/** The folder this `pnpm perf` run writes its results to, named by playwright.perf.config.ts. */
+export function perfRunDir(): string {
+  const dir = process.env.TONDO_PERF_DIR;
+  if (!dir) throw new Error("TONDO_PERF_DIR isn't set. Run the perf files with `pnpm perf`.");
+  return dir;
+}
+
+/** Bytes, from macOS `footprint`: all of Tondo's processes, the renderer, and the host. */
 export interface Memory {
   total: number;
   renderer: number;
+  host: number;
 }
 
 /** V8's `gc()`, when the app was launched with `launchTondo({ exposeGc: true })`. */
@@ -293,10 +301,16 @@ async function collectGarbage({ app, page }: Tondo): Promise<void> {
  */
 export async function measureMemory(tondo: Tondo): Promise<Memory> {
   await collectGarbage(tondo);
-  const { pids, renderer } = await tondo.app.evaluate(({ app: electronApp, BrowserWindow }) => ({
-    pids: electronApp.getAppMetrics().map((metric) => metric.pid),
-    renderer: BrowserWindow.getAllWindows()[0]?.webContents.getOSProcessId(),
-  }));
+  const { pids, renderer, host } = await tondo.app.evaluate(
+    ({ app: electronApp, BrowserWindow }) => {
+      const metrics = electronApp.getAppMetrics();
+      return {
+        pids: metrics.map((metric) => metric.pid),
+        renderer: BrowserWindow.getAllWindows()[0]?.webContents.getOSProcessId(),
+        host: metrics.find((metric) => metric.name === "Tondo Host")?.pid,
+      };
+    },
+  );
   const dir = await mkdtemp(path.join(tmpdir(), "tondo-footprint-"));
   try {
     const file = path.join(dir, "footprint.json");
@@ -306,10 +320,16 @@ export async function measureMemory(tondo: Tondo): Promise<Memory> {
       "total footprint": number;
       processes: { pid: number; footprint: number }[];
     };
-    const rendererBytes = report.processes.find((process) => process.pid === renderer)?.footprint;
-    if (rendererBytes === undefined)
-      throw new Error(`footprint didn't report the renderer, pid ${renderer}`);
-    return { total: report["total footprint"], renderer: rendererBytes };
+    const bytesOf = (name: string, pid: number | undefined) => {
+      const bytes = report.processes.find((process) => process.pid === pid)?.footprint;
+      if (bytes === undefined) throw new Error(`footprint didn't report the ${name}, pid ${pid}`);
+      return bytes;
+    };
+    return {
+      total: report["total footprint"],
+      renderer: bytesOf("renderer", renderer),
+      host: bytesOf("host", host),
+    };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

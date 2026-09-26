@@ -16,6 +16,7 @@ import {
   measureMemory,
   median,
   percentile,
+  perfRunDir,
   recordPlayback,
   recordSwitch,
   type Memory,
@@ -90,13 +91,7 @@ const results = {
   screenshots: [] as string[],
 };
 
-const reportDir = path.resolve(
-  __dirname,
-  "..",
-  ".dev",
-  "perf",
-  new Date().toISOString().replaceAll(":", "-").replace(/\..*/, ""),
-);
+const reportDir = perfRunDir();
 
 test.describe.configure({ mode: "serial" });
 
@@ -312,7 +307,7 @@ function formatReport(): string {
   );
 
   return [
-    `# Stage 1 perf report`,
+    `# Streaming perf report`,
     ``,
     `Machine: ${results.machine}. Frame interval ${intervals.length > 0 ? time(median(intervals)) : "not measured"}.`,
     `Medians of ${RUNS} runs, each run in parentheses.`,
@@ -331,6 +326,8 @@ function formatReport(): string {
     perStream("Memory, all processes, after", "baseline", (run) => run.memoryAfter.total, mib),
     perStream("Memory, renderer, before", "baseline", (run) => run.memoryBefore.renderer, mib),
     perStream("Memory, renderer, after", "baseline", (run) => run.memoryAfter.renderer, mib),
+    perStream("Memory, host, before", "", (run) => run.memoryBefore.host, mib),
+    perStream("Memory, host, after", "", (run) => run.memoryAfter.host, mib),
     ``,
     `| Metric | Budget | Result |`,
     `|---|---|---|`,
