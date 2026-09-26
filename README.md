@@ -4,7 +4,7 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** early. The app opens an empty window, and [docs/plan.md](docs/plan.md) lays out the rest of the build. [AGENTS.md](AGENTS.md) lists the commands.
+**Status:** early. The app doesn't run pi yet. It replays a recorded pi reply into a 1,000-message transcript, which is how Tondo measures streaming. [docs/plan.md](docs/plan.md) lays out the rest of the build, and [AGENTS.md](AGENTS.md) lists the commands.
 
 ## Goals
 
@@ -42,9 +42,8 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 
 ## Open questions
 
-[docs/stack.md](docs/stack.md) picks the stack and shows the evidence. It uses Electron and React with React Compiler, and runs one `pi --mode rpc` process per thread from an Electron utility process. Still open:
+[docs/stack.md](docs/stack.md) picks the stack and shows the evidence. It uses Electron and React with React Compiler, and runs one `pi --mode rpc` process per thread from an Electron utility process. Framework benchmarks favor Solid over React, so before building any other UI, Tondo measured a 20,000-token reply streaming into a 1,000-message transcript. React stayed within every [performance budget](docs/plan.md#performance-budgets). Still open:
 
-- Can React keep streaming markdown smooth? Framework benchmarks favor Solid, but nothing has measured a long reply streaming through the markdown renderer inside Electron. If React falls short, Solid is the fallback.
 - How much memory do real pi setups use? The numbers so far are for bare pi with extensions, skills and context files turned off. The answer decides how many idle pi processes Tondo keeps alive.
 
 ## The name

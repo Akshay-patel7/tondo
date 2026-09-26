@@ -1,7 +1,17 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // Node runs the scripts as they are, so their imports name .ts and .mts files.
+    "allowImportingTsExtensions": true
   },
-  "include": ["*.ts", "scripts/**/*.mts"]
+  // src/shared runs in the renderer and the host, so its tsconfig has no Node
+  // types. Its tests and benches read fixtures with node:fs and are checked here.
+  "include": [
+    "*.ts",
+    "scripts/**/*.ts",
+    "scripts/**/*.mts",
+    "src/shared/**/*.test.ts",
+    "src/shared/**/*.bench.ts"
+  ]
 }

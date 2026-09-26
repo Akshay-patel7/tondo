@@ -7,17 +7,25 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:web": "vite --config vite.renderer.config.ts",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json && tsc -p src/shared && tsc -p src/main && tsc -p src/preload && tsc -p src/host && tsc -p src/renderer && tsc -p e2e",
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
+    "bench": "vitest bench --run --reporter=verbose",
     "e2e": "electron-vite build && playwright test",
-    "smoke": "electron-vite build && node scripts/smoke.mts"
+    "perf": "electron-vite build && playwright test --config playwright.perf.config.ts",
+    "smoke": "electron-vite build && node scripts/smoke.mts",
+    "fixtures": "node scripts/record-fixtures.mts"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@legendapp/list": "3.4.0",
     "@playwright/test": "1.63.0",
+    "@streamdown/code": "1.1.1",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "24.13.6",
     "@types/react": "19.3.0",
@@ -30,10 +38,12 @@
     "oxlint": "1.85.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "streamdown": "2.6.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "7.3.6",
-    "vitest": "5.0.1"
+    "vitest": "5.0.1",
+    "zustand": "5.0.15"
   },
   "packageManager": "pnpm@12.6.0",
   "productName": "Tondo"

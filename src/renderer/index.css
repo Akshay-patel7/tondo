@@ -1,6 +1,15 @@
 @import "tailwindcss";
 
+/* Tailwind doesn't scan node_modules, and streamdown styles its markdown with utility classes. */
+@source "../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/@streamdown/code/dist/*.js";
+
 /* The title bar is hidden, so the header is where the window gets dragged. */
 @utility app-drag {
   -webkit-app-region: drag;
+}
+
+/* Controls inside the header have to opt out, or clicks start a window drag. */
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
 }
