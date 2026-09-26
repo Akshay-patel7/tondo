@@ -1,5 +1,5 @@
-// The list setup and the follow rule are adapted from T3 Code,
-// apps/web/src/components/chat/MessagesTimeline.tsx and MessagesTimeline.logic.ts.
+// The list setup is adapted from T3 Code,
+// apps/web/src/components/chat/MessagesTimeline.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import {
   LegendList,
@@ -10,6 +10,7 @@ import {
 import { useRef, useState } from "react";
 import type { PiMessage } from "../../shared/thread";
 import { useThread } from "../thread/store";
+import { followsAfterScroll } from "./follow";
 import { MessageView } from "./MessageView";
 
 /** Stands in for the message pi is writing, at the end of the list. */
@@ -25,12 +26,6 @@ const FOLLOW: MaintainScrollAtEndOptions = {
   on: { dataChange: true, footerLayout: false, itemLayout: true, layout: true },
 };
 const KEEP_POSITION = { data: true, size: true };
-
-/**
- * Within this many pixels of the end, the list follows new output. T3 found
- * that Legend List's half-viewport isNearEnd pulled readers back down.
- */
-const FOLLOW_THRESHOLD_PX = 40;
 
 // Rows are only ever appended, so an index is a stable key. It also lets the
 // finished message take over the streaming row instead of remounting it.
@@ -60,12 +55,15 @@ export function Timeline() {
   const streaming = useThread((thread) => thread.streaming !== null);
   const listRef = useRef<LegendListRef>(null);
   const [following, setFollowing] = useState(true);
+  const lastScroll = useRef(0);
   const rows: readonly TimelineRow[] = streaming ? [...messages, STREAMING] : messages;
 
   const onScroll = () => {
     const state = listRef.current?.getState();
     if (!state) return;
-    setFollowing(state.contentLength - state.scroll - state.scrollLength <= FOLLOW_THRESHOLD_PX);
+    const previousScroll = lastScroll.current;
+    lastScroll.current = state.scroll;
+    setFollowing((wasFollowing) => followsAfterScroll(wasFollowing, previousScroll, state));
   };
 
   // Legend List keeps its opening scroll to the end alive for 2 s. A new row in
