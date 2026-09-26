@@ -46,7 +46,7 @@ After v1: session tree and fork navigation, Windows, reverting a turn.
 - A stage lands only after you OK its report, and until then its work stays uncommitted. After your OK, I commit on a branch, push it and open a pull request, so CI runs on both systems. You merge. Nothing else goes to git or GitHub without your go-ahead: no pushes to main, no merges, no comments. Commits are signed, one concern each, with a Conventional Commit subject and no body.
 - Your pi setup stays untouched. Dev and test runs use a gitignored profile in `.dev/`: Tondo's own app data, a scratch `PI_CODING_AGENT_DIR`, and temporary session folders. Runs against your real `~/.pi/agent` happen only at the measurement points in Stages 3 and 12. I ask right before each run. Sessions go to a temporary folder, and no prompt goes out unless you agree, so no tokens get spent. Your extensions still load and may write to their own stores.
 - Tests are deterministic. Real pi runs with a scripted model: a test extension registers pi-ai's faux provider, and pi runs offline with `--provider faux`. I verified this on pi 0.87.1. It needs no network and no API key, and real tools run. No test sleeps its way to green; tests wait for events. T3's AGENTS.md says it plainly: "A test that needs a timeout to pass is wrong."
-- UI claims come with screenshots that I open and look at. For interactive browser QA I use the chrome_* tools against the renderer running in Chrome. The committed e2e suite uses Playwright's `_electron` driver.
+- UI claims come with screenshots that I open and look at. The committed e2e suite uses Playwright's `_electron` driver.
 - I stop only processes I started, by captured PID or process group, and check that their ports are free afterward. macOS has no `timeout` command, so scripts use Node deadlines instead.
 - Budgets are fixed before anything is measured. If a stage misses an exit criterion, the stage stops and I report it. I don't lower the bar to finish.
 
@@ -109,7 +109,6 @@ A new thread starts pi with `--session-id <uuid>`, so each thread maps to one pi
 |---|---|---|---|
 | Unit | Vitest | Framing, reducer, protocol checks, git helpers | Stage 0 |
 | Bench | Vitest bench | Reducer throughput | Stage 1 |
-| Renderer in Chrome | Vite dev server with the fixture player, chrome_* tools | Interactive UI QA without Electron | Stage 1 |
 | Fake pi | A Node script that replays fixtures and misbehaves on cue | The host survives crashes, bad lines and stalls | Stage 3 |
 | pi contract | Real pi 0.87.1 with the faux provider | Tondo speaks pi's actual protocol | Stage 3 |
 | E2E | Playwright `_electron`, with screenshots | Whole-app flows | Stage 0 |

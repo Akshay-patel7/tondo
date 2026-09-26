@@ -12,7 +12,6 @@ pnpm 12.6.0 comes from `packageManager` in package.json, and Node 24.15.0 from `
 |---|---|
 | `pnpm install` | Installs dependencies. Electron downloads its binary the first time it runs, or when you run `pnpm exec install-electron`. |
 | `pnpm dev` | Runs the app with hot reload. |
-| `pnpm dev:web` | Serves only the renderer with Vite, on port 5173 by default, so you can check it in Chrome. The fixture player stands in for pi. |
 | `pnpm build` | Builds main, preload, host and renderer into `out/`. |
 | `pnpm typecheck` | Runs tsc on the root config and on each layer's config. |
 | `pnpm lint` | Runs oxlint. Warnings fail. |
