@@ -36,10 +36,12 @@ test("the timeline stays at the bottom while pi streams", async () => {
   const { page } = tondo;
 
   // Legend List scrolls to the end in the frame after a row grows or arrives,
-  // so a frame can end a few hundred pixels short of the end. The view must
-  // catch up within 100 ms, and it must never move back up the list, as it did
-  // for a frame when a new row made Legend List re-estimate the rows above.
-  // After each frame paints, check both until the player finishes.
+  // so a frame can end a few hundred pixels short of the end. How long the view
+  // trails depends on the machine, so `pnpm perf` holds that to its budget.
+  // This test checks what holds on any machine, after each frame paints until
+  // the player finishes: the timeline keeps following, and the view never moves
+  // back up the list, as it did for a frame when a new row made Legend List
+  // re-estimate the rows above.
   const sampler = await page.evaluateHandle((threshold) => {
     const timeline = document.querySelector<HTMLElement>("[data-testid=timeline]");
     const scroller = timeline?.firstElementChild;
@@ -50,15 +52,12 @@ test("the timeline stays at the bottom while pi streams", async () => {
       frames: 0,
       behind: 0,
       largestGap: 0,
-      longestLagMs: 0,
       movedBack: 0,
       unfollowed: 0,
     };
     let lastRowOnScreen = -1;
-    let behindSince: number | null = null;
 
     const sample = () => {
-      const now = performance.now();
       const view = scroller.getBoundingClientRect();
       let lastRow = -1;
       for (const row of scroller.querySelectorAll<HTMLElement>("[data-index]")) {
@@ -73,13 +72,7 @@ test("the timeline stays at the bottom while pi streams", async () => {
       const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
       result.frames++;
       result.largestGap = Math.max(result.largestGap, gap);
-      if (gap > threshold) {
-        result.behind++;
-        behindSince ??= now;
-      } else if (behindSince !== null) {
-        result.longestLagMs = Math.max(result.longestLagMs, now - behindSince);
-        behindSince = null;
-      }
+      if (gap > threshold) result.behind++;
       if (timeline.dataset.following !== "true") result.unfollowed++;
     };
 
@@ -89,9 +82,6 @@ test("the timeline stays at the bottom while pi streams", async () => {
         const status = player.dataset.status;
         if (status === "playing") started = true;
         if (started && status === "idle") {
-          if (behindSince !== null) {
-            result.longestLagMs = Math.max(result.longestLagMs, performance.now() - behindSince);
-          }
           resolve(result);
           return;
         }
@@ -111,12 +101,11 @@ test("the timeline stays at the bottom while pi streams", async () => {
     type: "distance from the end after each frame",
     description:
       `${result.frames} frames, ${result.behind} more than ${FOLLOW_THRESHOLD_PX} px short, ` +
-      `largest ${result.largestGap} px, longest ${Math.round(result.longestLagMs)} ms`,
+      `largest ${result.largestGap} px`,
   });
   expect(result.frames).toBeGreaterThan(100);
   expect(result.unfollowed).toBe(0);
   expect(result.movedBack).toBe(0);
-  expect(result.longestLagMs).toBeLessThanOrEqual(100);
   await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
 });
 

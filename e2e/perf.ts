@@ -69,6 +69,8 @@ export interface PlaybackRecord {
    * report faster ones, so there are `keys` minus this many of those.
    */
   slowKeys: number[];
+  /** The longest the view stayed more than `bottomPx` short of the end, in ms. */
+  longestLag: number;
 }
 
 // TypeScript's DOM types don't cover Long Animation Frames yet.
@@ -81,10 +83,15 @@ interface LongAnimationFrame extends PerformanceEntry {
  * Starts recording in the page, before the test presses Play. Returns a
  * function that waits for the player to finish and returns the record.
  */
-export async function recordPlayback(page: Page): Promise<() => Promise<PlaybackRecord>> {
-  const handle = await page.evaluateHandle(() => {
+export async function recordPlayback(
+  page: Page,
+  bottomPx: number,
+): Promise<() => Promise<PlaybackRecord>> {
+  const handle = await page.evaluateHandle((threshold) => {
     const player = document.querySelector<HTMLElement>("[data-testid=player]");
-    if (!player) throw new Error("The player isn't on the page");
+    // Legend List's scroll element is the timeline's only child.
+    const scroller = document.querySelector("[data-testid=timeline]")?.firstElementChild;
+    if (!player || !scroller) throw new Error("The player or the timeline isn't on the page");
 
     // oxlint-disable-next-line unicorn/consistent-function-scoping -- the page gets this function as source, so its helpers must live inside it.
     const observe = (type: string, init?: { durationThreshold: number }) => {
@@ -107,6 +114,20 @@ export async function recordPlayback(page: Page): Promise<() => Promise<Playback
     const onKey = (event: KeyboardEvent) => keyTimes.push(event.timeStamp);
     addEventListener("keydown", onKey, { capture: true });
 
+    // How long the view trails the end, checked after each frame paints.
+    let behindSince: number | null = null;
+    let longestLag = 0;
+    const checkGap = () => {
+      const now = performance.now();
+      const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      if (gap > threshold) {
+        behindSince ??= now;
+      } else if (behindSince !== null) {
+        longestLag = Math.max(longestLag, now - behindSince);
+        behindSince = null;
+      }
+    };
+
     const frames: number[] = [];
     const done = new Promise<PlaybackRecord>((resolve) => {
       const onFrame = (time: number) => {
@@ -116,6 +137,7 @@ export async function recordPlayback(page: Page): Promise<() => Promise<Playback
           resolve(finish(frames[0]!, time));
           return;
         }
+        if (playing) setTimeout(checkGap);
         requestAnimationFrame(onFrame);
       };
       requestAnimationFrame(onFrame);
@@ -123,6 +145,7 @@ export async function recordPlayback(page: Page): Promise<() => Promise<Playback
 
     const finish = (start: number, end: number): PlaybackRecord => {
       removeEventListener("keydown", onKey, { capture: true });
+      if (behindSince !== null) longestLag = Math.max(longestLag, end - behindSince);
       const within = (entry: PerformanceEntry) => entry.startTime >= start && entry.startTime < end;
       const slowKeys = new Map<number, number>();
       for (const entry of stopEvents() as PerformanceEventTiming[]) {
@@ -156,11 +179,12 @@ export async function recordPlayback(page: Page): Promise<() => Promise<Playback
         keys: keyTimes.filter((time) => time >= start && time < end).length,
         timedKeys: (performance.eventCounts.get("keydown") ?? 0) - timedKeysBefore,
         slowKeys: [...slowKeys.values()],
+        longestLag,
       };
     };
 
     return { done };
-  });
+  }, bottomPx);
   return () => handle.evaluate(({ done }) => done);
 }
 

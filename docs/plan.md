@@ -223,7 +223,7 @@ Build:
 Gotchas:
 - Legend List's web issues: [#468](https://github.com/LegendApp/legend-list/issues/468) (content position isn't held when a header changes height in Chrome), [#463](https://github.com/LegendApp/legend-list/issues/463) (position isn't held when prepending near the bottom) and [#337](https://github.com/LegendApp/legend-list/issues/337) (scroll-at-end animation options). Loading the whole transcript at once, with no prepend paging, sidesteps #463.
 - Legend List keeps its `initialScrollAtEnd` scroll alive for 2 s after the list is ready. A row added in that window restarts it with position upkeep off, so about 1,000 unmeasured rows are re-estimated at once and the view jumps about 325,000 px up the transcript for one frame. Any imperative scroll ends it, so the timeline calls `scrollToEnd` in `onReady`.
-- `maintainScrollAtEnd` scrolls in the animation frame after the content grows, so the newest line can sit partly hidden for a frame or two. In two runs of the scroll test at 1,000 tokens per second, about 6% of frames ended more than 40 px short of the end, by at most 228 px, and the list caught up within 17 ms each time.
+- `maintainScrollAtEnd` scrolls in the animation frame after the content grows, so the newest line can sit partly hidden for a frame or two. In two runs of the scroll test at 1,000 tokens per second, about 6% of frames ended more than 40 px short of the end, by at most 228 px, and the list caught up within 17 ms each time. At 4x CPU slowdown it trailed for up to 130 ms, and GitHub's macOS runner measured 130.6 ms. So `pnpm perf` checks this time on this Mac, and CI doesn't.
 - zustand 5: a selector that returns a new object on every render loops until React throws "Maximum update depth exceeded". Use atomic selectors or `useShallow`.
 - streamdown on Tailwind 4 needs `@source` lines for the streamdown and @streamdown/code dist files, relative to the CSS file. Without them its styles silently disappear.
 - Usage numbers are cumulative and can stay at 0 until the message ends.
@@ -231,7 +231,7 @@ Gotchas:
 
 Done when:
 - The perf report meets every budget at both rates (three runs, medians), plus the 4x slowdown numbers for information.
-- Reducer tests and the bench pass. Scroll behavior has tests: it opens at the bottom, stays at the bottom while streaming (never more than 40 px short of the end for over 100 ms, the thread-switch budget), and holds position while you read history.
+- Reducer tests and the bench pass. Scroll behavior has tests: it opens at the bottom, stays at the bottom while streaming, and holds position while you read history. The perf report checks that the view is never more than 40 px short of the end for over 100 ms, the thread-switch budget.
 - The report includes screenshots taken mid-stream.
 - docs/stack.md records the outcome: React confirmed, or Solid chosen by you.
 

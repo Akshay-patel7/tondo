@@ -41,6 +41,8 @@ const BUDGET = {
   inputP95: 32,
   switchMs: 100,
   coldStartMs: 1000,
+  /** docs/plan.md holds the time behind the end to the thread-switch budget. */
+  lagMs: 100,
 };
 
 interface StreamRun {
@@ -57,6 +59,8 @@ interface StreamRun {
   /** 0 when fewer than 5% of keys took 16 ms or more. */
   inputP95: number;
   slowFrames: PlaybackRecord["slowFrames"];
+  /** The longest the view stayed more than FOLLOW_THRESHOLD_PX short of the end. */
+  longestLag: number;
   memoryBefore: Memory;
   memoryAfter: Memory;
 }
@@ -149,6 +153,9 @@ test("budgets", () => {
     expect
       .soft(median(runs.map((run) => run.inputP95)), `input to paint p95 at ${rate}`)
       .toBeLessThanOrEqual(BUDGET.inputP95);
+    expect
+      .soft(median(runs.map((run) => run.longestLag)), `time behind the end at ${rate}`)
+      .toBeLessThanOrEqual(BUDGET.lagMs);
   }
   expect
     .soft(median(results.switches), "switch to a running thread")
@@ -231,7 +238,7 @@ async function measureStream(fixture: StreamFixture, cpuSlowdown = 1): Promise<S
     const frameInterval = await measureFrameInterval(page);
     const memoryBefore = await measureMemory(tondo);
     await slowDownCpu(page, cpuSlowdown);
-    const finished = await recordPlayback(page);
+    const finished = await recordPlayback(page, FOLLOW_THRESHOLD_PX);
     await play(page, fixture);
     await page.getByLabel("Message").focus();
     const player = page.getByTestId("player");
@@ -259,6 +266,7 @@ async function measureStream(fixture: StreamFixture, cpuSlowdown = 1): Promise<S
       keys: record.keys,
       inputP95: percentile([...record.slowKeys, ...Array<number>(unreported).fill(0)], 95),
       slowFrames: record.slowFrames,
+      longestLag: record.longestLag,
       memoryBefore,
       memoryAfter,
     };
@@ -300,6 +308,7 @@ function formatReport(): string {
       const run = results.slowdown.streams[fixture];
       return run ? format(pick(run)) : "not run";
     }).join(" | ");
+  const behindLabel = `Longest time more than ${FOLLOW_THRESHOLD_PX} px short of the end`;
   const intervals = STREAMS.flatMap((fixture) =>
     results.streams[fixture].map((run) => run.frameInterval),
   );
@@ -317,6 +326,7 @@ function formatReport(): string {
     perStream("Longest frame", "", (run) => run.frameMax),
     perStream("Long tasks of 100 ms or more", "none", (run) => run.longTasks, String),
     perStream("Longest task", "", (run) => run.longestTask, task),
+    perStream(behindLabel, "100 ms or less", (run) => run.longestLag),
     perStream("Input to paint p95", "32 ms or less", (run) => run.inputP95, input),
     perStream("Keys typed", "", (run) => run.keys, String),
     perStream("Memory, all processes, before", "baseline", (run) => run.memoryBefore.total, mib),
@@ -344,6 +354,7 @@ function formatReport(): string {
     `| Frame time p99 | ${slow((run) => run.frameP99)} |`,
     `| Long tasks of 100 ms or more | ${slow((run) => run.longTasks, String)} |`,
     `| Longest task | ${slow((run) => run.longestTask, task)} |`,
+    `| ${behindLabel} | ${slow((run) => run.longestLag)} |`,
     `| Input to paint p95 | ${slow((run) => run.inputP95, input)} |`,
     ``,
     `Switch to a running thread at 4x: ${results.slowdown.switchMs === undefined ? "not run" : time(results.slowdown.switchMs)}.`,
