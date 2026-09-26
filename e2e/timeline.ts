@@ -7,7 +7,7 @@ import type { FixtureName } from "../src/renderer/player/protocol";
  */
 export const LAST_TRANSCRIPT_ROW = 999;
 
-/** The follow threshold in src/renderer/timeline/Timeline.tsx. */
+/** The follow threshold in src/renderer/timeline/follow.ts. */
 export const FOLLOW_THRESHOLD_PX = 40;
 
 /** Waits until the fixture player has opened the transcript. */
