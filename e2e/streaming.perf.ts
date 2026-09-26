@@ -21,7 +21,13 @@ import {
   type Memory,
   type PlaybackRecord,
 } from "./perf";
-import { FOLLOW_THRESHOLD_PX, LAST_TRANSCRIPT_ROW, play, waitForTranscript } from "./timeline";
+import {
+  FOLLOW_THRESHOLD_PX,
+  LAST_TRANSCRIPT_ROW,
+  play,
+  waitForReply,
+  waitForTranscript,
+} from "./timeline";
 
 const RUNS = 3;
 const STREAMS = ["stream-1000", "stream-200"] as const;
@@ -184,14 +190,6 @@ async function slowDownCpu(page: Page, rate: number): Promise<void> {
   if (rate === 1) return;
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate });
-}
-
-async function waitForReply(page: Page, chars: number): Promise<void> {
-  await page.waitForFunction(
-    (length) => (document.querySelector("[data-streaming]")?.textContent?.length ?? 0) >= length,
-    chars,
-    { polling: 100, timeout: 60_000 },
-  );
 }
 
 async function measureColdStart(): Promise<ColdStart> {

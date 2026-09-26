@@ -27,6 +27,15 @@ export async function waitForPlayback(page: Page, timeout: number): Promise<void
   await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle", { timeout });
 }
 
+/** Waits until the reply streaming in is at least `chars` characters long. */
+export async function waitForReply(page: Page, chars: number): Promise<void> {
+  await page.waitForFunction(
+    (length) => (document.querySelector("[data-streaming]")?.textContent?.length ?? 0) >= length,
+    chars,
+    { polling: 100, timeout: 60_000 },
+  );
+}
+
 /** Pixels of content below the bottom of the timeline's viewport. */
 export function gapToEnd(page: Page): Promise<number> {
   return page.evaluate(() => {

@@ -67,6 +67,15 @@ export async function bringToFront({ app, page }: Tondo): Promise<void> {
   await page.waitForFunction(() => document.visibilityState === "visible" && document.hasFocus());
 }
 
+/** The pid of the host utility process, which main names "Tondo Host". */
+export function hostPid(app: ElectronApplication): Promise<number> {
+  return app.evaluate(({ app: electronApp }) => {
+    const hosts = electronApp.getAppMetrics().filter((metric) => metric.name === "Tondo Host");
+    if (hosts.length !== 1) throw new Error(`Expected one Tondo Host, found ${hosts.length}`);
+    return hosts[0]!.pid;
+  });
+}
+
 /**
  * Replaces `shell.openExternal` in the main process so a test can see which
  * URL the app tried to open, without opening a browser. The returned function
