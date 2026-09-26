@@ -17,6 +17,9 @@ const FATAL_PATTERNS = [
   "Refused to load",
   "Refused to apply",
   "Uncaught ",
+  // src/main/host.ts and src/host/index.ts, when the host dies or can't start.
+  "Tondo Host exited",
+  "Tondo Host failed to start",
 ];
 // Bounds a failed run. A healthy one passes as soon as the ready line appears.
 const DEADLINE_MS = 30_000;

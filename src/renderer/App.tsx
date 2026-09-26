@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { play, reopen, stop, usePlayer } from "./player/player";
-import { FIXTURES, type FixtureName } from "./player/protocol";
+import { FIXTURES, type FixtureName } from "../shared/protocol";
+import { play, reopen, stop, useHost } from "./connection";
 import { useThreadKey } from "./thread/store";
 import { Timeline } from "./timeline/Timeline";
 
@@ -20,18 +20,26 @@ export function App() {
   );
 }
 
-/** Stage 1 stand-in for a running pi: replays a recorded fixture. */
+/** Stands in for a running pi until Stage 3: the host replays a recorded fixture. */
 function PlayerControls() {
-  const status = usePlayer((player) => player.status);
-  const error = usePlayer((player) => player.error);
+  const connection = useHost((host) => host.connection);
+  const status = useHost((host) => host.status);
+  const error = useHost((host) => host.error);
   const [fixture, setFixture] = useState<FixtureName>("stream-1000");
+  const connected = connection === "connected";
+  const shown = connected ? status : connection;
 
   return (
     <div
       className="app-no-drag absolute right-3 flex items-center gap-2 text-xs font-normal"
       data-testid="player"
-      data-status={status}
+      data-status={shown}
     >
+      {connection === "reconnecting" ? (
+        <span role="status" className="text-amber-700 dark:text-amber-400">
+          Reconnecting…
+        </span>
+      ) : null}
       {error ? <span className="text-red-600 dark:text-red-400">{error}</span> : null}
       <select
         aria-label="Fixture"
@@ -45,7 +53,7 @@ function PlayerControls() {
           </option>
         ))}
       </select>
-      {status === "playing" ? (
+      {shown === "playing" ? (
         <button
           type="button"
           onClick={stop}
@@ -56,7 +64,7 @@ function PlayerControls() {
       ) : (
         <button
           type="button"
-          disabled={status === "opening"}
+          disabled={!connected}
           onClick={() => play(fixture, 1)}
           className="rounded border border-neutral-300 px-2 py-0.5 disabled:opacity-50 dark:border-neutral-700"
         >
@@ -65,7 +73,7 @@ function PlayerControls() {
       )}
       <button
         type="button"
-        disabled={status === "opening"}
+        disabled={!connected}
         onClick={reopen}
         className="rounded border border-neutral-300 px-2 py-0.5 disabled:opacity-50 dark:border-neutral-700"
       >

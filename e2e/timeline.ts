@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import type { FixtureName } from "../src/renderer/player/protocol";
+import type { FixtureName } from "../src/shared/protocol";
 
 /**
  * transcript-1000.json holds pi's system prompt and 1,000 messages. The

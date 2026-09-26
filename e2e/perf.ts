@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
 import { parseFixture } from "../src/shared/fixture";
-import type { FixtureName } from "../src/renderer/player/protocol";
+import type { FixtureName } from "../src/shared/protocol";
 import type { Tondo } from "./launch";
 
 const execFileAsync = promisify(execFile);
@@ -52,7 +52,11 @@ export function measureFrameInterval(page: Page): Promise<number> {
 
 /** What the page saw during one playback. */
 export interface PlaybackRecord {
-  /** From the first frame the player reported playing to the first it reported idle. */
+  /**
+   * From the click on Play until the page had the player idle. The click comes
+   * before the host starts playing, and idle comes after it sends the last
+   * event, so a whole playback lasts at least the fixture's length.
+   */
   playedMs: number;
   /** requestAnimationFrame timestamps. */
   frames: number[];
@@ -113,6 +117,11 @@ export async function recordPlayback(
     const keyTimes: number[] = [];
     const onKey = (event: KeyboardEvent) => keyTimes.push(event.timeStamp);
     addEventListener("keydown", onKey, { capture: true });
+    let clickedAt: number | undefined;
+    const onClick = (event: MouseEvent) => {
+      clickedAt = event.timeStamp;
+    };
+    addEventListener("click", onClick, { capture: true, once: true });
 
     // How long the view trails the end, checked after each frame paints.
     let behindSince: number | null = null;
@@ -169,8 +178,10 @@ export async function recordPlayback(
               : "",
           };
         });
+      // `end` is when the frame began, which can be before idle arrived.
+      const idleAt = performance.now();
       return {
-        playedMs: end - start,
+        playedMs: clickedAt === undefined ? Number.NaN : idleAt - clickedAt,
         frames,
         longTasks: stopLongTasks()
           .filter(within)
@@ -254,12 +265,25 @@ const collectGarbageHere = async () => {
   await gc({ type: "major", execution: "async", flavor: "last-resort" });
 };
 
-/** Collects garbage in every JavaScript heap: the main process, the page and its workers. */
+/**
+ * Collects garbage in every JavaScript heap: the main process, the host and
+ * the page. Main can reach the host's heap only when it has `gc()` itself.
+ */
 async function collectGarbage({ app, page }: Tondo): Promise<void> {
   await Promise.all([
     app.evaluate(collectGarbageHere),
+    app.evaluate(() => {
+      const main = globalThis as typeof globalThis & {
+        tondoCollectHostGarbage?: () => Promise<void>;
+      };
+      if (!main.tondoCollectHostGarbage) {
+        throw new Error(
+          "Main can't collect the host's garbage. Launch with launchTondo({ exposeGc: true }).",
+        );
+      }
+      return main.tondoCollectHostGarbage();
+    }),
     page.evaluate(collectGarbageHere),
-    ...page.workers().map((worker) => worker.evaluate(collectGarbageHere)),
   ]);
 }
 
