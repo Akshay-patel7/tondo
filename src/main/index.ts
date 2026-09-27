@@ -1,6 +1,7 @@
 import { app, BrowserWindow, session } from "electron";
 import path from "node:path";
 import { startHost, type Host } from "./host";
+import { copyConsoleTo, lineWriter, LogFile } from "./logFile";
 import { piOptions, resolveUserDataDir } from "./profile";
 import { reloadWhenRendererDies } from "./rendererRecovery";
 import {
@@ -29,6 +30,15 @@ registerAppScheme();
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // Only the instance holding the lock writes the logs.
+  const logs = path.join(app.getPath("userData"), "logs");
+  copyConsoleTo(new LogFile(path.join(logs, "main.log")));
+  const hostLog = new LogFile(path.join(logs, "host.log"));
+  const hostOutput = {
+    stdout: lineWriter(hostLog, "stdout"),
+    stderr: lineWriter(hostLog, "stderr"),
+  };
+
   let mainWindow: BrowserWindow | undefined;
   let host: Host | undefined;
   /** Set once the host and every process group it reported are gone. */
@@ -78,6 +88,10 @@ if (!app.requestSingleInstanceLock()) {
       const started = startHost({
         entry: path.join(__dirname, "host.js"),
         config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs }) },
+        onOutput: (stream, text) => {
+          hostOutput[stream](text);
+          process[stream].write(text);
+        },
       });
       host = started;
       // Tests start pi through main until the page can. A packaged app has no such door.

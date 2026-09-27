@@ -1,7 +1,8 @@
 // Runs the host utility process, restarts it when it dies, and hands the page
 // a new MessagePort to it after every page load and every host start.
-// The restart backoff is T3 Code's calculateRestartDelay, from
-// apps/desktop/src/backend/DesktopBackendManager.ts.
+// The restart backoff is T3 Code's calculateRestartDelay, and piping the
+// host's output into main follows T3's handling of its backend's output, both
+// in apps/desktop/src/backend/DesktopBackendManager.ts.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import {
   MessageChannelMain,
@@ -24,6 +25,8 @@ export interface HostOptions {
   /** The built src/host/index.ts. */
   entry: string;
   config: HostConfig;
+  /** Gets everything the host prints, as it prints it. */
+  onOutput: (stream: "stdout" | "stderr", text: string) => void;
 }
 
 export interface Host {
@@ -42,7 +45,7 @@ export interface Host {
   stop(): Promise<void>;
 }
 
-export function startHost({ entry, config }: HostOptions): Host {
+export function startHost({ entry, config, onOutput }: HostOptions): Host {
   let child: UtilityProcess | undefined;
   let ready = false;
   let page: WebContents | undefined;
@@ -69,10 +72,17 @@ export function startHost({ entry, config }: HostOptions): Host {
   const fork = () => {
     const current = utilityProcess.fork(entry, [JSON.stringify(config)], {
       serviceName: "Tondo Host",
+      stdio: "pipe",
       // Under perf, main has gc(). The host needs it too so perf can collect its garbage.
       execArgv: globalThis.gc ? ["--js-flags=--expose-gc"] : [],
     });
     child = current;
+    // Electron sets these to null once the host exits, so they're read now.
+    for (const stream of ["stdout", "stderr"] as const) {
+      const output = current[stream];
+      output?.setEncoding("utf8");
+      output?.on("data", (text: string) => onOutput(stream, text));
+    }
     // Electron emits this before exit when V8 hits a fatal error in the host.
     // Without a listener, the EventEmitter would throw it in main.
     current.on("error", (type, location, report) => {

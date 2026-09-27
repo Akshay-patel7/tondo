@@ -15,10 +15,17 @@ vi.mock("electron", () => ({
 }));
 vi.mock("./processGroups", () => ({ stopProcessGroups: vi.fn() }));
 
+/** Stands in for one of the host's output streams. */
+class FakeStream extends EventEmitter {
+  setEncoding = vi.fn();
+}
+
 /** Stands in for the host's utility process. */
 class FakeHost extends EventEmitter {
   postMessage = vi.fn();
   kill = vi.fn();
+  stdout = new FakeStream();
+  stderr = new FakeStream();
   ready() {
     this.emit("message", { type: "ready" });
   }
@@ -40,7 +47,7 @@ describe("startHost", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(stopProcessGroups).mockResolvedValue();
     hosts = [];
-    options = { entry: "host.js", config };
+    options = { entry: "host.js", config, onOutput: vi.fn() };
     electron.fork.mockImplementation(() => {
       const host = new FakeHost();
       hosts.push(host);
@@ -59,8 +66,16 @@ describe("startHost", () => {
     expect(electron.fork).toHaveBeenCalledWith(
       "host.js",
       [JSON.stringify(config)],
-      expect.objectContaining({ serviceName: "Tondo Host" }),
+      expect.objectContaining({ serviceName: "Tondo Host", stdio: "pipe" }),
     );
+  });
+
+  it("passes on everything the host prints", () => {
+    startHost(options);
+    latest().stdout.emit("data", "listening\n");
+    latest().stderr.emit("data", "a warning\n");
+    expect(options.onOutput).toHaveBeenNthCalledWith(1, "stdout", "listening\n");
+    expect(options.onOutput).toHaveBeenNthCalledWith(2, "stderr", "a warning\n");
   });
 
   it("hands the page a port once the host is ready", () => {
