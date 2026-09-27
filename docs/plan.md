@@ -12,8 +12,8 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 |---|---|---|---|
 | 0 | Foundation: toolchain, secure window, test layers, CI | M | Done |
 | 1 | Streaming spike that settles React vs Solid | L | Done |
-| 2 | Host process and MessagePort transport | S | In review |
-| 3 | pi supervisor | M | Not started |
+| 2 | Host process and MessagePort transport | S | Done |
+| 3 | pi supervisor | M | In review |
 | 4 | First usable thread | M | Not started |
 | 5 | Projects, threads, sidebar, process pool | M | Not started |
 | 6 | Tool cards and edit diffs | M | Not started |
@@ -278,7 +278,7 @@ Build:
 - pi discovery: a settings override wins, stored now and exposed in the UI in Stage 12. Otherwise resolve `pi` with the captured environment, follow version-manager shims to the real install, read its `package.json` (0.87.1 or newer), and spawn `<the node binary next to that install> <realpath of cli.js>` instead of `pi`.
 - JSONL client: split on LF only and strip a trailing CR, with no `readline`. Read stdout continuously and respect stdin backpressure. Match responses by `id`, with a deadline per command. Ignore record types it doesn't know. Keep stderr in a ring buffer for error reports, and never parse it.
 - Supervisor: each pi gets its own process group. Stopping means closing stdin, waiting, then SIGTERM to the group, then SIGKILL. The host reports every group to main.
-- Project trust: if pi would need a decision (protected project files present and no saved decision in pi's `trust.json`), Tondo asks you, passes `--approve` or `--no-approve`, and remembers your answer itself. Tondo reads `trust.json` and never writes it.
+- Project trust: work out whether pi would need a decision (protected project files present, no saved decision in pi's `trust.json`, and pi's `defaultProjectTrust` set to `"ask"`), and pass `--approve` or `--no-approve` from the answer Tondo keeps in its own settings. Tondo reads `trust.json` and never writes it. Asking you moves to Stage 4, where you open a project.
 - Logs: main and host write rotating logs in the app data folder. A pi error report carries the tail of its stderr.
 - A test hook: non-packaged builds accept extra pi arguments from an environment variable, so tests can add `-e faux-ext.ts` and the offline flags.
 - Fake pi: a Node script that replays fixtures and misbehaves on cue. It can crash mid-stream, send a malformed line, put U+2028 inside a string, use CRLF endings, send a 10 MB line, stop reading, or never answer a command.
@@ -297,6 +297,7 @@ Gotchas:
 - RPC mode rejects `@file` arguments.
 - RPC mode can't show pi's trust prompt. With the default `"ask"`, pi silently skips protected project resources: project settings, extensions, skills, prompt templates, themes and system prompt files. Context files such as AGENTS.md load regardless.
 - pi doesn't lock session files. The same session open in terminal pi and in Tondo can interleave writes. This goes in the README's known limits.
+- pi runs each bash command in a process group of its own. Closing stdin or SIGTERM makes pi stop those groups as it exits, but SIGKILL to pi's group leaves them running.
 
 Done when:
 - Framing, client and supervisor tests pass, including every fake-pi fault.
@@ -314,6 +315,7 @@ Read first: `apps/web/src/components/ChatView.tsx` and `ChatView.logic.ts`, and 
 
 Build:
 - Open a project folder. A new thread starts pi there with `--session-id`.
+- Project trust: when Stage 3's check says a project needs a decision, ask before starting pi, and remember the answer in Tondo's settings, which get their first writer here.
 - The Stage 1 timeline, fed by live events through the host.
 - A plain textarea composer for now (TipTap arrives in Stage 8), with the keys from pi's usage docs. Enter sends, and while pi works it steers the current task. Alt+Enter queues a follow-up. Alt+Up returns queued messages to the composer. Escape stops: `clear_queue`, then `abort`, then the returned text goes back into the composer. Shift+Enter adds a line.
 - The queue, shown from `queue_update`.
@@ -322,7 +324,7 @@ Build:
 - A design checkpoint. I show you two or three screenshots of this screen in different visual directions, you pick one, and I record the choice and its design tokens.
 
 Done when:
-- E2E against faux pi covers a prompt and its streamed reply, abort mid-stream, steer and follow-up (queue shown, then drained), a model change visible in `get_state`, the retry banner, and a pi crash followed by a restart.
+- E2E against faux pi covers a prompt and its streamed reply, abort mid-stream, steer and follow-up (queue shown, then drained), a model change visible in `get_state`, the retry banner, the trust question for a project that needs one, and a pi crash followed by a restart.
 - The perf harness on the live pipeline meets the budgets.
 - The report has screenshots, and your design pick is recorded.
 
@@ -348,6 +350,8 @@ Gotchas:
 - pi reads a project's `sessionDir` setting before the trust decision.
 - pi migrates v1 and v2 session files when it loads them, so the header reader has to accept every version.
 - Tests never index your live sessions folder. They use generated or copied fixtures, following T3's rule to seed test data from a copy.
+- pi creates the session file at the first message, even with `--session-id` (Stage 3 checked this on pi 0.87.1). A new thread has no file until then, so the sidebar lists threads from Tondo's store, not only the files it finds.
+- On the real setup a new pi answers about 1.4 s after it starts (docs/stack.md). Opening a thread whose pi was shut down waits that long for `get_messages`.
 
 Done when:
 - A fixture folder with 500 sessions shows in the sidebar, and the report states the indexing time.

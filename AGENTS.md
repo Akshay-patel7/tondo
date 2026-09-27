@@ -46,7 +46,8 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 ## App data and your pi setup
 
 - Unpackaged runs keep app data in `.dev/userData`, with one running instance per profile. `TONDO_USER_DATA_DIR` overrides the folder, and smoke and e2e point it at temporary folders. Never run against `~/Library/Application Support/Tondo`.
-- Leave `~/.pi/agent` alone. Dev and test runs of pi use a scratch `PI_CODING_AGENT_DIR`. Runs against the real one happen only at the plan's measurement points, and only after asking.
+- Leave `~/.pi/agent` alone. Unpackaged runs give pi `<userData>/pi-agent` as its `PI_CODING_AGENT_DIR`, and `TONDO_PI_ARGS`, a JSON array, adds arguments to every pi, which is how e2e runs the faux provider. Runs against the real `~/.pi/agent` happen only at the plan's measurement points, and only after asking.
+- Main writes its own log and the host's to `<userData>/logs/`, as `main.log` and `host.log`.
 - Stop only processes you started, by the PID or process group you captured. Never kill by name or pattern. macOS has no `timeout` command, so scripts use Node deadlines.
 
 ## Verifying

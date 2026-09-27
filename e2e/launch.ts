@@ -1,5 +1,5 @@
 import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { READY_MARK } from "../src/shared/ready";
@@ -14,6 +14,9 @@ export interface Tondo {
   page: Page;
   /** `Date.now()` just before Electron started. */
   launchedAt: number;
+  /** The app data folder, which holds settings.json and the logs. */
+  profileDir: string;
+  /** Quits the app and deletes its profile. Calling it again does nothing. */
   close(): Promise<void>;
 }
 
@@ -22,6 +25,8 @@ export interface LaunchOptions {
   exposeGc?: boolean;
   /** Extra environment variables for the app, such as TONDO_TRANSCRIPT_MESSAGES. */
   env?: Record<string, string>;
+  /** Written to the profile's settings.json before the app starts. */
+  settings?: Record<string, unknown>;
 }
 
 /**
@@ -31,8 +36,10 @@ export interface LaunchOptions {
 export async function launchTondo({
   exposeGc = false,
   env: extraEnv = {},
+  settings,
 }: LaunchOptions = {}): Promise<Tondo> {
   const profileDir = await mkdtemp(path.join(tmpdir(), "tondo-e2e-"));
+  if (settings) await writeFile(path.join(profileDir, "settings.json"), JSON.stringify(settings));
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !UNSET_VARIABLES.has(name)) env[name] = value;
@@ -46,13 +53,18 @@ export async function launchTondo({
   const page = await app.firstWindow();
   await page.waitForFunction((mark) => performance.getEntriesByName(mark).length > 0, READY_MARK);
 
+  let closing: Promise<void> | undefined;
   return {
     app,
     page,
     launchedAt,
-    async close() {
-      await app.close();
-      await rm(profileDir, { recursive: true, force: true });
+    profileDir,
+    close() {
+      closing ??= (async () => {
+        await app.close();
+        await rm(profileDir, { recursive: true, force: true });
+      })();
+      return closing;
     },
   };
 }

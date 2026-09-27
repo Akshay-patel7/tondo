@@ -43,7 +43,21 @@ export type HostMessage = Versioned<
  * What main sends the host. `connect` carries the host's end of a new page
  * port. Main and the host come from the same build, so these aren't versioned.
  */
-export type MainToHostMessage = { type: "connect" } | { type: "collect-garbage" };
+export type MainToHostMessage =
+  | { type: "connect" }
+  | { type: "collect-garbage" }
+  /** Tests only, until the page can start pi: start pi in `cwd` and send it `prompt`. */
+  | { type: "run-pi"; cwd: string; prompt: string };
+
+/** What main tells the host as it forks it, as JSON in the host's first argument. */
+export interface HostConfig {
+  /** Tondo's app data folder, which holds settings.json. */
+  userData: string;
+  /** PI_CODING_AGENT_DIR for every pi. Unpackaged runs set it so they leave ~/.pi/agent alone. */
+  piAgentDir?: string;
+  /** Arguments added to every pi's command line. Unpackaged runs take them from TONDO_PI_ARGS. */
+  piArgs: string[];
+}
 
 /** What the host sends main. */
 export type HostToMainMessage =

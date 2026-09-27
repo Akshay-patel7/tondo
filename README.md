@@ -40,11 +40,11 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 - Custom tool renderers are terminal components, so Tondo draws its own tool cards.
 - Built-in terminal commands such as `/settings` and `/login` do not run over RPC. Tondo needs its own screens for them.
 
-## Open questions
+pi doesn't lock session files. If the same session is open in terminal pi and in Tondo at once, both append to it and their entries interleave.
 
-[docs/stack.md](docs/stack.md) picks the stack and shows the evidence. It uses Electron and React with React Compiler, and runs one `pi --mode rpc` process per thread from an Electron utility process. Framework benchmarks favor Solid over React, so before building any other UI, Tondo measured a 20,000-token reply streaming into a 1,000-message transcript. React stayed within every [performance budget](docs/plan.md#performance-budgets). Still open:
+## Stack
 
-- How much memory do real pi setups use? The numbers so far are for bare pi with extensions, skills and context files turned off. The answer decides how many idle pi processes Tondo keeps alive.
+[docs/stack.md](docs/stack.md) picks the stack and shows the evidence. It uses Electron and React with React Compiler, and runs one `pi --mode rpc` process per thread from an Electron utility process. Framework benchmarks favor Solid over React, so before building any other UI, Tondo measured a 20,000-token reply streaming into a 1,000-message transcript. React stayed within every [performance budget](docs/plan.md#performance-budgets). On a real pi setup with 12 packages, each pi answered about 1.4 s after it started and held about 210 MiB once idle. Those numbers decide how many idle pi processes Tondo keeps alive.
 
 ## The name
 
