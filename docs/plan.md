@@ -254,6 +254,7 @@ Gotchas:
 - `contextBridge` can't pass a MessagePort, hence the `window.postMessage` hop.
 - Ports arrive in the host as `MessagePortMain` and deliver nothing until `.start()` is called.
 - A utility process can pipe only stdout and stderr; stdin must be `ignore`. The host doesn't need stdin.
+- If a renderer crashes while a Playwright command to its page is in flight, Chromium answers that command after it reports the crash, and Playwright 1.63 throws on the answer and fails the test. `page.waitForFunction` leaves a `Runtime.releaseObject` in flight as it returns. CI's Ubuntu runner caught it once (run 36337055916), and in an Ubuntu 24.04 container with 4 CPUs the crash test failed 14 of 40 runs. The test now leaves the page to main, which waits for the reply, crashes the renderer and reads the reloaded page.
 
 Done when:
 - Unit tests cover message validation.
