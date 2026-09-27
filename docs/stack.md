@@ -174,6 +174,22 @@ The RSS sum explains the popular charts. [Elanis' comparison](https://github.com
 
 **Bare pi.** Command: `pi --mode rpc --no-extensions --no-skills --no-context-files --no-session --offline` with a fresh `PI_CODING_AGENT_DIR`. The first `get_state` reply came in 120 to 149 ms. Footprint was 80 to 86 MB and RSS 125 to 131 MB.
 
+**A real pi setup.** On 2026-09-27 Stage 3 ran the everyday pi setup on this Mac under Tondo's supervisor. That was pi 0.87.1 from asdf with Node 24.15.0, `~/.pi/agent` with its 12 packages, and this repo as the working folder. A scratch script started pi the way the host does, from a clean environment like the one Finder gives an app, five times in a row. Each time it asked for `get_state`, left pi idle for 10 seconds, then closed pi's stdin. No prompt went out, and sessions went to a temporary folder. For comparison, the same script ran pi with the flags Tondo's tests use: no extensions, skills or context files, and the faux provider.
+
+| | Real setup | Test flags |
+|---|---|---|
+| Spawn to the first `get_state` reply | 1.30 to 1.78 s, median 1.42 s | 121 to 133 ms |
+| Footprint at that reply | 337 to 356 MiB | 85 to 89 MiB |
+| Peak footprint | 353 to 368 MiB | 85 to 90 MiB |
+| Footprint after 10 s idle | 210 to 213 MiB | 71 to 75 MiB |
+| RSS at the reply, then idle | 371 to 390, then 252 to 255 MiB | 130 to 134, then 118 to 122 MiB |
+
+The login shell ran in 41 ms. Counting it, the first start spent 48 ms before pi spawned, and each later start spent 1 ms. Each pi was a single process, because none of the 12 packages started a helper process within the 10 seconds. At startup pi sent four `setStatus` requests and one `setWidget`, which need no answer. Closing stdin stopped pi in 8 to 20 ms with exit code 0. Nothing it started was left, and no file under `~/.pi/agent/sessions` changed.
+
+An earlier run, ten minutes before, recorded RSS only. Its first start took 3.7 s and reached 635 MiB RSS, and only that start sent a `notify`. Its other four starts matched the table, so one of the packages did one-time work on that start. Which one wasn't identified.
+
+So on this setup each idle pi holds about 210 MiB, close to what all of Tondo's own processes hold together (264 MiB with the transcript open). A new pi answers after about 1.4 s, so a thread whose pi was shut down takes that much longer to open. The 100 ms switch budget covers only threads whose pi is running. Stage 5 sets the pool from these numbers.
+
 **Streaming a long reply.** The Stage 1 spike measured this with `pnpm perf` on 2026-09-25. It plays a recorded pi run into the built app. The reply is 20,000 tokens, 80,483 characters of markdown with code blocks, tables and lists, and it streams into a 1,000-message transcript while the harness types into the composer at about 10 keys a second. The window stays visible and in front. The display runs at 120 Hz, so a frame is 8.3 ms. Medians of 3 runs:
 
 | | 1,000 tokens/s | 200 tokens/s | Budget |
@@ -200,5 +216,4 @@ Stage 2 moved the player out of the renderer's worker into the host, a utility p
 
 ## Open questions
 
-- **How much memory do real pi setups use?** All the pi numbers here have extensions, skills and context files turned off. The answer decides how many idle pi processes Tondo keeps alive.
 - **How do real screens compare?** The empty-window numbers come from a trivial hidden page, not a real app.
