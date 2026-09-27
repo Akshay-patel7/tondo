@@ -254,6 +254,7 @@ Gotchas:
 - `contextBridge` can't pass a MessagePort, hence the `window.postMessage` hop.
 - Ports arrive in the host as `MessagePortMain` and deliver nothing until `.start()` is called.
 - A utility process can pipe only stdout and stderr; stdin must be `ignore`. The host doesn't need stdin.
+- If a renderer crashes while a Playwright command to its page is in flight, Chromium answers that command after it reports the crash, and Playwright 1.63 throws on the answer and fails the test. `page.waitForFunction` leaves a `Runtime.releaseObject` in flight as it returns. CI's Ubuntu runner caught it once (run 36337055916), and in an Ubuntu 24.04 container with 4 CPUs the crash test failed 14 of 40 runs. The test now leaves the page to main, which waits for the reply, crashes the renderer and reads the reloaded page.
 
 Done when:
 - Unit tests cover message validation.
@@ -298,6 +299,7 @@ Gotchas:
 - RPC mode can't show pi's trust prompt. With the default `"ask"`, pi silently skips protected project resources: project settings, extensions, skills, prompt templates, themes and system prompt files. Context files such as AGENTS.md load regardless.
 - pi doesn't lock session files. The same session open in terminal pi and in Tondo can interleave writes. This goes in the README's known limits.
 - pi runs each bash command in a process group of its own. Closing stdin or SIGTERM makes pi stop those groups as it exits, but SIGKILL to pi's group leaves them running.
+- On macOS, a SIGKILL sent to a process group while bash forks can miss the new child, which keeps running with launchd as its parent. The contract test used to run `echo $$; sleep 60` through pi's bash tool, stop pi and expect the group gone. A copy of it left `sleep` running in 4 of 1,000 runs on this Mac under load, and the test most likely failed on CI's macOS runner the same way (run 36339780999). Tests that kill a command now have it start `sleep` before it prints its pid. pi's `killProcessTree` sends one SIGKILL, and so do Tondo's `drainGroup` and `stopGroup`, so a command that forks just then can leave a process behind.
 
 Done when:
 - Framing, client and supervisor tests pass, including every fake-pi fault.

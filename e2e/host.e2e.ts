@@ -80,24 +80,37 @@ test("a reloaded page picks the stream up where it is", async () => {
 test("the page comes back after its renderer crashes", async () => {
   const { app, page } = tondo;
   await play(page, "stream-1000");
-  await waitForReply(page, INTERRUPT_AT_CHARS);
 
-  // Playwright gives up on a page whose renderer crashed, so main reads the reloaded one.
-  const replyLength = await app.evaluate(async ({ BrowserWindow }) => {
+  // Main waits for the reply, crashes the renderer and reads the reloaded
+  // page, so Playwright stays off the page. Playwright gives up on a page
+  // whose renderer crashed. And if the renderer dies while a Playwright
+  // command to the page is in flight, Chromium answers that command after
+  // reporting the crash, and Playwright 1.63 throws on the answer, failing
+  // the test. page.waitForFunction leaves one in flight as it returns.
+  const replyLength = await app.evaluate(async ({ BrowserWindow }, chars) => {
     const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+    // Resolves with the reply's length once the player is playing and the
+    // reply has at least `min` characters.
+    const replyAtLeast = (min: number) =>
+      contents.executeJavaScript(`new Promise((resolve) => {
+        const check = () => {
+          const status = document.querySelector("[data-testid=player]")?.dataset.status;
+          const reply = document.querySelector("[data-streaming]");
+          if (status === "playing" && reply && reply.textContent.length >= ${min}) {
+            resolve(reply.textContent.length);
+          } else {
+            requestAnimationFrame(check);
+          }
+        };
+        check();
+      })`) as Promise<number>;
+
+    await replyAtLeast(chars);
     const reloaded = new Promise<void>((resolve) => contents.once("dom-ready", () => resolve()));
     contents.forcefullyCrashRenderer();
     await reloaded;
-    return contents.executeJavaScript(`new Promise((resolve) => {
-      const check = () => {
-        const status = document.querySelector("[data-testid=player]")?.dataset.status;
-        const reply = document.querySelector("[data-streaming]");
-        if (status === "playing" && reply) resolve(reply.textContent.length);
-        else requestAnimationFrame(check);
-      };
-      check();
-    })`) as Promise<number>;
-  });
+    return replyAtLeast(0);
+  }, INTERRUPT_AT_CHARS);
   // As with a reload, the reply came back whole with the host's snapshot.
   expect(replyLength).toBeGreaterThanOrEqual(INTERRUPT_AT_CHARS);
 });

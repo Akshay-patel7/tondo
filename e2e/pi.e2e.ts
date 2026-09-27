@@ -128,12 +128,13 @@ function installPi(cli: string, dir: string): string {
 
 /**
  * Launches Tondo with `piPath` as its pi. The faux model answers the first
- * prompt with a bash command that writes its shell's pid to tool.pid, then
- * sleeps.
+ * prompt with a bash command that starts a sleep, then writes its shell's pid
+ * to tool.pid. Sleep starts first because on macOS a SIGKILL sent to the group
+ * while bash forks can miss the new child.
  */
 function launch(piPath: string): Promise<Tondo> {
   const script: FauxScript = {
-    responses: [bashCall(`echo $$ > '${path.join(workDir, "tool.pid")}'; sleep 600`)],
+    responses: [bashCall(`sleep 600 & echo $$ > '${path.join(workDir, "tool.pid")}'; wait`)],
   };
   const scriptPath = path.join(workDir, "script.json");
   writeFileSync(scriptPath, JSON.stringify(script));
