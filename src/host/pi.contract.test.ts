@@ -245,10 +245,12 @@ describe("pi 0.87.1's RPC protocol", () => {
 
   it("stops a running bash tool when its input closes", async () => {
     // pi runs each bash command in a process group of its own, led by the shell.
+    // The shell starts sleep before it prints its pid, because on macOS a
+    // SIGKILL sent to the group while bash forks can miss the new child.
     const { pi, next } = await startRealPi({
       responses: [
         fauxAssistantMessage(
-          fauxToolCall("bash", { command: "echo $$; sleep 60" }, { id: "call_sleep" }),
+          fauxToolCall("bash", { command: "sleep 60 & echo $$; wait" }, { id: "call_sleep" }),
           {
             stopReason: "toolUse",
           },

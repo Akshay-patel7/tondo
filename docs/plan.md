@@ -299,6 +299,7 @@ Gotchas:
 - RPC mode can't show pi's trust prompt. With the default `"ask"`, pi silently skips protected project resources: project settings, extensions, skills, prompt templates, themes and system prompt files. Context files such as AGENTS.md load regardless.
 - pi doesn't lock session files. The same session open in terminal pi and in Tondo can interleave writes. This goes in the README's known limits.
 - pi runs each bash command in a process group of its own. Closing stdin or SIGTERM makes pi stop those groups as it exits, but SIGKILL to pi's group leaves them running.
+- On macOS, a SIGKILL sent to a process group while bash forks can miss the new child, which keeps running with launchd as its parent. The contract test used to run `echo $$; sleep 60` through pi's bash tool, stop pi and expect the group gone. A copy of it left `sleep` running in 4 of 1,000 runs on this Mac under load, and the test most likely failed on CI's macOS runner the same way (run 36339780999). Tests that kill a command now have it start `sleep` before it prints its pid. pi's `killProcessTree` sends one SIGKILL, and so do Tondo's `drainGroup` and `stopGroup`, so a command that forks just then can leave a process behind.
 
 Done when:
 - Framing, client and supervisor tests pass, including every fake-pi fault.
