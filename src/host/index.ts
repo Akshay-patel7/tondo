@@ -1,17 +1,21 @@
 // The host runs in an Electron utility process and will own pi, git and the
-// terminals. For now it runs the fixture player that stands in for pi. Main
-// hands it a MessagePort to the page on every page load. The host sends each
-// new port a snapshot of the thread, and after that only batches of events.
+// terminals. For now the page shows the fixture player that stands in for pi,
+// and only tests start pi. Main hands the host a MessagePort to the page on
+// every page load. The host sends each new port a snapshot of the thread, and
+// after that only batches of events.
 import type { MessagePortMain } from "electron";
 import {
   parseClientMessage,
   PROTOCOL_VERSION,
   type ClientMessage,
+  type HostConfig,
   type HostMessage,
   type HostToMainMessage,
   type MainToHostMessage,
 } from "../shared/protocol";
+import { PiExitError } from "./piProcess";
 import { openPlayer, type Player } from "./player";
+import { Supervisor } from "./supervisor";
 
 const v = PROTOCOL_VERSION;
 
@@ -35,6 +39,26 @@ function messageCount(): number | undefined {
     throw new Error(`TONDO_TRANSCRIPT_MESSAGES must be a positive integer, not "${value}"`);
   }
   return count;
+}
+
+/** What main passed as the host's first argument. */
+function readConfig(): HostConfig {
+  const json = process.argv[2];
+  if (json === undefined) throw new Error("Main started the host without its config");
+  return JSON.parse(json) as HostConfig;
+}
+
+/** Tests only, until the page can start pi: starts pi in `cwd` and sends it `prompt`. */
+async function runPi(supervisor: Supervisor, cwd: string, prompt: string): Promise<void> {
+  const pi = await supervisor.start(cwd, () => {});
+  // Nothing stops this pi, so it exiting at all is worth a line in the log.
+  pi.exited.then((exit) =>
+    console.error(`pi ${pi.pid} in ${cwd}: ${new PiExitError(exit).message}`),
+  );
+  await pi.rpc.request({ type: "prompt", message: prompt }).catch((error: unknown) => {
+    // The line above already reports a pi that exits before it answers.
+    if (!(error instanceof PiExitError)) throw error;
+  });
 }
 
 /** Runs V8's last-resort collection. Main exposes gc() to the host only under perf. */
@@ -94,6 +118,9 @@ function serve(player: Player, port: MessagePortMain): void {
 }
 
 async function start(): Promise<void> {
+  const supervisor = new Supervisor(readConfig(), (pgids) => {
+    tellMain({ type: "process-groups", pgids });
+  });
   const player = await openPlayer(send, messageCount());
   process.parentPort.on("message", ({ data, ports }) => {
     const message = data as MainToHostMessage;
@@ -112,6 +139,11 @@ async function start(): Promise<void> {
             process.exit(1);
           },
         );
+        break;
+      case "run-pi":
+        runPi(supervisor, message.cwd, message.prompt).catch((error: unknown) => {
+          console.error(`Tondo Host couldn't run pi in ${message.cwd}:`, error);
+        });
         break;
     }
   });

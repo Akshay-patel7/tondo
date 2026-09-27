@@ -1,7 +1,7 @@
 import { app, BrowserWindow, session } from "electron";
 import path from "node:path";
 import { startHost, type Host } from "./host";
-import { resolveUserDataDir } from "./profile";
+import { piOptions, resolveUserDataDir } from "./profile";
 import { reloadWhenRendererDies } from "./rendererRecovery";
 import {
   denyAllPermissions,
@@ -31,6 +31,8 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   let mainWindow: BrowserWindow | undefined;
   let host: Host | undefined;
+  /** Set once the host and every process group it reported are gone. */
+  let hostStopped = false;
   const openMainWindow = () => {
     const window = createMainWindow(rendererUrl, path.join(__dirname, "../preload/index.js"));
     mainWindow = window;
@@ -53,15 +55,40 @@ if (!app.requestSingleInstanceLock()) {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
   });
-  app.on("before-quit", () => host?.stop());
+  app.on("before-quit", (event) => {
+    if (!host || hostStopped) return;
+    // Quitting waits until pi and everything it started have stopped.
+    event.preventDefault();
+    host
+      .stop()
+      .catch((error: unknown) => console.error("Tondo couldn't stop its host:", error))
+      .finally(() => {
+        hostStopped = true;
+        app.quit();
+      });
+  });
 
   app
     .whenReady()
     .then(() => {
       handleAppProtocol(path.join(__dirname, "../renderer"));
       denyAllPermissions(session.defaultSession);
-      const started = startHost(path.join(__dirname, "host.js"));
+      const userData = app.getPath("userData");
+      const piArgs = process.env.TONDO_PI_ARGS;
+      const started = startHost({
+        entry: path.join(__dirname, "host.js"),
+        config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs }) },
+      });
       host = started;
+      // Tests start pi through main until the page can. A packaged app has no such door.
+      if (!app.isPackaged) {
+        Object.assign(globalThis, {
+          tondoTest: {
+            runPi: (cwd: string, prompt: string) => started.runPi(cwd, prompt),
+            processGroups: () => started.processGroups,
+          },
+        });
+      }
       // perf launches Tondo with gc() exposed and collects the host's garbage too.
       if (globalThis.gc) {
         Object.assign(globalThis, { tondoCollectHostGarbage: () => started.collectGarbage() });

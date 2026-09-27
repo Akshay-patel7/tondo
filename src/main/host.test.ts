@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 import type { WebContents } from "electron";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PORT_MESSAGE } from "../shared/protocol";
-import { startHost } from "./host";
-import { killProcessGroups } from "./processGroups";
+import { PORT_MESSAGE, type HostConfig } from "../shared/protocol";
+import { startHost, type HostOptions } from "./host";
+import { stopProcessGroups } from "./processGroups";
 
 const electron = vi.hoisted(() => ({ fork: vi.fn() }));
 vi.mock("electron", () => ({
@@ -13,7 +13,7 @@ vi.mock("electron", () => ({
     port2 = "page's end";
   },
 }));
-vi.mock("./processGroups", () => ({ killProcessGroups: vi.fn() }));
+vi.mock("./processGroups", () => ({ stopProcessGroups: vi.fn() }));
 
 /** Stands in for the host's utility process. */
 class FakeHost extends EventEmitter {
@@ -24,7 +24,9 @@ class FakeHost extends EventEmitter {
   }
 }
 
+const config: HostConfig = { userData: "/profile", piAgentDir: "/profile/pi-agent", piArgs: [] };
 let hosts: FakeHost[];
+let options: HostOptions;
 const latest = () => hosts.at(-1)!;
 
 function fakePage() {
@@ -36,7 +38,9 @@ describe("startHost", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(stopProcessGroups).mockResolvedValue();
     hosts = [];
+    options = { entry: "host.js", config };
     electron.fork.mockImplementation(() => {
       const host = new FakeHost();
       hosts.push(host);
@@ -47,12 +51,21 @@ describe("startHost", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    vi.mocked(killProcessGroups).mockClear();
+    vi.mocked(stopProcessGroups).mockReset();
+  });
+
+  it("forks the host with its config as the first argument", () => {
+    startHost(options);
+    expect(electron.fork).toHaveBeenCalledWith(
+      "host.js",
+      [JSON.stringify(config)],
+      expect.objectContaining({ serviceName: "Tondo Host" }),
+    );
   });
 
   it("hands the page a port once the host is ready", () => {
     const { page, webContents } = fakePage();
-    startHost("host.js").connect(webContents);
+    startHost(options).connect(webContents);
     expect(page.postMessage).not.toHaveBeenCalled();
 
     latest().ready();
@@ -61,7 +74,7 @@ describe("startHost", () => {
   });
 
   it("restarts a host that dies, and waits longer each time it dies before it's ready", () => {
-    startHost("host.js");
+    startHost(options);
     for (const delay of [500, 1000, 2000, 4000, 8000, 10_000, 10_000]) {
       const forks = hosts.length;
       latest().emit("exit", 1);
@@ -80,7 +93,7 @@ describe("startHost", () => {
 
   it("hands the page a port to the restarted host", () => {
     const { page, webContents } = fakePage();
-    startHost("host.js").connect(webContents);
+    startHost(options).connect(webContents);
     latest().ready();
     latest().emit("exit", 9);
     vi.advanceTimersByTime(500);
@@ -89,7 +102,7 @@ describe("startHost", () => {
   });
 
   it("logs a fatal error in the host, then restarts it when it exits", () => {
-    startHost("host.js");
+    startHost(options);
     latest().emit("error", "FatalError", "v8::ToLocalChecked", "the report");
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("FatalError at v8::ToLocalChecked"),
@@ -100,29 +113,64 @@ describe("startHost", () => {
     expect(hosts).toHaveLength(2);
   });
 
-  it("kills the process groups a host reported when it dies", () => {
-    startHost("host.js");
+  it("stops the process groups a host reported when it dies", () => {
+    const host = startHost(options);
     latest().emit("message", { type: "process-groups", pgids: [4242] });
+    expect(host.processGroups).toEqual([4242]);
     latest().emit("exit", 9);
-    expect(killProcessGroups).toHaveBeenLastCalledWith([4242]);
+    expect(stopProcessGroups).toHaveBeenLastCalledWith([4242]);
+    expect(host.processGroups).toEqual([]);
 
     // The next host starts with none.
     vi.advanceTimersByTime(500);
     latest().emit("exit", 9);
-    expect(killProcessGroups).toHaveBeenLastCalledWith([]);
+    expect(stopProcessGroups).toHaveBeenLastCalledWith([]);
   });
 
-  it("doesn't restart a host it stopped", () => {
-    const host = startHost("host.js");
-    host.stop();
+  it("stops once the host has exited and its process groups are gone", async () => {
+    let groupsGone!: () => void;
+    vi.mocked(stopProcessGroups).mockReturnValue(new Promise((resolve) => (groupsGone = resolve)));
+    const host = startHost(options);
+    latest().emit("message", { type: "process-groups", pgids: [4242] });
+
+    let stopped = false;
+    const stopping = host.stop().then(() => (stopped = true));
     expect(latest().kill).toHaveBeenCalled();
     latest().emit("exit", 0);
+    expect(stopProcessGroups).toHaveBeenLastCalledWith([4242]);
+    // Lets every promise that can settle do so, and shows no restart comes.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stopped).toBe(false);
+    expect(hosts).toHaveLength(1);
+
+    groupsGone();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it("doesn't restart a host that died just before it was stopped", async () => {
+    const host = startHost(options);
+    latest().emit("exit", 9);
+    await host.stop();
     vi.advanceTimersByTime(60_000);
     expect(hosts).toHaveLength(1);
   });
 
+  it("asks a ready host to run pi", () => {
+    const host = startHost(options);
+    expect(() => host.runPi("/project", "Hello")).toThrow("isn't running");
+
+    latest().ready();
+    host.runPi("/project", "Hello");
+    expect(latest().postMessage).toHaveBeenLastCalledWith({
+      type: "run-pi",
+      cwd: "/project",
+      prompt: "Hello",
+    });
+  });
+
   it("fails a garbage collection the host dies in", async () => {
-    const host = startHost("host.js");
+    const host = startHost(options);
     await expect(host.collectGarbage()).rejects.toThrow("isn't running");
 
     latest().ready();

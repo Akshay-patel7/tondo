@@ -9,31 +9,50 @@ import {
   type UtilityProcess,
   type WebContents,
 } from "electron";
-import { PORT_MESSAGE, type HostToMainMessage, type MainToHostMessage } from "../shared/protocol";
-import { killProcessGroups } from "./processGroups";
+import {
+  PORT_MESSAGE,
+  type HostConfig,
+  type HostToMainMessage,
+  type MainToHostMessage,
+} from "../shared/protocol";
+import { stopProcessGroups } from "./processGroups";
 
 const FIRST_RESTART_DELAY_MS = 500;
 const MAX_RESTART_DELAY_MS = 10_000;
+
+export interface HostOptions {
+  /** The built src/host/index.ts. */
+  entry: string;
+  config: HostConfig;
+}
 
 export interface Host {
   /** Hands `page` a port to the host now, or once the host is ready. */
   connect(page: WebContents): void;
   /** Collects the host's garbage. It works only when main has gc(), as under perf. */
   collectGarbage(): Promise<void>;
-  /** Stops the host for good, as the app quits. */
-  stop(): void;
+  /** The process groups the running host has reported. */
+  readonly processGroups: readonly number[];
+  /** Tests only, until the page can start pi: has the host start pi in `cwd` and send it `prompt`. */
+  runPi(cwd: string, prompt: string): void;
+  /**
+   * Stops the host for good, as the app quits. Resolves once the host has
+   * exited and the process groups it reported are gone.
+   */
+  stop(): Promise<void>;
 }
 
-/** Forks the host from `entry`, the built src/host/index.ts. */
-export function startHost(entry: string): Host {
+export function startHost({ entry, config }: HostOptions): Host {
   let child: UtilityProcess | undefined;
   let ready = false;
   let page: WebContents | undefined;
   let processGroups: number[] = [];
+  /** Settles once the groups every dead host left are gone. */
+  let groupsStopped: Promise<unknown> = Promise.resolve();
   /** Restarts since the host was last ready. */
   let restarts = 0;
   let restartTimer: NodeJS.Timeout | undefined;
-  let stopped = false;
+  let stopping: Promise<void> | undefined;
 
   const connectPage = () => {
     if (!child || !ready || !page || page.isDestroyed()) return;
@@ -42,8 +61,13 @@ export function startHost(entry: string): Host {
     page.postMessage(PORT_MESSAGE, null, [port2]);
   };
 
+  const runningHost = (task: string) => {
+    if (!child || !ready) throw new Error(`The host isn't running, so it can't ${task}`);
+    return child;
+  };
+
   const fork = () => {
-    const current = utilityProcess.fork(entry, [], {
+    const current = utilityProcess.fork(entry, [JSON.stringify(config)], {
       serviceName: "Tondo Host",
       // Under perf, main has gc(). The host needs it too so perf can collect its garbage.
       execArgv: globalThis.gc ? ["--js-flags=--expose-gc"] : [],
@@ -66,9 +90,12 @@ export function startHost(entry: string): Host {
     current.once("exit", (code) => {
       child = undefined;
       ready = false;
-      killProcessGroups(processGroups);
+      const stopped = stopProcessGroups(processGroups).catch((error: unknown) => {
+        console.error("Couldn't stop the process groups the host left:", error);
+      });
+      groupsStopped = Promise.all([groupsStopped, stopped]);
       processGroups = [];
-      if (stopped) return;
+      if (stopping) return;
       const delay = Math.min(FIRST_RESTART_DELAY_MS * 2 ** restarts, MAX_RESTART_DELAY_MS);
       restarts++;
       console.error(`Tondo Host exited with code ${code}. Restarting it in ${delay} ms.`);
@@ -82,12 +109,9 @@ export function startHost(entry: string): Host {
       page = webContents;
       connectPage();
     },
-    collectGarbage() {
-      const current = child;
-      if (!current || !ready) {
-        return Promise.reject(new Error("The host isn't running, so it can't collect garbage"));
-      }
-      return new Promise((resolve, reject) => {
+    async collectGarbage() {
+      const current = runningHost("collect garbage");
+      await new Promise<void>((resolve, reject) => {
         const onMessage = (message: HostToMainMessage) => {
           if (message.type !== "garbage-collected") return;
           current.off("message", onMessage);
@@ -103,10 +127,31 @@ export function startHost(entry: string): Host {
         current.postMessage({ type: "collect-garbage" } satisfies MainToHostMessage);
       });
     },
+    get processGroups() {
+      return processGroups;
+    },
+    runPi(cwd, prompt) {
+      runningHost("run pi").postMessage({
+        type: "run-pi",
+        cwd,
+        prompt,
+      } satisfies MainToHostMessage);
+    },
     stop() {
-      stopped = true;
-      clearTimeout(restartTimer);
-      child?.kill();
+      stopping ??= (async () => {
+        clearTimeout(restartTimer);
+        const current = child;
+        if (current) {
+          // Not events.once, which would reject on the host's error event.
+          const exited = new Promise((resolve) => current.once("exit", resolve));
+          current.kill();
+          await exited;
+        }
+        // fork()'s exit listener ran before ours, so this includes the groups
+        // of the host just stopped.
+        await groupsStopped;
+      })();
+      return stopping;
     },
   };
 }
