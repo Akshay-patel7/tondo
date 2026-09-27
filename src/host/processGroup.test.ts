@@ -1,0 +1,84 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { describe, expect, it } from "vitest";
+import { drainGroup, signalGroup } from "./processGroup";
+
+/**
+ * Starts node running `script` as the leader of a new process group, and
+ * resolves once the script has printed its first line.
+ */
+async function startGroup(script: string) {
+  const leader = spawn(process.execPath, ["-e", script], {
+    detached: true,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  leader.stdout.setEncoding("utf8");
+  const [line] = (await once(leader.stdout, "data")) as [string];
+  return { leader, pgid: leader.pid!, line: line.trim() };
+}
+
+describe("drainGroup", () => {
+  it("stops a group with SIGTERM", async () => {
+    const { leader, pgid } = await startGroup(
+      "console.log('ready'); setInterval(() => {}, 60_000)",
+    );
+    const exit = once(leader, "exit");
+    await drainGroup(pgid, 5_000);
+    expect(await exit).toEqual([null, "SIGTERM"]);
+    expect(signalGroup(pgid, 0)).toBe(false);
+  });
+
+  it("kills a group that ignores SIGTERM once the grace runs out", async () => {
+    const { leader, pgid } = await startGroup(
+      "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 60_000)",
+    );
+    const exit = once(leader, "exit");
+    await drainGroup(pgid, 100);
+    expect(await exit).toEqual([null, "SIGKILL"]);
+    expect(signalGroup(pgid, 0)).toBe(false);
+  });
+
+  it("stops what's left in a group after its leader exits", async () => {
+    // The leader starts a child in the same group, prints the child's pid, and exits.
+    const { leader, pgid, line } = await startGroup(
+      "const child = require('node:child_process').spawn('sleep', ['60'], { stdio: 'ignore' });" +
+        "child.unref(); console.log(child.pid);",
+    );
+    await once(leader, "exit");
+    const orphan = Number(line);
+    expect(signalGroup(pgid, 0)).toBe(true);
+    await drainGroup(pgid, 5_000);
+    expect(signalGroup(pgid, 0)).toBe(false);
+    expect(() => process.kill(orphan, 0)).toThrow("ESRCH");
+  });
+
+  // macOS answers EPERM when a group holds only exited processes nobody has
+  // reaped yet. Linux signals them until they're reaped.
+  it.runIf(process.platform === "darwin")(
+    "treats a group of unreaped exited processes as stopped",
+    async () => {
+      // Perl forks a child into its own group, waits for it to exit, and
+      // prints its pid without reaping it.
+      const holder = spawn(
+        "perl",
+        [
+          "-e",
+          "my $exited = 0; $SIG{CHLD} = sub { $exited = 1 };" +
+            "my $pid = fork(); if ($pid == 0) { setpgrp(0, 0); exit 0 }" +
+            '$| = 1; sleep 1 until $exited; print "$pid\\n"; sleep 60',
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      try {
+        holder.stdout.setEncoding("utf8");
+        const [line] = (await once(holder.stdout, "data")) as [string];
+        const pgid = Number(line.trim());
+        expect(() => process.kill(-pgid, 0)).toThrow("EPERM");
+        expect(signalGroup(pgid, 0)).toBe(false);
+        await drainGroup(pgid, 100);
+      } finally {
+        holder.kill();
+      }
+    },
+  );
+});
