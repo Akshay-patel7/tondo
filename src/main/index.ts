@@ -1,6 +1,8 @@
 import { app, BrowserWindow, session } from "electron";
 import path from "node:path";
+import { startHost, type Host } from "./host";
 import { resolveUserDataDir } from "./profile";
+import { reloadWhenRendererDies } from "./rendererRecovery";
 import {
   denyAllPermissions,
   handleAppProtocol,
@@ -28,8 +30,13 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | undefined;
+  let host: Host | undefined;
   const openMainWindow = () => {
-    mainWindow = createMainWindow(rendererUrl, path.join(__dirname, "../preload/index.js"));
+    const window = createMainWindow(rendererUrl, path.join(__dirname, "../preload/index.js"));
+    mainWindow = window;
+    reloadWhenRendererDies(window.webContents);
+    // Every page load gets its own port to the host.
+    window.webContents.on("dom-ready", () => host?.connect(window.webContents));
   };
 
   app.on("second-instance", () => {
@@ -46,12 +53,19 @@ if (!app.requestSingleInstanceLock()) {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
   });
+  app.on("before-quit", () => host?.stop());
 
   app
     .whenReady()
     .then(() => {
       handleAppProtocol(path.join(__dirname, "../renderer"));
       denyAllPermissions(session.defaultSession);
+      const started = startHost(path.join(__dirname, "host.js"));
+      host = started;
+      // perf launches Tondo with gc() exposed and collects the host's garbage too.
+      if (globalThis.gc) {
+        Object.assign(globalThis, { tondoCollectHostGarbage: () => started.collectGarbage() });
+      }
       openMainWindow();
     })
     .catch((error: unknown) => {

@@ -20,18 +20,24 @@ export interface Tondo {
 export interface LaunchOptions {
   /** Gives every JavaScript heap in the app V8's `gc()`, so a test can collect garbage. */
   exposeGc?: boolean;
+  /** Extra environment variables for the app, such as TONDO_TRANSCRIPT_MESSAGES. */
+  env?: Record<string, string>;
 }
 
 /**
  * Launches the built app (`electron-vite build` first) with a throwaway
  * profile, and waits until the renderer has painted its first frame.
  */
-export async function launchTondo({ exposeGc = false }: LaunchOptions = {}): Promise<Tondo> {
+export async function launchTondo({
+  exposeGc = false,
+  env: extraEnv = {},
+}: LaunchOptions = {}): Promise<Tondo> {
   const profileDir = await mkdtemp(path.join(tmpdir(), "tondo-e2e-"));
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !UNSET_VARIABLES.has(name)) env[name] = value;
   }
+  Object.assign(env, extraEnv);
   env.TONDO_USER_DATA_DIR = profileDir;
 
   const launchedAt = Date.now();
@@ -65,6 +71,15 @@ export async function bringToFront({ app, page }: Tondo): Promise<void> {
     window.focus();
   });
   await page.waitForFunction(() => document.visibilityState === "visible" && document.hasFocus());
+}
+
+/** The pid of the host utility process, which main names "Tondo Host". */
+export function hostPid(app: ElectronApplication): Promise<number> {
+  return app.evaluate(({ app: electronApp }) => {
+    const hosts = electronApp.getAppMetrics().filter((metric) => metric.name === "Tondo Host");
+    if (hosts.length !== 1) throw new Error(`Expected one Tondo Host, found ${hosts.length}`);
+    return hosts[0]!.pid;
+  });
 }
 
 /**

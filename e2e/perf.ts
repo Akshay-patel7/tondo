@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
 import { parseFixture } from "../src/shared/fixture";
-import type { FixtureName } from "../src/renderer/player/protocol";
+import type { FixtureName } from "../src/shared/protocol";
 import type { Tondo } from "./launch";
 
 const execFileAsync = promisify(execFile);
@@ -52,7 +52,11 @@ export function measureFrameInterval(page: Page): Promise<number> {
 
 /** What the page saw during one playback. */
 export interface PlaybackRecord {
-  /** From the first frame the player reported playing to the first it reported idle. */
+  /**
+   * From the click on Play until the page had the player idle. The click comes
+   * before the host starts playing, and idle comes after it sends the last
+   * event, so a whole playback lasts at least the fixture's length.
+   */
   playedMs: number;
   /** requestAnimationFrame timestamps. */
   frames: number[];
@@ -113,6 +117,11 @@ export async function recordPlayback(
     const keyTimes: number[] = [];
     const onKey = (event: KeyboardEvent) => keyTimes.push(event.timeStamp);
     addEventListener("keydown", onKey, { capture: true });
+    let clickedAt: number | undefined;
+    const onClick = (event: MouseEvent) => {
+      clickedAt = event.timeStamp;
+    };
+    addEventListener("click", onClick, { capture: true, once: true });
 
     // How long the view trails the end, checked after each frame paints.
     let behindSince: number | null = null;
@@ -169,8 +178,10 @@ export async function recordPlayback(
               : "",
           };
         });
+      // `end` is when the frame began, which can be before idle arrived.
+      const idleAt = performance.now();
       return {
-        playedMs: end - start,
+        playedMs: clickedAt === undefined ? Number.NaN : idleAt - clickedAt,
         frames,
         longTasks: stopLongTasks()
           .filter(within)
@@ -234,10 +245,18 @@ export async function recordSwitch(page: Page, bottomPx: number): Promise<() => 
   return () => handle.evaluate(({ done }) => done);
 }
 
-/** Bytes, from macOS `footprint`: all of Tondo's processes, and the renderer alone. */
+/** The folder this `pnpm perf` run writes its results to, named by playwright.perf.config.ts. */
+export function perfRunDir(): string {
+  const dir = process.env.TONDO_PERF_DIR;
+  if (!dir) throw new Error("TONDO_PERF_DIR isn't set. Run the perf files with `pnpm perf`.");
+  return dir;
+}
+
+/** Bytes, from macOS `footprint`: all of Tondo's processes, the renderer, and the host. */
 export interface Memory {
   total: number;
   renderer: number;
+  host: number;
 }
 
 /** V8's `gc()`, when the app was launched with `launchTondo({ exposeGc: true })`. */
@@ -254,12 +273,25 @@ const collectGarbageHere = async () => {
   await gc({ type: "major", execution: "async", flavor: "last-resort" });
 };
 
-/** Collects garbage in every JavaScript heap: the main process, the page and its workers. */
+/**
+ * Collects garbage in every JavaScript heap: the main process, the host and
+ * the page. Main can reach the host's heap only when it has `gc()` itself.
+ */
 async function collectGarbage({ app, page }: Tondo): Promise<void> {
   await Promise.all([
     app.evaluate(collectGarbageHere),
+    app.evaluate(() => {
+      const main = globalThis as typeof globalThis & {
+        tondoCollectHostGarbage?: () => Promise<void>;
+      };
+      if (!main.tondoCollectHostGarbage) {
+        throw new Error(
+          "Main can't collect the host's garbage. Launch with launchTondo({ exposeGc: true }).",
+        );
+      }
+      return main.tondoCollectHostGarbage();
+    }),
     page.evaluate(collectGarbageHere),
-    ...page.workers().map((worker) => worker.evaluate(collectGarbageHere)),
   ]);
 }
 
@@ -269,10 +301,16 @@ async function collectGarbage({ app, page }: Tondo): Promise<void> {
  */
 export async function measureMemory(tondo: Tondo): Promise<Memory> {
   await collectGarbage(tondo);
-  const { pids, renderer } = await tondo.app.evaluate(({ app: electronApp, BrowserWindow }) => ({
-    pids: electronApp.getAppMetrics().map((metric) => metric.pid),
-    renderer: BrowserWindow.getAllWindows()[0]?.webContents.getOSProcessId(),
-  }));
+  const { pids, renderer, host } = await tondo.app.evaluate(
+    ({ app: electronApp, BrowserWindow }) => {
+      const metrics = electronApp.getAppMetrics();
+      return {
+        pids: metrics.map((metric) => metric.pid),
+        renderer: BrowserWindow.getAllWindows()[0]?.webContents.getOSProcessId(),
+        host: metrics.find((metric) => metric.name === "Tondo Host")?.pid,
+      };
+    },
+  );
   const dir = await mkdtemp(path.join(tmpdir(), "tondo-footprint-"));
   try {
     const file = path.join(dir, "footprint.json");
@@ -282,10 +320,16 @@ export async function measureMemory(tondo: Tondo): Promise<Memory> {
       "total footprint": number;
       processes: { pid: number; footprint: number }[];
     };
-    const rendererBytes = report.processes.find((process) => process.pid === renderer)?.footprint;
-    if (rendererBytes === undefined)
-      throw new Error(`footprint didn't report the renderer, pid ${renderer}`);
-    return { total: report["total footprint"], renderer: rendererBytes };
+    const bytesOf = (name: string, pid: number | undefined) => {
+      const bytes = report.processes.find((process) => process.pid === pid)?.footprint;
+      if (bytes === undefined) throw new Error(`footprint didn't report the ${name}, pid ${pid}`);
+      return bytes;
+    };
+    return {
+      total: report["total footprint"],
+      renderer: bytesOf("renderer", renderer),
+      host: bytesOf("host", host),
+    };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

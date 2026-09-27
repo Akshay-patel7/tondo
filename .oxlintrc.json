@@ -37,6 +37,9 @@
     {
       "files": ["src/main/**"],
       "rules": {
+        // Main has no window. Its postMessage calls are to MessagePortMain and
+        // UtilityProcess, which take no target origin.
+        "unicorn/require-post-message-target-origin": "off",
         "no-restricted-imports": [
           "error",
           {
@@ -69,6 +72,9 @@
     {
       "files": ["src/host/**"],
       "rules": {
+        // The host has no window. Its postMessage calls are to MessagePortMain
+        // and parentPort, which take no target origin.
+        "unicorn/require-post-message-target-origin": "off",
         "no-restricted-imports": [
           "error",
           {

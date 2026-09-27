@@ -16,12 +16,19 @@ import {
   measureMemory,
   median,
   percentile,
+  perfRunDir,
   recordPlayback,
   recordSwitch,
   type Memory,
   type PlaybackRecord,
 } from "./perf";
-import { FOLLOW_THRESHOLD_PX, LAST_TRANSCRIPT_ROW, play, waitForTranscript } from "./timeline";
+import {
+  FOLLOW_THRESHOLD_PX,
+  LAST_TRANSCRIPT_ROW,
+  play,
+  waitForReply,
+  waitForTranscript,
+} from "./timeline";
 
 const RUNS = 3;
 const STREAMS = ["stream-1000", "stream-200"] as const;
@@ -84,13 +91,7 @@ const results = {
   screenshots: [] as string[],
 };
 
-const reportDir = path.resolve(
-  __dirname,
-  "..",
-  ".dev",
-  "perf",
-  new Date().toISOString().replaceAll(":", "-").replace(/\..*/, ""),
-);
+const reportDir = perfRunDir();
 
 test.describe.configure({ mode: "serial" });
 
@@ -184,14 +185,6 @@ async function slowDownCpu(page: Page, rate: number): Promise<void> {
   if (rate === 1) return;
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate });
-}
-
-async function waitForReply(page: Page, chars: number): Promise<void> {
-  await page.waitForFunction(
-    (length) => (document.querySelector("[data-streaming]")?.textContent?.length ?? 0) >= length,
-    chars,
-    { polling: 100, timeout: 60_000 },
-  );
 }
 
 async function measureColdStart(): Promise<ColdStart> {
@@ -314,7 +307,7 @@ function formatReport(): string {
   );
 
   return [
-    `# Stage 1 perf report`,
+    `# Streaming perf report`,
     ``,
     `Machine: ${results.machine}. Frame interval ${intervals.length > 0 ? time(median(intervals)) : "not measured"}.`,
     `Medians of ${RUNS} runs, each run in parentheses.`,
@@ -333,6 +326,8 @@ function formatReport(): string {
     perStream("Memory, all processes, after", "baseline", (run) => run.memoryAfter.total, mib),
     perStream("Memory, renderer, before", "baseline", (run) => run.memoryBefore.renderer, mib),
     perStream("Memory, renderer, after", "baseline", (run) => run.memoryAfter.renderer, mib),
+    perStream("Memory, host, before", "", (run) => run.memoryBefore.host, mib),
+    perStream("Memory, host, after", "", (run) => run.memoryAfter.host, mib),
     ``,
     `| Metric | Budget | Result |`,
     `|---|---|---|`,

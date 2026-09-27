@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import type { FixtureName } from "../src/renderer/player/protocol";
+import type { FixtureName } from "../src/shared/protocol";
 
 /**
  * transcript-1000.json holds pi's system prompt and 1,000 messages. The
@@ -25,6 +25,15 @@ export async function play(page: Page, fixture: FixtureName): Promise<void> {
 /** Waits until the player has replayed the whole fixture. */
 export async function waitForPlayback(page: Page, timeout: number): Promise<void> {
   await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle", { timeout });
+}
+
+/** Waits until the reply streaming in is at least `chars` characters long. */
+export async function waitForReply(page: Page, chars: number): Promise<void> {
+  await page.waitForFunction(
+    (length) => (document.querySelector("[data-streaming]")?.textContent?.length ?? 0) >= length,
+    chars,
+    { polling: 100, timeout: 60_000 },
+  );
 }
 
 /** Pixels of content below the bottom of the timeline's viewport. */
