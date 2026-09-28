@@ -3,7 +3,7 @@
 // pi's own status lines.
 import type { ReactNode } from "react";
 import type { CompactionReason, Retry } from "../../shared/thread";
-import { dismissError, restartPi, useHost } from "../connection";
+import { dismissError, restartPi, useHost, usePi } from "../connection";
 import { useThread } from "../thread/store";
 
 const TONES = {
@@ -77,7 +77,7 @@ function compactionText(reason: CompactionReason): string {
 }
 
 export function Banners() {
-  const pi = useHost((host) => host.workspace.pi);
+  const pi = usePi();
   const errors = useHost((host) => host.errors);
   const retry = useThread((thread) => thread.retry);
   const compaction = useThread((thread) => thread.compaction);

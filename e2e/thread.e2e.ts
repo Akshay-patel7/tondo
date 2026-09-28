@@ -7,11 +7,11 @@ import path from "node:path";
 import type { FauxScript } from "../scripts/fixtures/faux-ext";
 import { bringToFront, type Tondo } from "./launch";
 import {
+  addProject,
   bashCall,
   composer,
   failure,
   launchWithPi,
-  openProject,
   PI_START_TIMEOUT_MS,
   recordStatuses,
   reply,
@@ -46,7 +46,7 @@ async function launch(script: FauxScript): Promise<Page> {
   tondo = await launchWithPi({ workDir, script });
   // The page applies pi's events once a frame, and a window you can't see gets no frames.
   await bringToFront(tondo);
-  await openProject(tondo, project);
+  await addProject(tondo, project);
   return tondo.page;
 }
 
@@ -213,12 +213,12 @@ test("a project that needs trust asks first, and Tondo remembers the answer", as
   const settings = JSON.parse(readFileSync(path.join(tondo!.profileDir, "settings.json"), "utf8"));
   expect(settings.projectTrust).toEqual({ [project]: true });
 
-  // Opening the project again starts a new pi without asking. A level you pick
-  // lasts only as long as its pi, so "low" again comes from the new pi, which
-  // didn't wait for an answer and still trusts the project.
+  // A new thread in the project starts a new pi without asking. A level you
+  // pick lasts only as long as its pi, so "low" again comes from the new pi,
+  // which didn't wait for an answer and still trusts the project.
   await thinking.selectOption("high");
   await expect(thinking).toHaveValue("high");
-  await page.getByRole("button", { name: "project", exact: true }).click();
+  await page.keyboard.press("ControlOrMeta+n");
   await expect(thinking).toHaveValue("low", { timeout: PI_START_TIMEOUT_MS });
   await expect(question).not.toBeAttached();
 });

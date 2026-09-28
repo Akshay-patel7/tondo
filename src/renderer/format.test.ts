@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { folderName, formatPercent, formatTokens } from "./format";
+import { folderName, formatAge, formatPercent, formatTokens } from "./format";
 
 describe("folderName", () => {
   test("takes the last part of a path", () => {
@@ -27,5 +27,31 @@ describe("formatPercent", () => {
     expect(formatPercent(9)).toBe("9%");
     expect(formatPercent(9.46)).toBe("9.5%");
     expect(formatPercent(12.6)).toBe("13%");
+  });
+});
+
+describe("formatAge", () => {
+  const now = Date.UTC(2026, 8, 28, 12);
+  const ago = (ms: number) => formatAge(now - ms, now);
+  const minute = 60_000;
+  const day = 24 * 60 * minute;
+
+  test("counts the largest whole unit", () => {
+    expect(ago(59_999)).toBe("now");
+    expect(ago(minute)).toBe("1m");
+    expect(ago(59 * minute)).toBe("59m");
+    expect(ago(60 * minute)).toBe("1h");
+    expect(ago(day - 1)).toBe("23h");
+    expect(ago(day)).toBe("1d");
+    expect(ago(6 * day)).toBe("6d");
+    expect(ago(7 * day)).toBe("1w");
+    expect(ago(29 * day)).toBe("4w");
+    expect(ago(30 * day)).toBe("1mo");
+    expect(ago(364 * day)).toBe("12mo");
+    expect(ago(365 * day)).toBe("1y");
+  });
+
+  test("calls a time from a clock that runs ahead now", () => {
+    expect(formatAge(now + 5 * minute, now)).toBe("now");
   });
 });

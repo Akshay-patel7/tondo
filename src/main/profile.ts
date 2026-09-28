@@ -29,20 +29,27 @@ export interface PiOptionsInput {
   userData: string;
   /** `TONDO_PI_ARGS`: a JSON array of extra arguments for pi, such as tests' faux provider flags. */
   piArgs: string | undefined;
+  /** `TONDO_POOL`: a JSON object that overrides the pool's limits, such as `{"maxLive":1}`, so tests can watch pi stop. */
+  pool: string | undefined;
 }
 
 /**
  * How the host runs pi in this build. Unpackaged runs keep pi's files in the
- * profile rather than ~/.pi/agent, and take extra arguments for pi. A
- * packaged app runs pi as you set it up.
+ * profile rather than ~/.pi/agent, and take extra arguments for pi and limits
+ * for the pool. A packaged app runs pi as you set it up.
  */
 export function piOptions({
   isPackaged,
   userData,
   piArgs,
-}: PiOptionsInput): Pick<HostConfig, "piAgentDir" | "piArgs"> {
+  pool,
+}: PiOptionsInput): Pick<HostConfig, "piAgentDir" | "piArgs" | "pool"> {
   if (isPackaged) return { piArgs: [] };
-  return { piAgentDir: path.join(userData, "pi-agent"), piArgs: parsePiArgs(piArgs) };
+  return {
+    piAgentDir: path.join(userData, "pi-agent"),
+    piArgs: parsePiArgs(piArgs),
+    ...(pool ? { pool: parsePool(pool) } : {}),
+  };
 }
 
 function parsePiArgs(value: string | undefined): string[] {
@@ -57,4 +64,27 @@ function parsePiArgs(value: string | undefined): string[] {
     throw new Error(`TONDO_PI_ARGS must be a JSON array of strings, not ${value}`);
   }
   return args;
+}
+
+function parsePool(value: string): NonNullable<HostConfig["pool"]> {
+  let pool: unknown;
+  try {
+    pool = JSON.parse(value);
+  } catch {
+    // Reported below with every other value that isn't such an object.
+  }
+  const valid =
+    typeof pool === "object" &&
+    pool !== null &&
+    !Array.isArray(pool) &&
+    Object.entries(pool).every(
+      ([key, limit]) =>
+        (key === "maxLive" || key === "idleMs") && Number.isSafeInteger(limit) && limit >= 0,
+    );
+  if (!valid) {
+    throw new Error(
+      `TONDO_POOL must be a JSON object with whole numbers for maxLive and idleMs, not ${value}`,
+    );
+  }
+  return pool as NonNullable<HostConfig["pool"]>;
 }

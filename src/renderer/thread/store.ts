@@ -31,7 +31,7 @@ export function receiveEvents(events: readonly PiEvent[]): void {
 }
 
 /** Shows a whole thread, replacing the one on screen. */
-export function openThread(thread: ThreadState): void {
+export function showThread(thread: ThreadState): void {
   pending = null;
   useThread.setState(thread, true);
   useThreadKey.setState((key) => key + 1, true);

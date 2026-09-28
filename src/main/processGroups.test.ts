@@ -26,6 +26,16 @@ async function startGroup(script: string) {
 /** A shell that forks sleep into its group, so the group has two processes. */
 const SLEEPS = "sleep 60 & echo started; wait";
 
+/**
+ * Perl that keeps its group forking: eight processes that each fork a child
+ * and exit, over and over, ignoring SIGTERM. It stops by itself after 10 s.
+ */
+const FORKING =
+  "exec perl -e '" +
+  '$SIG{TERM} = "IGNORE"; my $start = time; $| = 1; print "started\\n";' +
+  " for (1..7) { last unless fork(); }" +
+  " while (time - $start < 10) { exit 0 if fork(); }'";
+
 describe.skipIf(process.platform === "win32")("stopProcessGroups", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -60,6 +70,14 @@ describe.skipIf(process.platform === "win32")("stopProcessGroups", () => {
     await stopProcessGroups([pgid], 50);
     const [code, signal] = await closed;
     expect({ code, signal }).toEqual({ code: null, signal: "SIGKILL" });
+  });
+
+  // On macOS, one SIGKILL misses a child forked while it goes out.
+  it("kills a group whose processes keep forking", async () => {
+    const { pgid } = await startGroup(FORKING);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await stopProcessGroups([pgid], 1_000);
+    expect(logged).not.toHaveBeenCalled();
   });
 
   it("returns at once for a group that's already gone", async () => {

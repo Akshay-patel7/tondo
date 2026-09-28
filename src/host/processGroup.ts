@@ -27,17 +27,25 @@ export function signalGroup(pgid: number, signal: NodeJS.Signals | 0): boolean {
  */
 export async function drainGroup(pgid: number, graceMs: number): Promise<void> {
   if (!signalGroup(pgid, "SIGTERM") || (await emptiesWithin(pgid, graceMs))) return;
-  signalGroup(pgid, "SIGKILL");
-  // Killed processes stay in the group until their parent reaps them.
-  if (!(await emptiesWithin(pgid, graceMs))) {
+  // Killed processes stay in the group until their parent reaps them. On
+  // macOS, a process that forks while SIGKILL goes out can leave a child
+  // that never gets it, so every check sends SIGKILL again.
+  if (!(await emptiesWithin(pgid, graceMs, "SIGKILL"))) {
     throw new Error(`Process group ${pgid} still has processes after SIGKILL`);
   }
 }
 
-/** Resolves true once group `pgid` has no processes, or false after `ms`. */
-async function emptiesWithin(pgid: number, ms: number): Promise<boolean> {
+/**
+ * Resolves true once group `pgid` has no processes, or false after `ms`.
+ * Each check sends `signal` to the group.
+ */
+async function emptiesWithin(
+  pgid: number,
+  ms: number,
+  signal: NodeJS.Signals | 0 = 0,
+): Promise<boolean> {
   const deadline = performance.now() + ms;
-  while (signalGroup(pgid, 0)) {
+  while (signalGroup(pgid, signal)) {
     if (performance.now() >= deadline) return false;
     // oxlint-disable-next-line eslint/no-await-in-loop -- each check waits for the one before it.
     await delay(POLL_MS);

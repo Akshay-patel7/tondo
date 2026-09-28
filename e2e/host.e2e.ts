@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { bringToFront, hostPid, type Tondo } from "./launch";
 import {
+  addProject,
   launchWithPi,
-  openProject,
   recordStatuses,
   reply,
   send,
@@ -40,7 +40,7 @@ test.beforeEach(async () => {
     script: { tokensPerSecond: TOKENS_PER_SECOND, responses: [reply(ANSWER)] },
   });
   await bringToFront(tondo);
-  await openProject(tondo, project);
+  await addProject(tondo, project);
   await waitForPi(tondo.page);
   await send(tondo.page, "Say something long.");
 });
@@ -50,21 +50,24 @@ test.afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-test("the page reconnects when the host dies mid-stream", async () => {
+test("the page reconnects when the host dies mid-stream, and the thread comes back", async () => {
   const { app, page } = tondo;
   await waitForReply(page, 1);
   const statuses = await recordStatuses(page);
   const killed = await hostPid(app);
   process.kill(killed, "SIGKILL");
 
-  // The new host has no project open. Stage 5 keeps threads across restarts.
-  await expect(page.getByRole("button", { name: "Open project…" })).toBeEnabled();
-  expect(await statuses.jsonValue()).toEqual(["Reconnecting…"]);
+  await expect.poll(() => statuses.jsonValue()).toEqual(["Reconnecting…"]);
   await expect(page.getByRole("status")).toHaveCount(0);
   expect(await hostPid(app)).not.toBe(killed);
 
+  // The new host reopens the thread from Tondo's store. pi saves a session
+  // once its first reply ends, so the new pi starts the thread empty.
+  await expect(page.locator("[data-streaming]")).toHaveCount(0);
+  await expect(page.getByRole("navigation").getByRole("listitem")).toHaveCount(1);
+  await expect(page.locator("nav [aria-current=page]")).toHaveCount(1);
+
   // The new port carries messages both ways. The new pi starts the faux script again.
-  await openProject(tondo, project);
   await waitForPi(page);
   await send(page, "Say it again.");
   await waitForReply(page, 1);

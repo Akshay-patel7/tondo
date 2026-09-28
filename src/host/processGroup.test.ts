@@ -4,11 +4,21 @@ import { describe, expect, it } from "vitest";
 import { drainGroup, signalGroup } from "./processGroup";
 
 /**
- * Starts node running `script` as the leader of a new process group, and
- * resolves once the script has printed its first line.
+ * Perl that keeps its group forking: eight processes that each fork a child
+ * and exit, over and over, ignoring SIGTERM. It stops by itself after 10 s.
  */
-async function startGroup(script: string) {
-  const leader = spawn(process.execPath, ["-e", script], {
+const FORKING =
+  '$SIG{TERM} = "IGNORE"; my $start = time; $| = 1; print "ready\\n";' +
+  " for (1..7) { last unless fork(); }" +
+  " while (time - $start < 10) { exit 0 if fork(); }";
+
+/**
+ * Starts `program`, node unless a test picks another, running `script` as
+ * the leader of a new process group, and resolves once the script has
+ * printed its first line.
+ */
+async function startGroup(script: string, program = process.execPath) {
+  const leader = spawn(program, ["-e", script], {
     detached: true,
     stdio: ["ignore", "pipe", "inherit"],
   });
@@ -35,6 +45,13 @@ describe("drainGroup", () => {
     const exit = once(leader, "exit");
     await drainGroup(pgid, 100);
     expect(await exit).toEqual([null, "SIGKILL"]);
+    expect(signalGroup(pgid, 0)).toBe(false);
+  });
+
+  // On macOS, one SIGKILL misses a child forked while it goes out.
+  it("kills a group whose processes keep forking", async () => {
+    const { pgid } = await startGroup(FORKING, "perl");
+    await drainGroup(pgid, 1_000);
     expect(signalGroup(pgid, 0)).toBe(false);
   });
 

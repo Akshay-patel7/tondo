@@ -17,7 +17,8 @@ test("opens one window with the app in it", async () => {
   expect(app.windows()).toHaveLength(1);
   expect(page.url()).toBe("tondo://app/");
   await expect(page).toHaveTitle("Tondo");
-  await expect(page.getByRole("banner")).toContainText("Tondo");
+  await expect(page.getByRole("navigation", { name: "Threads" })).toContainText("No projects yet.");
+  await expect(page.getByRole("button", { name: "Add project…" })).toBeEnabled();
 
   const screenshot = await page.screenshot({ path: test.info().outputPath("window.png") });
   await test.info().attach("window", { body: screenshot, contentType: "image/png" });

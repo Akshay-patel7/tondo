@@ -3,10 +3,10 @@
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import type { KeyboardEvent } from "react";
 import type { PiStatus, StreamingBehavior } from "../../shared/protocol";
-import { dequeue, prompt, stop, useHost } from "../connection";
+import { dequeue, editDraft, prompt, stop, usePi } from "../connection";
 import { useThread } from "../thread/store";
 import { ContextMeter } from "./ContextMeter";
-import { setDraft, useDraft } from "./draft";
+import { useDraft } from "./draft";
 import { composerAction } from "./keys";
 import { ModelPicker, ThinkingPicker } from "./SessionControls";
 
@@ -18,7 +18,7 @@ function placeholder(pi: PiStatus, working: boolean): string {
 
 export function Composer() {
   const draft = useDraft((text) => text);
-  const pi = useHost((host) => host.workspace.pi);
+  const pi = usePi();
   const working = useThread((thread) => thread.running || thread.compaction !== null);
   const queued = useThread(
     (thread) => thread.queue.steering.length + thread.queue.followUp.length > 0,
@@ -28,8 +28,10 @@ export function Composer() {
 
   const send = (streamingBehavior: StreamingBehavior) => {
     if (!canSend) return;
+    // Clearing first saves the empty draft ahead of the prompt, so the host
+    // never keeps text you sent as the thread's draft.
+    editDraft("");
     prompt(text, streamingBehavior);
-    setDraft("");
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -56,7 +58,7 @@ export function Composer() {
       <textarea
         aria-label="Message"
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => editDraft(event.target.value)}
         onKeyDown={onKeyDown}
         rows={3}
         placeholder={placeholder(pi, working)}
