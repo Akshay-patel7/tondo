@@ -1,85 +1,105 @@
 // What the page shows when a process dies or the page reloads mid-stream.
 // Main restarts the host or reloads the page and hands the page a new port,
-// and the host answers every new port with the thread as it stands.
-import { expect, test, type Page } from "@playwright/test";
-import { bringToFront, hostPid, launchTondo, type Tondo } from "./launch";
-import { LAST_TRANSCRIPT_ROW, play, waitForReply, waitForTranscript } from "./timeline";
+// and the host answers every new port with what it has.
+import { expect, test } from "@playwright/test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { bringToFront, hostPid, type Tondo } from "./launch";
+import {
+  launchWithPi,
+  openProject,
+  recordStatuses,
+  reply,
+  send,
+  waitForIdle,
+  waitForPi,
+  words,
+} from "./pi";
+import { waitForReply } from "./timeline";
 
-/** Interrupt the stream once the reply is this long, about a quarter of it. */
-const INTERRUPT_AT_CHARS = 20_000;
+/** Plain words, so every piece of the reply the page shows is the start of the whole. */
+const ANSWER = words(4000);
+/** The reply's 35,000 characters stream for about 17 s. */
+const TOKENS_PER_SECOND = 500;
+/** Interrupt the stream once the reply is this long. */
+const INTERRUPT_AT_CHARS = 5_000;
 
+test.describe.configure({ timeout: 90_000 });
+
+let workDir: string;
+let project: string;
 let tondo: Tondo;
 
 test.beforeEach(async () => {
-  tondo = await launchTondo();
+  workDir = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-host-e2e-")));
+  project = path.join(workDir, "project");
+  mkdirSync(project);
+  tondo = await launchWithPi({
+    workDir,
+    script: { tokensPerSecond: TOKENS_PER_SECOND, responses: [reply(ANSWER)] },
+  });
   await bringToFront(tondo);
-  await waitForTranscript(tondo.page);
+  await openProject(tondo, project);
+  await waitForPi(tondo.page);
+  await send(tondo.page, "Say something long.");
 });
 
 test.afterEach(async () => {
   await tondo.close();
+  rmSync(workDir, { recursive: true, force: true });
 });
 
 test("the page reconnects when the host dies mid-stream", async () => {
   const { app, page } = tondo;
-  await play(page, "stream-1000");
   await waitForReply(page, 1);
   const statuses = await recordStatuses(page);
   const killed = await hostPid(app);
   process.kill(killed, "SIGKILL");
 
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle");
-  expect(await statuses.evaluate((seen) => seen)).toEqual([
-    { status: "reconnecting", notice: "Reconnecting…" },
-    { status: "idle", notice: null },
-  ]);
+  // The new host has no project open. Stage 5 keeps threads across restarts.
+  await expect(page.getByRole("button", { name: "Open project…" })).toBeEnabled();
+  expect(await statuses.jsonValue()).toEqual(["Reconnecting…"]);
+  await expect(page.getByRole("status")).toHaveCount(0);
   expect(await hostPid(app)).not.toBe(killed);
-  // The new host opened the transcript afresh. The reply died with the old one.
-  await expect(page.locator(`[data-index="${LAST_TRANSCRIPT_ROW}"]`)).toBeInViewport();
-  await expect(page.locator(`[data-index="${LAST_TRANSCRIPT_ROW + 1}"]`)).not.toBeAttached();
 
-  // The new port carries messages both ways.
-  await play(page, "stream-1000");
-  await page.getByRole("button", { name: "Stop" }).click();
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle");
+  // The new port carries messages both ways. The new pi starts the faux script again.
+  await openProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Say it again.");
+  await waitForReply(page, 1);
 });
 
 test("a reloaded page picks the stream up where it is", async () => {
   const { page } = tondo;
-  await play(page, "stream-1000");
   await waitForReply(page, INTERRUPT_AT_CHARS);
 
+  // Records each text the reply shows in the reloaded page, from its first render.
+  await page.addInitScript(() => {
+    const texts: string[] = [];
+    Object.assign(window, { tondoReplyTexts: texts });
+    new MutationObserver(() => {
+      const text = document.querySelector("[data-streaming]")?.textContent?.trim();
+      if (text && text !== texts.at(-1)) texts.push(text);
+    }).observe(document, { childList: true, subtree: true, characterData: true });
+  });
   await page.reload();
-  // The reply is back as soon as it shows, so it came with the host's snapshot.
-  const reply = page.locator("[data-streaming]");
-  await expect(reply).toBeAttached();
-  expect(await reply.evaluate((row) => row.textContent?.length ?? 0)).toBeGreaterThanOrEqual(
-    INTERRUPT_AT_CHARS,
-  );
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "playing");
+  await expect(page.locator("[data-streaming]")).toBeAttached();
+  await waitForIdle(page, { timeout: 60_000 });
 
-  // The page builds the rest of the reply from batches. Stop freezes the
-  // thread mid-reply, before pi's final message could cover a lost batch.
-  await waitForReply(page, 2 * INTERRUPT_AT_CHARS);
-  await page.getByRole("button", { name: "Stop" }).click();
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle");
-  // Batches that arrived before the stop show on the next frame.
-  await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  const texts = await page.evaluate(
+    () => (window as typeof window & { tondoReplyTexts: string[] }).tondoReplyTexts,
   );
-
-  // What the page built has to match the host's copy, which Reopen sends whole.
-  const streamed = await lastRow(page);
-  const timeline = await page.getByTestId("timeline").elementHandle();
-  await page.getByRole("button", { name: "Reopen" }).click();
-  // The reopened thread mounts a new timeline. Code blocks highlight after it mounts.
-  await timeline?.waitForElementState("hidden");
-  await expect.poll(() => lastRow(page)).toEqual(streamed);
+  // The first text came whole with the host's snapshot. The page built the
+  // rest from batches, and lost none: each text is the start of pi's reply.
+  expect(texts[0]?.length).toBeGreaterThanOrEqual(INTERRUPT_AT_CHARS);
+  expect(texts.length).toBeGreaterThan(10);
+  expect(texts.filter((text) => !ANSWER.startsWith(text))).toEqual([]);
+  await expect(page.locator('[data-index="1"]')).toHaveText(ANSWER);
 });
 
 test("the page comes back after its renderer crashes", async () => {
-  const { app, page } = tondo;
-  await play(page, "stream-1000");
+  const { app } = tondo;
 
   // Main waits for the reply, crashes the renderer and reads the reloaded
   // page, so Playwright stays off the page. Playwright gives up on a page
@@ -89,14 +109,13 @@ test("the page comes back after its renderer crashes", async () => {
   // the test. page.waitForFunction leaves one in flight as it returns.
   const replyLength = await app.evaluate(async ({ BrowserWindow }, chars) => {
     const contents = BrowserWindow.getAllWindows()[0]!.webContents;
-    // Resolves with the reply's length once the player is playing and the
-    // reply has at least `min` characters.
+    // Resolves with the length of the reply, streaming or done, once it has
+    // at least `min` characters.
     const replyAtLeast = (min: number) =>
       contents.executeJavaScript(`new Promise((resolve) => {
         const check = () => {
-          const status = document.querySelector("[data-testid=player]")?.dataset.status;
-          const reply = document.querySelector("[data-streaming]");
-          if (status === "playing" && reply && reply.textContent.length >= ${min}) {
+          const reply = document.querySelector('[data-index="1"]');
+          if (reply && reply.textContent.length >= ${min}) {
             resolve(reply.textContent.length);
           } else {
             requestAnimationFrame(check);
@@ -109,43 +128,8 @@ test("the page comes back after its renderer crashes", async () => {
     const reloaded = new Promise<void>((resolve) => contents.once("dom-ready", () => resolve()));
     contents.forcefullyCrashRenderer();
     await reloaded;
-    return replyAtLeast(0);
+    return replyAtLeast(1);
   }, INTERRUPT_AT_CHARS);
   // As with a reload, the reply came back whole with the host's snapshot.
   expect(replyLength).toBeGreaterThanOrEqual(INTERRUPT_AT_CHARS);
 });
-
-/**
- * Records each status the player controls show from now on, with the notice
- * beside it. It watches the DOM, so it catches states too brief to poll for.
- */
-function recordStatuses(page: Page) {
-  return page.evaluateHandle(() => {
-    const player = document.querySelector<HTMLElement>("[data-testid=player]");
-    if (!player) throw new Error("The player controls aren't on the page");
-    const seen: { status: string | undefined; notice: string | null }[] = [];
-    new MutationObserver(() => {
-      seen.push({
-        status: player.dataset.status,
-        notice: player.querySelector("[role=status]")?.textContent ?? null,
-      });
-    }).observe(player, { attributeFilter: ["data-status"] });
-    return seen;
-  });
-}
-
-/** The timeline's last row, which is rendered while the timeline follows the end. */
-function lastRow(page: Page): Promise<{ index: number; text: string | null }> {
-  return page.locator("[data-index]").evaluateAll((rows) => {
-    let index = -1;
-    let text: string | null = null;
-    for (const row of rows) {
-      const rowIndex = Number(row.getAttribute("data-index"));
-      if (rowIndex > index) {
-        index = rowIndex;
-        text = row.textContent;
-      }
-    }
-    return { index, text };
-  });
-}

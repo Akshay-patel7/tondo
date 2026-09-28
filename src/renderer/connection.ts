@@ -1,49 +1,65 @@
 // The page's end of its MessagePort to the host. Main hands the page a port
 // on every load and whenever the host restarts. The host answers each port
-// with a snapshot of the thread, and after that sends only batches of events.
+// with a snapshot of the workspace and its thread, and after that sends only
+// what changes.
 import { create } from "zustand";
 import {
   PORT_MESSAGE,
   PROTOCOL_VERSION,
   type ClientMessage,
-  type FixtureName,
   type HostMessage,
-  type PlayerStatus,
+  type StreamingBehavior,
+  type ThinkingLevel,
+  type Workspace,
 } from "../shared/protocol";
+import { restoreToDraft } from "./composer/draft";
 import { openThread, receiveEvents } from "./thread/store";
 
 type Connection = "connecting" | "connected" | "reconnecting";
 
 export const useHost = create<{
   connection: Connection;
-  /** The fixture player's status, as of the host's last message. */
-  status: PlayerStatus;
-  error: string | null;
-}>()(() => ({ connection: "connecting", status: "idle", error: null }));
+  workspace: Workspace;
+  /** Errors the host reported, oldest first, until you dismiss them. */
+  errors: readonly string[];
+}>()(() => ({
+  connection: "connecting",
+  workspace: { project: null, askingTrust: false, pi: { state: "stopped" } },
+  errors: [],
+}));
 
 const v = PROTOCOL_VERSION;
 let port: MessagePort | undefined;
 
 function fail(message: string): void {
   console.error(`Tondo Host: ${message}`);
-  useHost.setState({ error: message });
+  useHost.setState(({ errors }) =>
+    errors.includes(message) ? {} : { errors: [...errors, message] },
+  );
+}
+
+export function dismissError(message: string): void {
+  useHost.setState(({ errors }) => ({ errors: errors.filter((error) => error !== message) }));
 }
 
 function receive(message: HostMessage): void {
   if (message.v !== PROTOCOL_VERSION) {
-    fail(`sent protocol version ${message.v}, but the page speaks ${PROTOCOL_VERSION}`);
+    fail(`The host speaks protocol version ${message.v}, but the page speaks ${PROTOCOL_VERSION}.`);
     return;
   }
   switch (message.type) {
     case "snapshot":
       openThread(message.thread);
-      useHost.setState({ connection: "connected", status: message.status });
+      useHost.setState({ connection: "connected", workspace: message.workspace });
       break;
     case "events":
       receiveEvents(message.events);
       break;
-    case "player":
-      useHost.setState({ status: message.status });
+    case "workspace":
+      useHost.setState({ workspace: message.workspace });
+      break;
+    case "restore":
+      restoreToDraft(message.text);
       break;
     case "pong":
       break;
@@ -78,16 +94,35 @@ function send(message: ClientMessage): void {
   port.postMessage(message);
 }
 
-export function play(fixture: FixtureName, speed: number): void {
-  useHost.setState({ error: null });
-  send({ v, type: "play", fixture, speed });
+/** Shows the folder dialog and opens a thread in the folder you pick. */
+export function openProject(): void {
+  send({ v, type: "open-project" });
+}
+
+export function answerTrust(trusted: boolean): void {
+  send({ v, type: "trust", trusted });
+}
+
+export function prompt(text: string, streamingBehavior: StreamingBehavior): void {
+  send({ v, type: "prompt", text, streamingBehavior });
 }
 
 export function stop(): void {
   send({ v, type: "stop" });
 }
 
-/** Stands in for switching back to this thread: the timeline mounts from a fresh copy. */
-export function reopen(): void {
-  send({ v, type: "reopen" });
+export function dequeue(): void {
+  send({ v, type: "dequeue" });
+}
+
+export function setModel(provider: string, modelId: string): void {
+  send({ v, type: "set-model", provider, modelId });
+}
+
+export function setThinkingLevel(level: ThinkingLevel): void {
+  send({ v, type: "set-thinking-level", level });
+}
+
+export function restartPi(): void {
+  send({ v, type: "restart" });
 }

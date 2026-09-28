@@ -1,42 +1,44 @@
 // oxlint-disable eslint/no-await-in-loop -- runs take turns, each one measuring a single app in front.
-// The Stage 1 perf scenarios from docs/plan.md, "Performance budgets". Each
-// run launches Tondo in a visible window kept on top, because Electron
-// throttles frames in windows you can't see. `pnpm perf` runs them all and
-// writes results.json, report.md and the screenshots to .dev/perf/<time>/.
+// The perf scenarios from docs/plan.md, "Performance budgets", on the live
+// pipeline: the faux pi streams a 20,000-token reply into a thread that holds
+// the recorded 1,000-message transcript. Each run launches Tondo in a visible
+// window kept on top, because Electron throttles frames in windows you can't
+// see. `pnpm perf` runs them all and writes results.json, report.md and the
+// screenshots to .dev/perf/<time>/.
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { READY_MARK } from "../src/shared/ready";
-import { bringToFront, launchTondo, type Tondo } from "./launch";
 import {
-  fixtureDuration,
+  listenOnPort,
   measureFrameInterval,
   measureMemory,
   median,
   percentile,
   perfRunDir,
-  recordPlayback,
-  recordSwitch,
+  recordStream,
+  switchThread,
   type Memory,
-  type PlaybackRecord,
+  type StreamRecord,
 } from "./perf";
+import { composer, longReply, openProject, send, waitForIdle } from "./pi";
 import {
   FOLLOW_THRESHOLD_PX,
-  LAST_TRANSCRIPT_ROW,
-  play,
+  launchOnTranscript,
+  openTranscript,
   waitForReply,
-  waitForTranscript,
+  type TranscriptTondo,
 } from "./timeline";
 
 const RUNS = 3;
-const STREAMS = ["stream-1000", "stream-200"] as const;
-type StreamFixture = (typeof STREAMS)[number];
-const TOKENS_PER_SECOND: Record<StreamFixture, string> = {
-  "stream-1000": "1,000",
-  "stream-200": "200",
-};
+/** Tokens per second. */
+const RATES = [1000, 200] as const;
+type Rate = (typeof RATES)[number];
+const PROMPT = "Walk me through the parser rewrite, with code.";
+/** The reply `pnpm fixtures` recorded from the faux model, markdown with code. */
+const REPLY = longReply();
 /** Switch threads once the reply on screen is this long, about a quarter of it. */
 const SWITCH_AT_CHARS = 20_000;
 const WORDS = ["the ", "quick ", "brown ", "fox ", "jumps ", "over ", "a ", "lazy ", "dog "];
@@ -54,7 +56,7 @@ const BUDGET = {
 
 interface StreamRun {
   frameInterval: number;
-  playedMs: number;
+  streamedMs: number;
   frames: number;
   frameP95: number;
   frameP99: number;
@@ -65,7 +67,7 @@ interface StreamRun {
   keys: number;
   /** 0 when fewer than 5% of keys took 16 ms or more. */
   inputP95: number;
-  slowFrames: PlaybackRecord["slowFrames"];
+  slowFrames: StreamRecord["slowFrames"];
   /** The longest the view stayed more than FOLLOW_THRESHOLD_PX short of the end. */
   longestLag: number;
   memoryBefore: Memory;
@@ -73,19 +75,19 @@ interface StreamRun {
 }
 
 interface ColdStart {
-  /** From launch to the first painted frame, when the composer takes input. */
+  /** From launch to the first painted frame, when the window takes input. */
   interactiveMs: number;
-  /** From launch to the transcript's last row on screen. An upper bound. */
-  transcriptMs: number;
+  /** From the click on Open project… to the transcript's last row on screen. It includes starting pi. */
+  openMs: number;
 }
 
 const results = {
   machine: `${os.cpus()[0]?.model}, ${Math.round(os.totalmem() / 2 ** 30)} GB, macOS ${execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim()}`,
   coldStarts: [] as ColdStart[],
-  streams: { "stream-1000": [] as StreamRun[], "stream-200": [] as StreamRun[] },
+  streams: { 1000: [] as StreamRun[], 200: [] as StreamRun[] },
   switches: [] as number[],
   slowdown: {
-    streams: {} as Partial<Record<StreamFixture, StreamRun>>,
+    streams: {} as Partial<Record<Rate, StreamRun>>,
     switchMs: undefined as number | undefined,
   },
   screenshots: [] as string[],
@@ -104,14 +106,14 @@ test.afterAll(async () => {
 });
 
 test("cold start", async () => {
+  test.setTimeout(RUNS * 60_000);
   for (let run = 0; run < RUNS; run++) results.coldStarts.push(await measureColdStart());
 });
 
-for (const fixture of STREAMS) {
-  test(`streaming at ${TOKENS_PER_SECOND[fixture]} tokens per second`, async () => {
-    test.setTimeout(RUNS * ((await fixtureDuration(fixture)) + 60_000));
-    for (let run = 0; run < RUNS; run++)
-      results.streams[fixture].push(await measureStream(fixture));
+for (const rate of RATES) {
+  test(`streaming at ${rate.toLocaleString("en-US")} tokens per second`, async () => {
+    test.setTimeout(RUNS * (leastStreamMs(rate) + 60_000));
+    for (let run = 0; run < RUNS; run++) results.streams[rate].push(await measureStream(rate));
   });
 }
 
@@ -122,15 +124,16 @@ test("switching to a thread whose pi is running", async () => {
 
 test("at 4x CPU slowdown, for information", async () => {
   test.setTimeout(10 * 60_000);
-  for (const fixture of STREAMS)
-    results.slowdown.streams[fixture] = await measureStream(fixture, 4);
+  for (const rate of RATES) results.slowdown.streams[rate] = await measureStream(rate, 4);
   results.slowdown.switchMs = await measureSwitch(4);
 });
 
 test("screenshots mid-stream", async () => {
   await mkdir(reportDir, { recursive: true });
-  await withTondo(async ({ page }) => {
-    await play(page, "stream-1000");
+  await withTondo(1000, async (tondo) => {
+    const { page } = tondo;
+    await openTranscript(tondo);
+    await send(page, PROMPT);
     for (const [index, chars] of [20_000, 50_000].entries()) {
       await waitForReply(page, chars);
       const file = path.join(reportDir, `mid-stream-${index + 1}.png`);
@@ -141,21 +144,21 @@ test("screenshots mid-stream", async () => {
 });
 
 test("budgets", () => {
-  for (const fixture of STREAMS) {
-    const runs = results.streams[fixture];
-    const rate = `${TOKENS_PER_SECOND[fixture]} tokens per second`;
+  for (const rate of RATES) {
+    const runs = results.streams[rate];
+    const at = `at ${rate.toLocaleString("en-US")} tokens per second`;
     expect
-      .soft(median(runs.map((run) => run.frameP95)), `frame time p95 at ${rate}`)
+      .soft(median(runs.map((run) => run.frameP95)), `frame time p95 ${at}`)
       .toBeLessThanOrEqual(BUDGET.frameP95);
     expect
-      .soft(median(runs.map((run) => run.frameP99)), `frame time p99 at ${rate}`)
+      .soft(median(runs.map((run) => run.frameP99)), `frame time p99 ${at}`)
       .toBeLessThanOrEqual(BUDGET.frameP99);
-    expect.soft(median(runs.map((run) => run.longTasks)), `long tasks at ${rate}`).toBe(0);
+    expect.soft(median(runs.map((run) => run.longTasks)), `long tasks ${at}`).toBe(0);
     expect
-      .soft(median(runs.map((run) => run.inputP95)), `input to paint p95 at ${rate}`)
+      .soft(median(runs.map((run) => run.inputP95)), `input to paint p95 ${at}`)
       .toBeLessThanOrEqual(BUDGET.inputP95);
     expect
-      .soft(median(runs.map((run) => run.longestLag)), `time behind the end at ${rate}`)
+      .soft(median(runs.map((run) => run.longestLag)), `time behind the end ${at}`)
       .toBeLessThanOrEqual(BUDGET.lagMs);
   }
   expect
@@ -167,14 +170,29 @@ test("budgets", () => {
 });
 
 /**
- * Launches Tondo in front with `gc()` exposed for measureMemory, waits for
- * the transcript, runs `body` and quits.
+ * The least time the faux model takes to stream the reply at `rate` tokens
+ * per second. Before each chunk of text it waits the chunk's length over 4,
+ * rounded up, over `rate` seconds.
  */
-async function withTondo<T>(body: (tondo: Tondo) => Promise<T>): Promise<T> {
-  const tondo = await launchTondo({ exposeGc: true });
+function leastStreamMs(rate: Rate): number {
+  const chars = REPLY.content.reduce(
+    (sum, block) => sum + (block.type === "text" ? block.text.length : 0),
+    0,
+  );
+  return (chars / 4 / rate) * 1000;
+}
+
+/**
+ * Launches Tondo in front on the transcript, with `gc()` exposed for
+ * measureMemory and the faux pi set to stream the reply at `rate`. Runs
+ * `body` and quits.
+ */
+async function withTondo<T>(rate: Rate, body: (tondo: TranscriptTondo) => Promise<T>): Promise<T> {
+  const tondo = await launchOnTranscript({
+    script: { tokensPerSecond: rate, responses: [REPLY] },
+    exposeGc: true,
+  });
   try {
-    await bringToFront(tondo);
-    await waitForTranscript(tondo.page);
     return await body(tondo);
   } finally {
     await tondo.close();
@@ -187,61 +205,71 @@ async function slowDownCpu(page: Page, rate: number): Promise<void> {
   await cdp.send("Emulation.setCPUThrottlingRate", { rate });
 }
 
+/** Launches Tondo, then opens the transcript's project, as you would after launch. */
 async function measureColdStart(): Promise<ColdStart> {
-  const tondo = await launchTondo();
+  const tondo = await launchOnTranscript({ script: { responses: [] } });
   try {
     const { page, launchedAt } = tondo;
     const readyAt = await page.evaluate(
       (mark) => performance.timeOrigin + performance.getEntriesByName(mark)[0]!.startTime,
       READY_MARK,
     );
-    await bringToFront(tondo);
-    // The check starts after the window is ready, so it can only run late.
-    const transcriptAt = await page.evaluate(
-      (row) =>
-        new Promise<number>((resolve) => {
-          const onFrame = () => {
+    const opened = await page.evaluateHandle((row) => {
+      const done = new Promise<number>((resolve) => {
+        const onClick = (click: MouseEvent) => {
+          let onScreen = false;
+          const onFrame = (time: number) => {
+            // The state checked in the previous frame painted before this one began.
+            if (onScreen) {
+              resolve(time - click.timeStamp);
+              return;
+            }
             const scroller = document.querySelector("[data-testid=timeline]")?.firstElementChild;
             const last = document.querySelector(`[data-index="${row}"]`);
             if (scroller && last) {
               const view = scroller.getBoundingClientRect();
               const rect = last.getBoundingClientRect();
-              if (rect.bottom > view.top && rect.top < view.bottom) {
-                resolve(performance.timeOrigin + performance.now());
-                return;
-              }
+              onScreen = rect.bottom > view.top && rect.top < view.bottom;
             }
             requestAnimationFrame(onFrame);
           };
-          onFrame();
-        }),
-      LAST_TRANSCRIPT_ROW,
-    );
-    return { interactiveMs: readyAt - launchedAt, transcriptMs: transcriptAt - launchedAt };
+          requestAnimationFrame(onFrame);
+        };
+        addEventListener("click", onClick, { capture: true, once: true });
+      });
+      return { done };
+    }, tondo.messages - 1);
+    await openProject(tondo, tondo.project);
+    const openMs = await opened.evaluate(({ done }) => done);
+    return { interactiveMs: readyAt - launchedAt, openMs };
   } finally {
     await tondo.close();
   }
 }
 
-/** Plays a fixture while typing into the composer at 10 keys per second. */
-async function measureStream(fixture: StreamFixture, cpuSlowdown = 1): Promise<StreamRun> {
-  const duration = await fixtureDuration(fixture);
-  return withTondo(async (tondo) => {
+/** Sends the prompt and types into the composer at 10 keys per second while pi streams the reply. */
+async function measureStream(rate: Rate, cpuSlowdown = 1): Promise<StreamRun> {
+  return withTondo(rate, async (tondo) => {
     const { page } = tondo;
+    await openTranscript(tondo);
     const frameInterval = await measureFrameInterval(page);
     const memoryBefore = await measureMemory(tondo);
     await slowDownCpu(page, cpuSlowdown);
-    const finished = await recordPlayback(page, FOLLOW_THRESHOLD_PX);
-    await play(page, fixture);
-    await page.getByLabel("Message").focus();
-    const player = page.getByTestId("player");
-    for (let word = 0; (await player.getAttribute("data-status")) === "playing"; word++) {
+    const finished = await recordStream(page, FOLLOW_THRESHOLD_PX);
+    await send(page, PROMPT);
+    const streaming = page.locator("[data-streaming]");
+    await expect(streaming).toBeAttached();
+    await composer(page).focus();
+    for (let word = 0; (await streaming.count()) > 0; word++) {
       await page.keyboard.type(WORDS[word % WORDS.length]!, { delay: 100 });
     }
     const record = await finished();
+    await waitForIdle(page);
     const memoryAfter = await measureMemory(tondo);
 
-    expect(record.playedMs, "the player played the whole fixture").toBeGreaterThanOrEqual(duration);
+    expect(record.streamedMs, "pi streamed the whole reply").toBeGreaterThanOrEqual(
+      leastStreamMs(rate),
+    );
     expect(record.keys, "the keys reached the page").toBeGreaterThan(0);
     expect(record.timedKeys, "Event Timing saw every key").toBeGreaterThanOrEqual(record.keys);
     const frameTimes = record.frames.slice(1).map((time, index) => time - record.frames[index]!);
@@ -249,7 +277,7 @@ async function measureStream(fixture: StreamFixture, cpuSlowdown = 1): Promise<S
     const unreported = Math.max(0, record.keys - record.slowKeys.length);
     return {
       frameInterval,
-      playedMs: record.playedMs,
+      streamedMs: record.streamedMs,
       frames: record.frames.length,
       frameP95: percentile(frameTimes, 95),
       frameP99: percentile(frameTimes, 99),
@@ -266,15 +294,16 @@ async function measureStream(fixture: StreamFixture, cpuSlowdown = 1): Promise<S
   });
 }
 
-/** Reopens the thread while pi streams into it, the stand-in for switching to it. */
+/** Switches to the thread again while pi streams into it. */
 async function measureSwitch(cpuSlowdown = 1): Promise<number> {
-  return withTondo(async ({ page }) => {
+  return withTondo(1000, async (tondo) => {
+    const { page } = tondo;
+    await listenOnPort(tondo);
+    await openTranscript(tondo);
     await slowDownCpu(page, cpuSlowdown);
-    await play(page, "stream-1000");
+    await send(page, PROMPT);
     await waitForReply(page, SWITCH_AT_CHARS);
-    const switched = await recordSwitch(page, FOLLOW_THRESHOLD_PX);
-    await page.getByRole("button", { name: "Reopen" }).click();
-    return switched();
+    return switchThread(page, FOLLOW_THRESHOLD_PX);
   });
 }
 
@@ -295,22 +324,20 @@ function formatReport(): string {
     pick: (run: StreamRun) => number,
     format = time,
   ) =>
-    `| ${label} | ${budget} | ${STREAMS.map((fixture) => runs(results.streams[fixture].map(pick), format)).join(" | ")} |`;
+    `| ${label} | ${budget} | ${RATES.map((rate) => runs(results.streams[rate].map(pick), format)).join(" | ")} |`;
   const slow = (pick: (run: StreamRun) => number, format = time) =>
-    STREAMS.map((fixture) => {
-      const run = results.slowdown.streams[fixture];
+    RATES.map((rate) => {
+      const run = results.slowdown.streams[rate];
       return run ? format(pick(run)) : "not run";
     }).join(" | ");
   const behindLabel = `Longest time more than ${FOLLOW_THRESHOLD_PX} px short of the end`;
-  const intervals = STREAMS.flatMap((fixture) =>
-    results.streams[fixture].map((run) => run.frameInterval),
-  );
+  const intervals = RATES.flatMap((rate) => results.streams[rate].map((run) => run.frameInterval));
 
   return [
     `# Streaming perf report`,
     ``,
     `Machine: ${results.machine}. Frame interval ${intervals.length > 0 ? time(median(intervals)) : "not measured"}.`,
-    `Medians of ${RUNS} runs, each run in parentheses.`,
+    `Medians of ${RUNS} runs, each run in parentheses. Memory counts Tondo's processes, not pi's.`,
     ``,
     `| Metric | Budget | 1,000 tok/s | 200 tok/s |`,
     `|---|---|---|---|`,
@@ -336,8 +363,8 @@ function formatReport(): string {
       results.coldStarts.map((run) => run.interactiveMs),
       time,
     )} |`,
-    `| Cold start, transcript on screen (upper bound) | | ${runs(
-      results.coldStarts.map((run) => run.transcriptMs),
+    `| Opening a project, to its transcript on screen (starts pi) | | ${runs(
+      results.coldStarts.map((run) => run.openMs),
       time,
     )} |`,
     ``,

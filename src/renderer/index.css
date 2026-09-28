@@ -4,6 +4,77 @@
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../node_modules/@streamdown/code/dist/*.js";
 
+/*
+ * Components color themselves with these names, never with palette colors, so
+ * the look changes here alone. The names follow shadcn's, which streamdown uses
+ * too. The values below are T3 Code's (apps/web/src/index.css).
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-message: var(--message);
+  --color-message-foreground: var(--message-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --radius-control: var(--control-radius);
+  --radius-panel: var(--panel-radius);
+  --shadow-composer: var(--composer-shadow);
+}
+
+:root {
+  color-scheme: light dark;
+  --background: oklch(99.2% 0 0);
+  --foreground: oklch(27.4% 0.006 286.033);
+  --card: oklch(100% 0 0);
+  --message: oklch(96.7% 0.001 286.375);
+  --message-foreground: var(--foreground);
+  --muted: oklch(98.5% 0 0);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(21% 0.006 285.885);
+  --primary: oklch(48.8% 0.217 264);
+  --primary-foreground: oklch(100% 0 0);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(100% 0 0);
+  --warning: oklch(55.5% 0.163 48.998);
+  --border: oklch(92% 0.004 286.32);
+  --ring: var(--primary);
+  --sidebar: oklch(98.5% 0 0);
+  --control-radius: 0.5rem;
+  --panel-radius: 1rem;
+  --composer-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(14.5% 0 0);
+    --foreground: oklch(97% 0 0);
+    --card: color-mix(in srgb, var(--background) 97%, white);
+    --message: color-mix(in srgb, var(--background) 90%, white);
+    --muted: rgb(255 255 255 / 3%);
+    --muted-foreground: color-mix(in srgb, oklch(55.6% 0 0) 90%, white);
+    --accent: rgb(255 255 255 / 6%);
+    --accent-foreground: oklch(97% 0 0);
+    --primary: oklch(57.1% 0.21 264);
+    --destructive: color-mix(in srgb, oklch(63.7% 0.237 25.331) 90%, white);
+    --warning: oklch(82.8% 0.189 84.429);
+    --border: rgb(255 255 255 / 8%);
+    --sidebar: var(--card);
+    --composer-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  }
+}
+
 /* The title bar is hidden, so the header is where the window gets dragged. */
 @utility app-drag {
   -webkit-app-region: drag;

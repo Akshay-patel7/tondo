@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, dialog, session, type OpenDialogOptions } from "electron";
 import path from "node:path";
 import { startHost, type Host } from "./host";
 import { copyConsoleTo, lineWriter, LogFile } from "./logFile";
@@ -41,6 +41,15 @@ if (!app.requestSingleInstanceLock()) {
 
   let mainWindow: BrowserWindow | undefined;
   let host: Host | undefined;
+  /** e2e replaces dialog.showOpenDialog, so it's looked up on every call. */
+  const chooseFolder = async (): Promise<string | null> => {
+    const options: OpenDialogOptions = { properties: ["openDirectory", "createDirectory"] };
+    const window = mainWindow?.isDestroyed() === false ? mainWindow : undefined;
+    const { canceled, filePaths } = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return canceled ? null : (filePaths[0] ?? null);
+  };
   /** Set once the host and every process group it reported are gone. */
   let hostStopped = false;
   const openMainWindow = () => {
@@ -88,19 +97,17 @@ if (!app.requestSingleInstanceLock()) {
       const started = startHost({
         entry: path.join(__dirname, "host.js"),
         config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs }) },
+        chooseFolder,
         onOutput: (stream, text) => {
           hostOutput[stream](text);
           process[stream].write(text);
         },
       });
       host = started;
-      // Tests start pi through main until the page can. A packaged app has no such door.
+      // Tests check that pi's process groups are gone. A packaged app has no such door.
       if (!app.isPackaged) {
         Object.assign(globalThis, {
-          tondoTest: {
-            runPi: (cwd: string, prompt: string) => started.runPi(cwd, prompt),
-            processGroups: () => started.processGroups,
-          },
+          tondoTest: { processGroups: () => started.processGroups },
         });
       }
       // perf launches Tondo with gc() exposed and collects the host's garbage too.

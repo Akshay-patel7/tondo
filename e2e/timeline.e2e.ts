@@ -1,28 +1,29 @@
+// The timeline on a 1,000-message thread while pi streams a 20,000-token reply.
 import { expect, test } from "@playwright/test";
-import { bringToFront, launchTondo, type Tondo } from "./launch";
+import { longReply, send, waitForIdle } from "./pi";
 import {
   FOLLOW_THRESHOLD_PX,
   LAST_TRANSCRIPT_ROW,
   gapToEnd,
-  play,
-  waitForPlayback,
-  waitForTranscript,
+  launchOnTranscript,
+  openTranscript,
+  type TranscriptTondo,
 } from "./timeline";
 
-// The 1,000 tokens per second reply streams for 23 s.
-const PLAYBACK_TIMEOUT = 60_000;
+// At 1,000 tokens per second, the reply streams for 20 s.
+const STREAM_TIMEOUT = 60_000;
+const PROMPT = "Walk me through the parser rewrite, with code.";
 
-let tondo: Tondo;
+let tondo: TranscriptTondo;
 
 test.beforeEach(async () => {
-  tondo = await launchTondo();
-  await bringToFront(tondo);
-  await waitForTranscript(tondo.page);
+  tondo = await launchOnTranscript({
+    script: { tokensPerSecond: 1000, responses: [longReply()] },
+  });
+  await openTranscript(tondo);
 });
 
-test.afterEach(async () => {
-  await tondo.close();
-});
+test.afterEach(() => tondo.close());
 
 test("the transcript opens at the bottom", async () => {
   const { page } = tondo;
@@ -32,21 +33,20 @@ test("the transcript opens at the bottom", async () => {
 });
 
 test("the timeline stays at the bottom while pi streams", async () => {
-  test.setTimeout(PLAYBACK_TIMEOUT + 30_000);
+  test.setTimeout(STREAM_TIMEOUT + 30_000);
   const { page } = tondo;
 
   // Legend List scrolls to the end in the frame after a row grows or arrives,
   // so a frame can end a few hundred pixels short of the end. How long the view
   // trails depends on the machine, so `pnpm perf` holds that to its budget.
-  // This test checks what holds on any machine, after each frame paints until
-  // the player finishes: the timeline keeps following, and the view never moves
+  // This test checks what holds on any machine, after each frame paints while
+  // the reply streams: the timeline keeps following, and the view never moves
   // back up the list, as it did for a frame when a new row made Legend List
   // re-estimate the rows above.
   const sampler = await page.evaluateHandle((threshold) => {
     const timeline = document.querySelector<HTMLElement>("[data-testid=timeline]");
     const scroller = timeline?.firstElementChild;
-    const player = document.querySelector<HTMLElement>("[data-testid=player]");
-    if (!timeline || !scroller || !player) throw new Error("The timeline or the player is missing");
+    if (!timeline || !scroller) throw new Error("The timeline isn't on the page");
 
     const result = {
       frames: 0,
@@ -76,12 +76,13 @@ test("the timeline stays at the bottom while pi streams", async () => {
       if (timeline.dataset.following !== "true") result.unfollowed++;
     };
 
+    // From the frame the reply first shows until the frame pi finishes it.
     let started = false;
     const done = new Promise<typeof result>((resolve) => {
       const onFrame = () => {
-        const status = player.dataset.status;
-        if (status === "playing") started = true;
-        if (started && status === "idle") {
+        const streaming = document.querySelector("[data-streaming]") !== null;
+        if (streaming) started = true;
+        if (started && !streaming) {
           resolve(result);
           return;
         }
@@ -93,8 +94,8 @@ test("the timeline stays at the bottom while pi streams", async () => {
     return { done };
   }, FOLLOW_THRESHOLD_PX);
 
-  await play(page, "stream-1000");
-  await waitForPlayback(page, PLAYBACK_TIMEOUT);
+  await send(page, PROMPT);
+  await waitForIdle(page, { timeout: STREAM_TIMEOUT });
   const result = await sampler.evaluate(({ done }) => done);
 
   test.info().annotations.push({
@@ -110,11 +111,11 @@ test("the timeline stays at the bottom while pi streams", async () => {
 });
 
 test("the timeline holds its position while you read history", async () => {
-  test.setTimeout(PLAYBACK_TIMEOUT + 30_000);
+  test.setTimeout(STREAM_TIMEOUT + 30_000);
   const { page } = tondo;
   const timeline = page.getByTestId("timeline");
 
-  await play(page, "stream-1000");
+  await send(page, PROMPT);
   await expect(page.locator("[data-streaming]")).toBeAttached();
 
   const scroll = await page.evaluateHandle(() => {
@@ -142,7 +143,7 @@ test("the timeline holds its position while you read history", async () => {
     return { index: row.dataset.index, top: row.getBoundingClientRect().top };
   });
 
-  await waitForPlayback(page, PLAYBACK_TIMEOUT);
+  await waitForIdle(page, { timeout: STREAM_TIMEOUT });
 
   const top = await page
     .locator(`[data-index="${anchor.index}"]`)

@@ -6,17 +6,17 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { PORT_MESSAGE, PROTOCOL_VERSION, type HostMessage } from "../src/shared/protocol";
-import { bringToFront, launchTondo, type Tondo } from "./launch";
-import { median, percentile, perfRunDir } from "./perf";
-import { waitForTranscript } from "./timeline";
+import { PROTOCOL_VERSION } from "../src/shared/protocol";
+import type { Tondo } from "./launch";
+import { listenOnPort, median, percentile, perfRunDir, type PerfWindow } from "./perf";
+import { launchOnTranscript, openTranscript, TRANSCRIPT_MESSAGES } from "./timeline";
 
 const PINGS = 1000;
 /** Round trips that warm up the code on both ends first and don't count. */
 const WARM_UP_PINGS = 100;
 /** Snapshots per thread, after one that doesn't count. */
 const SNAPSHOTS = 10;
-/** The recorded transcript, and the host repeating it to 5,000 messages. */
+/** The recorded transcript, and a session that repeats it to 5,000 messages. */
 const THREAD_SIZES = [1000, 5000] as const;
 const BUDGET = { roundTripP95: 1 };
 
@@ -34,15 +34,6 @@ interface SnapshotResult {
   /** The snapshot's length as JSON, for scale. */
   jsonChars: number;
   runs: SnapshotRun[];
-}
-
-/** What the init script in listenOnPort leaves on the page. */
-interface PerfWindow extends Window {
-  tondoPerf?: {
-    port: MessagePort;
-    /** Gets each message from the host before the app's own listener does. */
-    onMessage?: ((event: MessageEvent<HostMessage>) => void) | undefined;
-  };
 }
 
 const results = {
@@ -92,40 +83,21 @@ test("budgets", () => {
 });
 
 /**
- * Launches Tondo in front with the host's thread repeated to `messages`,
- * reloads the page with listenOnPort's script, runs `body` and quits.
+ * Launches Tondo in front with listenOnPort's script, opens a thread of
+ * `messages` messages, runs `body` and quits.
  */
 async function withTondo(messages: number, body: (tondo: Tondo) => Promise<void>): Promise<void> {
-  const tondo = await launchTondo({ env: { TONDO_TRANSCRIPT_MESSAGES: String(messages) } });
+  const tondo = await launchOnTranscript({
+    script: { responses: [] },
+    copies: messages / TRANSCRIPT_MESSAGES,
+  });
   try {
-    await bringToFront(tondo);
     await listenOnPort(tondo);
+    await openTranscript(tondo);
     await body(tondo);
   } finally {
     await tondo.close();
   }
-}
-
-/**
- * Reloads the page with a script that takes the page's port to the host the
- * way the app does and listens on it before the app does. So a measurement
- * sees each message before the app starts working on it.
- */
-async function listenOnPort({ app, page }: Tondo): Promise<void> {
-  await app.context().addInitScript((portMessage) => {
-    window.addEventListener("message", (event) => {
-      if (event.source !== window || event.data !== portMessage) return;
-      const [port] = event.ports;
-      if (!port) return;
-      const perf: NonNullable<PerfWindow["tondoPerf"]> = { port };
-      (window as PerfWindow).tondoPerf = perf;
-      port.addEventListener("message", (message: MessageEvent<HostMessage>) =>
-        perf.onMessage?.(message),
-      );
-    });
-  }, PORT_MESSAGE);
-  await page.reload();
-  await waitForTranscript(page);
 }
 
 function measureClockStep(page: Page): Promise<number> {

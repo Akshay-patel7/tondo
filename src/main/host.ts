@@ -1,5 +1,6 @@
 // Runs the host utility process, restarts it when it dies, and hands the page
-// a new MessagePort to it after every page load and every host start.
+// a new MessagePort to it after every page load and every host start. It also
+// shows the folder dialog when the host asks for a project.
 // The restart backoff is T3 Code's calculateRestartDelay, and piping the
 // host's output into main follows T3's handling of its backend's output, both
 // in apps/desktop/src/backend/DesktopBackendManager.ts.
@@ -25,6 +26,8 @@ export interface HostOptions {
   /** The built src/host/index.ts. */
   entry: string;
   config: HostConfig;
+  /** Shows the folder dialog. Resolves with the folder, or null if you cancel. */
+  chooseFolder: () => Promise<string | null>;
   /** Gets everything the host prints, as it prints it. */
   onOutput: (stream: "stdout" | "stderr", text: string) => void;
 }
@@ -36,8 +39,6 @@ export interface Host {
   collectGarbage(): Promise<void>;
   /** The process groups the running host has reported. */
   readonly processGroups: readonly number[];
-  /** Tests only, until the page can start pi: has the host start pi in `cwd` and send it `prompt`. */
-  runPi(cwd: string, prompt: string): void;
   /**
    * Stops the host for good, as the app quits. Resolves once the host has
    * exited and the process groups it reported are gone.
@@ -45,7 +46,7 @@ export interface Host {
   stop(): Promise<void>;
 }
 
-export function startHost({ entry, config, onOutput }: HostOptions): Host {
+export function startHost({ entry, config, chooseFolder, onOutput }: HostOptions): Host {
   let child: UtilityProcess | undefined;
   let ready = false;
   let page: WebContents | undefined;
@@ -95,6 +96,17 @@ export function startHost({ entry, config, onOutput }: HostOptions): Host {
         connectPage();
       } else if (message.type === "process-groups") {
         processGroups = message.pgids;
+      } else if (message.type === "choose-project") {
+        void chooseFolder()
+          .catch((error: unknown) => {
+            console.error("Tondo couldn't show the folder dialog:", error);
+            return null;
+          })
+          .then((folder) => {
+            // A host that died meanwhile has lost its project anyway.
+            if (child !== current) return;
+            current.postMessage({ type: "project-chosen", folder } satisfies MainToHostMessage);
+          });
       }
     });
     current.once("exit", (code) => {
@@ -139,13 +151,6 @@ export function startHost({ entry, config, onOutput }: HostOptions): Host {
     },
     get processGroups() {
       return processGroups;
-    },
-    runPi(cwd, prompt) {
-      runningHost("run pi").postMessage({
-        type: "run-pi",
-        cwd,
-        prompt,
-      } satisfies MainToHostMessage);
     },
     stop() {
       stopping ??= (async () => {
