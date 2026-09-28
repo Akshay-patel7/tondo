@@ -226,7 +226,9 @@ export async function listenOnPort({ app, page }: Tondo): Promise<void> {
  * Stage 5. It sends the host `reopen` on the port listenOnPort took, and the
  * page opens the snapshot the host answers with in a new timeline. Resolves
  * with the milliseconds from sending until the paint of the first frame where
- * the new timeline shows the streaming reply at the bottom.
+ * the new timeline shows the streaming reply at the bottom. Legend List renders
+ * rows transparent until its opening scroll finishes, so the reply must also
+ * be opaque.
  */
 export function switchThread(page: Page, bottomPx: number): Promise<number> {
   return page.evaluate(
@@ -252,7 +254,11 @@ export function switchThread(page: Page, bottomPx: number): Promise<number> {
             const view = scroller.getBoundingClientRect();
             const row = streaming.getBoundingClientRect();
             const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-            atBottom = gap <= threshold && row.bottom > view.top && row.top < view.bottom;
+            let opaque = true;
+            for (let at: Element | null = streaming; at && opaque; at = at.parentElement) {
+              opaque = getComputedStyle(at).opacity === "1";
+            }
+            atBottom = opaque && gap <= threshold && row.bottom > view.top && row.top < view.bottom;
           }
           requestAnimationFrame(onFrame);
         };
