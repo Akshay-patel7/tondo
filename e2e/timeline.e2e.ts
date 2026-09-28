@@ -127,7 +127,9 @@ test("the timeline holds its position while you read history", async () => {
       }),
     };
   });
-  await timeline.hover();
+  // The pointer rests in the timeline's left padding. Over a table in the
+  // reply, which scrolls on its own, the wheel would scroll the table instead.
+  await timeline.hover({ position: { x: 4, y: 100 } });
   await page.mouse.wheel(0, -1500);
   await scroll.evaluate(({ ended }) => ended);
   await expect(timeline).toHaveAttribute("data-following", "false");
