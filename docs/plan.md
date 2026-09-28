@@ -603,6 +603,8 @@ You accepted these defaults on 2026-09-25.
 - No telemetry and no crash-reporting service. Logs stay local.
 - Reverting a turn waits until after v1. T3 can do it, and T3's own code warns that restoring a shared folder "can erase a sibling's work".
 
+At the Stage 4 design checkpoint on 2026-09-27 you picked the Warm direction over Neutral (T3 Code's values) and Terminal (monospace, sharp corners). Its tokens are in `src/renderer/index.css`: warm off-white and charcoal neutrals, a terracotta primary (`oklch(62% 0.15 42)` light, `oklch(70% 0.14 45)` dark), 12 px corners on controls and 20 px on panels, and the system sans font. Stage 12 builds its shadcn components on them.
+
 ## Stage report template
 
 ```
