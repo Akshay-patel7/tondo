@@ -52,8 +52,12 @@ function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
   const project = useHost((host) => host.thread?.project);
   const connection = useHost((host) => host.connection);
   return (
+    // The header gets its own compositing layer. In the page's layer its text
+    // would need a raster tile as wide as the window, 3.9 MiB at 2x, redrawn
+    // with every new title. With a thread open, the rest of the page's layer
+    // is one solid color, which needs no tiles.
     <header
-      className={`app-drag flex h-10 shrink-0 items-center gap-2 px-3 text-sm ${
+      className={`app-drag flex h-10 shrink-0 items-center gap-2 px-3 text-sm will-change-transform ${
         sidebarHidden && isMac ? "pl-20" : ""
       }`}
     >
