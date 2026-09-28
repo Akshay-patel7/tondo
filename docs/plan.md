@@ -15,7 +15,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 2 | Host process and MessagePort transport | S | Done |
 | 3 | pi supervisor | M | Done |
 | 4 | First usable thread | M | Done |
-| 5 | Projects, threads, sidebar, process pool | M | Not started |
+| 5 | Projects, threads, sidebar, process pool | M | In review |
 | 6 | Tool cards and edit diffs | M | Not started |
 | 7 | Extension UI and slash commands | M | Not started |
 | 8 | Composer | L | Not started |
@@ -352,7 +352,7 @@ Gotchas:
 - pi reads a project's `sessionDir` setting before the trust decision.
 - pi migrates v1 and v2 session files when it loads them, so the header reader has to accept every version.
 - Tests never index your live sessions folder. They use generated or copied fixtures, following T3's rule to seed test data from a copy.
-- pi creates the session file at the first message, even with `--session-id` (Stage 3 checked this on pi 0.87.1). A new thread has no file until then, so the sidebar lists threads from Tondo's store, not only the files it finds.
+- pi creates the session file at the first reply, even with `--session-id` (Stage 3 checked this on pi 0.87.1). A new thread has no file until then, so the sidebar lists threads from Tondo's store, not only the files it finds. `get_state` names the file from the start. With a relative `sessionDir` setting that name is relative to the project folder.
 - On the real setup a new pi answers about 1.4 s after it starts (docs/stack.md). Opening a thread whose pi was shut down waits that long for `get_messages`.
 
 Done when:
@@ -362,7 +362,7 @@ Done when:
 - With 10 faux threads streaming at once, the visible thread stays within budget.
 - Store migrations have tests.
 
-Size: M. T3's sidebar and command palette are 9,773 lines.
+Size: M. The T3 files under Read first are 10,618 lines.
 
 ## Stage 6: Tool cards and edit diffs
 
@@ -604,6 +604,16 @@ You accepted these defaults on 2026-09-25.
 - Reverting a turn waits until after v1. T3 can do it, and T3's own code warns that restoring a shared folder "can erase a sibling's work".
 
 At the Stage 4 design checkpoint on 2026-09-27 you picked the Warm direction over Neutral (T3 Code's values) and Terminal (monospace, sharp corners). Its tokens are in `src/renderer/index.css`: warm off-white and charcoal neutrals, a terracotta primary (`oklch(62% 0.15 42)` light, `oklch(70% 0.14 45)` dark), 12 px corners on controls and 20 px on panels, and the system sans font. Stage 12 builds its shadcn components on them.
+
+For Stage 5 you let me take my recommended option on each open question (2026-09-28). These are the ones you'll notice:
+
+- The pool keeps at most 4 pi processes running, and a hidden thread's pi stops after 10 idle minutes. Stage 3 measured an idle pi on your setup at about 210 MiB, so 4 come to about 840 MiB. The thread on screen and busy threads are never stopped, so 10 threads streaming at once run 10 pi processes.
+- Projects are folders you add, as in T3. Each lists the pi sessions started in its folder, including ones from pi's terminal UI. Tondo doesn't add a project for every folder pi has sessions for.
+- Projects stay in the order you added them. T3 sorts them by latest activity, which moves them while you work.
+- Archiving a thread doesn't ask. The command palette lists archived threads, and choosing one brings it back. Removing a project asks first, and it never deletes pi's session files.
+- A new thread you leave before sending a message or typing a draft disappears, as T3's draft threads do, so Cmd+N doesn't leave empty rows behind.
+- The shortcuts take T3's defaults for the palette, the sidebar, a new thread and moving between threads, and add Cmd+O to add a project. They can't be changed yet.
+- Rename appears once a thread has a reply. pi saves a session only after the first reply, so a name set before then would be lost if pi stopped.
 
 ## Stage report template
 
