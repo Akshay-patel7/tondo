@@ -11,6 +11,18 @@ export type AssistantMessage = Extract<PiMessage, { role: "assistant" }>;
 type AssistantUpdate = Extract<PiEvent, { type: "message_update" }>["assistantMessageEvent"];
 type ContentBlock = AssistantMessage["content"][number];
 
+/** The messages you sent while pi was working, which pi hasn't taken yet. */
+export interface Queue {
+  /** Sent with Enter. pi takes them as soon as its current step is done. */
+  readonly steering: readonly string[];
+  /** Sent with Alt+Enter. pi takes them once it would otherwise stop. */
+  readonly followUp: readonly string[];
+}
+
+/** A failed request pi is about to retry, as auto_retry_start describes it. */
+export type Retry = Omit<Extract<PiEvent, { type: "auto_retry_start" }>, "type">;
+export type CompactionReason = Extract<PiEvent, { type: "compaction_start" }>["reason"];
+
 export interface ThreadState {
   /** Finished messages in transcript order, without pi's system prompt. */
   readonly messages: readonly PiMessage[];
@@ -18,7 +30,15 @@ export interface ThreadState {
   readonly streaming: AssistantMessage | null;
   /** True from agent_start until agent_settled. */
   readonly running: boolean;
+  /** What pi's last queue_update listed. */
+  readonly queue: Queue;
+  /** Set from auto_retry_start until auto_retry_end. */
+  readonly retry: Retry | null;
+  /** Set from compaction_start until compaction_end. */
+  readonly compaction: CompactionReason | null;
 }
+
+const NOTHING_QUEUED: Queue = { steering: [], followUp: [] };
 
 /** A thread opened from a get_messages transcript. */
 export function threadFromMessages(messages: readonly PiMessage[]): ThreadState {
@@ -26,6 +46,9 @@ export function threadFromMessages(messages: readonly PiMessage[]): ThreadState 
     messages: messages.filter((message) => message.role !== "system"),
     streaming: null,
     running: false,
+    queue: NOTHING_QUEUED,
+    retry: null,
+    compaction: null,
   };
 }
 
@@ -56,9 +79,38 @@ export function applyEvent(thread: ThreadState, event: PiEvent): ThreadState {
         streaming: message.role === "assistant" ? null : thread.streaming,
       };
     }
+    case "queue_update": {
+      const { steering, followUp } = event;
+      const unchanged =
+        sameTexts(steering, thread.queue.steering) && sameTexts(followUp, thread.queue.followUp);
+      return unchanged ? thread : { ...thread, queue: { steering, followUp } };
+    }
+    case "auto_retry_start": {
+      const { attempt, maxAttempts, delayMs, errorMessage } = event;
+      return { ...thread, retry: { attempt, maxAttempts, delayMs, errorMessage } };
+    }
+    case "auto_retry_end":
+      return thread.retry ? { ...thread, retry: null } : thread;
+    case "compaction_start":
+      return thread.compaction === event.reason ? thread : { ...thread, compaction: event.reason };
+    case "compaction_end":
+      return thread.compaction ? { ...thread, compaction: null } : thread;
     default:
       return thread;
   }
+}
+
+function sameTexts(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((text, index) => text === b[index]);
+}
+
+/**
+ * The thread once its pi has exited. The finished messages stay. The reply pi
+ * was writing goes, since pi saves a message only when it ends, and so does
+ * everything else that needed a running pi.
+ */
+export function afterPiExit(thread: ThreadState): ThreadState {
+  return { ...threadFromMessages([]), messages: thread.messages };
 }
 
 export function applyEvents(thread: ThreadState, events: readonly PiEvent[]): ThreadState {
