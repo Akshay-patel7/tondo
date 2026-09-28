@@ -23,7 +23,7 @@ export interface Tondo {
 export interface LaunchOptions {
   /** Gives every JavaScript heap in the app V8's `gc()`, so a test can collect garbage. */
   exposeGc?: boolean;
-  /** Extra environment variables for the app, such as TONDO_TRANSCRIPT_MESSAGES. */
+  /** Extra environment variables for the app, such as TONDO_PI_ARGS. */
   env?: Record<string, string>;
   /** Written to the profile's settings.json before the app starts. */
   settings?: Record<string, unknown>;

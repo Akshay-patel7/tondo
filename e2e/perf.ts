@@ -4,12 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
-import { parseFixture } from "../src/shared/fixture";
-import type { FixtureName } from "../src/shared/protocol";
+import { PORT_MESSAGE, PROTOCOL_VERSION, type HostMessage } from "../src/shared/protocol";
 import type { Tondo } from "./launch";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.resolve(__dirname, "..");
 
 /** Nearest-rank percentile, so every result is a value that was measured. */
 export function percentile(values: readonly number[], p: number): number {
@@ -20,14 +18,6 @@ export function percentile(values: readonly number[], p: number): number {
 
 export function median(values: readonly number[]): number {
   return percentile(values, 50);
-}
-
-/** How long a fixture takes to play at the recorded pace, in milliseconds. */
-export async function fixtureDuration(fixture: FixtureName): Promise<number> {
-  const text = await readFile(path.join(repoRoot, "fixtures", `${fixture}.jsonl`), "utf8");
-  const last = parseFixture(text).at(-1);
-  if (!last) throw new Error(`fixtures/${fixture}.jsonl has no events`);
-  return last.t;
 }
 
 /** The display's frame interval, from the median gap between 60 idle frames. */
@@ -50,21 +40,21 @@ export function measureFrameInterval(page: Page): Promise<number> {
   );
 }
 
-/** What the page saw during one playback. */
-export interface PlaybackRecord {
+/** What the page saw while pi streamed one reply. */
+export interface StreamRecord {
   /**
-   * From the click on Play until the page had the player idle. The click comes
-   * before the host starts playing, and idle comes after it sends the last
-   * event, so a whole playback lasts at least the fixture's length.
+   * From the Enter that sent the prompt until the page saw the reply finished.
+   * pi gets the prompt after the Enter, so this is at least the time the
+   * model spent streaming.
    */
-  playedMs: number;
+  streamedMs: number;
   /** requestAnimationFrame timestamps. */
   frames: number[];
   /** Long task durations, 50 ms or more. */
   longTasks: number[];
   /** The five slowest animation frames, with the script that ran longest in each. */
   slowFrames: { duration: number; blocking: number; script: string }[];
-  /** Keys pressed during the playback. */
+  /** Keys pressed while the reply streamed. */
   keys: number;
   /** Keydowns Event Timing counted from the start of recording, to prove it saw the keys. */
   timedKeys: number;
@@ -84,18 +74,19 @@ interface LongAnimationFrame extends PerformanceEntry {
 }
 
 /**
- * Starts recording in the page, before the test presses Play. Returns a
- * function that waits for the player to finish and returns the record.
+ * Starts recording in the page, before the test sends the prompt. It records
+ * from the first frame that shows pi's reply streaming until the first frame
+ * that shows it finished. Returns a function that waits for that frame and
+ * returns the record.
  */
-export async function recordPlayback(
+export async function recordStream(
   page: Page,
   bottomPx: number,
-): Promise<() => Promise<PlaybackRecord>> {
+): Promise<() => Promise<StreamRecord>> {
   const handle = await page.evaluateHandle((threshold) => {
-    const player = document.querySelector<HTMLElement>("[data-testid=player]");
     // Legend List's scroll element is the timeline's only child.
     const scroller = document.querySelector("[data-testid=timeline]")?.firstElementChild;
-    if (!player || !scroller) throw new Error("The player or the timeline isn't on the page");
+    if (!scroller) throw new Error("The timeline isn't on the page");
 
     // oxlint-disable-next-line unicorn/consistent-function-scoping -- the page gets this function as source, so its helpers must live inside it.
     const observe = (type: string, init?: { durationThreshold: number }) => {
@@ -115,13 +106,12 @@ export async function recordPlayback(
     const stopEvents = observe("event", { durationThreshold: 16 });
     const timedKeysBefore = performance.eventCounts.get("keydown") ?? 0;
     const keyTimes: number[] = [];
-    const onKey = (event: KeyboardEvent) => keyTimes.push(event.timeStamp);
-    addEventListener("keydown", onKey, { capture: true });
-    let clickedAt: number | undefined;
-    const onClick = (event: MouseEvent) => {
-      clickedAt = event.timeStamp;
+    let sentAt: number | undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Enter") sentAt ??= event.timeStamp;
+      keyTimes.push(event.timeStamp);
     };
-    addEventListener("click", onClick, { capture: true, once: true });
+    addEventListener("keydown", onKey, { capture: true });
 
     // How long the view trails the end, checked after each frame paints.
     let behindSince: number | null = null;
@@ -138,21 +128,21 @@ export async function recordPlayback(
     };
 
     const frames: number[] = [];
-    const done = new Promise<PlaybackRecord>((resolve) => {
+    const done = new Promise<StreamRecord>((resolve) => {
       const onFrame = (time: number) => {
-        const playing = player.dataset.status === "playing";
-        if (playing || frames.length > 0) frames.push(time);
-        if (frames.length > 0 && !playing) {
+        const streaming = document.querySelector("[data-streaming]") !== null;
+        if (streaming || frames.length > 0) frames.push(time);
+        if (frames.length > 0 && !streaming) {
           resolve(finish(frames[0]!, time));
           return;
         }
-        if (playing) setTimeout(checkGap);
+        if (streaming) setTimeout(checkGap);
         requestAnimationFrame(onFrame);
       };
       requestAnimationFrame(onFrame);
     });
 
-    const finish = (start: number, end: number): PlaybackRecord => {
+    const finish = (start: number, end: number): StreamRecord => {
       removeEventListener("keydown", onKey, { capture: true });
       if (behindSince !== null) longestLag = Math.max(longestLag, end - behindSince);
       const within = (entry: PerformanceEntry) => entry.startTime >= start && entry.startTime < end;
@@ -178,10 +168,10 @@ export async function recordPlayback(
               : "",
           };
         });
-      // `end` is when the frame began, which can be before idle arrived.
-      const idleAt = performance.now();
+      // `end` is when the frame began, which can be before the reply finished.
+      const finishedAt = performance.now();
       return {
-        playedMs: clickedAt === undefined ? Number.NaN : idleAt - clickedAt,
+        streamedMs: sentAt === undefined ? Number.NaN : finishedAt - sentAt,
         frames,
         longTasks: stopLongTasks()
           .filter(within)
@@ -199,50 +189,85 @@ export async function recordPlayback(
   return () => handle.evaluate(({ done }) => done);
 }
 
-/**
- * Starts watching for the Reopen button, which stands in for switching to a
- * thread. Returns a function that resolves with the milliseconds from the
- * click to the paint of the first frame where the new timeline shows the
- * streaming row at the bottom.
- */
-export async function recordSwitch(page: Page, bottomPx: number): Promise<() => Promise<number>> {
-  const handle = await page.evaluateHandle((threshold) => {
-    const before = document.querySelector("[data-testid=timeline]");
-    const reopen = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent === "Reopen",
-    );
-    if (!before || !reopen) throw new Error("The timeline or the Reopen button is missing");
+/** What listenOnPort's script leaves on the page. */
+export interface PerfWindow extends Window {
+  tondoPerf?: {
+    port: MessagePort;
+    /** Gets each message from the host before the app's own listener does. */
+    onMessage?: ((event: MessageEvent<HostMessage>) => void) | undefined;
+  };
+}
 
-    const done = new Promise<number>((resolve) => {
-      reopen.addEventListener(
-        "click",
-        (click) => {
-          let atBottom = false;
-          const onFrame = (time: number) => {
-            // The state checked in the previous frame painted before this one began.
-            if (atBottom) {
-              resolve(time - click.timeStamp);
-              return;
-            }
-            const timeline = document.querySelector("[data-testid=timeline]");
-            const scroller = timeline?.firstElementChild;
-            const streaming = timeline?.querySelector("[data-streaming]");
-            if (timeline !== before && scroller && streaming) {
-              const view = scroller.getBoundingClientRect();
-              const row = streaming.getBoundingClientRect();
-              const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-              atBottom = gap <= threshold && row.bottom > view.top && row.top < view.bottom;
-            }
-            requestAnimationFrame(onFrame);
-          };
-          requestAnimationFrame(onFrame);
-        },
-        { once: true },
+/**
+ * Reloads the page with a script that takes the page's port to the host the
+ * way the app does, and listens on it before the app does. A measurement can
+ * then send the host what the app never sends, and see each message from the
+ * host before the app starts working on it.
+ */
+export async function listenOnPort({ app, page }: Tondo): Promise<void> {
+  await app.context().addInitScript((portMessage) => {
+    window.addEventListener("message", (event) => {
+      if (event.source !== window || event.data !== portMessage) return;
+      const [port] = event.ports;
+      if (!port) return;
+      const perf: NonNullable<PerfWindow["tondoPerf"]> = { port };
+      (window as PerfWindow).tondoPerf = perf;
+      port.addEventListener("message", (message: MessageEvent<HostMessage>) =>
+        perf.onMessage?.(message),
       );
     });
-    return { done };
-  }, bottomPx);
-  return () => handle.evaluate(({ done }) => done);
+  }, PORT_MESSAGE);
+  await page.reload();
+  await page.waitForFunction(() => (window as PerfWindow).tondoPerf !== undefined);
+}
+
+/**
+ * Switches to the thread again, the stand-in for switching threads until
+ * Stage 5. It sends the host `reopen` on the port listenOnPort took, and the
+ * page opens the snapshot the host answers with in a new timeline. Resolves
+ * with the milliseconds from sending until the paint of the first frame where
+ * the new timeline shows the streaming reply at the bottom. Legend List renders
+ * rows transparent until its opening scroll finishes, so the reply must also
+ * be opaque.
+ */
+export function switchThread(page: Page, bottomPx: number): Promise<number> {
+  return page.evaluate(
+    ({ threshold, v }) => {
+      const perf = (window as PerfWindow).tondoPerf;
+      const before = document.querySelector("[data-testid=timeline]");
+      if (!perf || !before) throw new Error("The page's port or the timeline is missing");
+      const { port } = perf;
+
+      return new Promise<number>((resolve) => {
+        const sent = performance.now();
+        let atBottom = false;
+        const onFrame = (time: number) => {
+          // The state checked in the previous frame painted before this one began.
+          if (atBottom) {
+            resolve(time - sent);
+            return;
+          }
+          const timeline = document.querySelector("[data-testid=timeline]");
+          const scroller = timeline?.firstElementChild;
+          const streaming = timeline?.querySelector("[data-streaming]");
+          if (timeline !== before && scroller && streaming) {
+            const view = scroller.getBoundingClientRect();
+            const row = streaming.getBoundingClientRect();
+            const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+            let opaque = true;
+            for (let at: Element | null = streaming; at && opaque; at = at.parentElement) {
+              opaque = getComputedStyle(at).opacity === "1";
+            }
+            atBottom = opaque && gap <= threshold && row.bottom > view.top && row.top < view.bottom;
+          }
+          requestAnimationFrame(onFrame);
+        };
+        port.postMessage({ v, type: "reopen" });
+        requestAnimationFrame(onFrame);
+      });
+    },
+    { threshold: bottomPx, v: PROTOCOL_VERSION },
+  );
 }
 
 /** The folder this `pnpm perf` run writes its results to, named by playwright.perf.config.ts. */

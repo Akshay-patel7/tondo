@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { parseFixture } from "./fixture";
 import {
+  afterPiExit,
   applyEvent,
   applyEvents,
   threadFromMessages,
@@ -168,6 +169,14 @@ describe("applyEvent", () => {
       { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: {} },
       { type: "message_start", message: prompt! },
       { type: "agent_settled" },
+      { type: "auto_retry_end", success: true, attempt: 1 },
+      {
+        type: "compaction_end",
+        reason: "manual",
+        result: undefined,
+        aborted: true,
+        willRetry: false,
+      },
     ];
     for (const event of unchanged) expect(applyEvent(empty, event)).toBe(empty);
   });
@@ -175,6 +184,57 @@ describe("applyEvent", () => {
   test("a delta with no streaming message is ignored", () => {
     const delta = fixture("stream-1000.jsonl").find((event) => event.type === "message_update");
     expect(applyEvent(empty, delta!)).toBe(empty);
+  });
+
+  test("queue_update replaces the queue, and the same queue again changes nothing", () => {
+    const update: PiEvent = {
+      type: "queue_update",
+      steering: ["look at the tests first"],
+      followUp: ["then commit"],
+    };
+    const queued = applyEvent(empty, update);
+
+    expect(queued.queue).toEqual({
+      steering: ["look at the tests first"],
+      followUp: ["then commit"],
+    });
+    expect(applyEvent(queued, { ...update })).toBe(queued);
+    const drained = applyEvent(queued, { type: "queue_update", steering: [], followUp: [] });
+    expect(drained.queue).toEqual({ steering: [], followUp: [] });
+  });
+
+  test("a retry shows from auto_retry_start until auto_retry_end", () => {
+    const retrying = applyEvent(empty, {
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2000,
+      errorMessage: "503 Service Unavailable",
+    });
+
+    expect(retrying.retry).toEqual({
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2000,
+      errorMessage: "503 Service Unavailable",
+    });
+    const ended = applyEvent(retrying, { type: "auto_retry_end", success: true, attempt: 1 });
+    expect(ended.retry).toBeNull();
+  });
+
+  test("compaction shows from compaction_start until compaction_end", () => {
+    const compacting = applyEvent(empty, { type: "compaction_start", reason: "threshold" });
+
+    expect(compacting.compaction).toBe("threshold");
+    const ended = applyEvent(compacting, {
+      type: "compaction_end",
+      reason: "threshold",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "The summary request failed",
+    });
+    expect(ended.compaction).toBeNull();
   });
 });
 
@@ -189,5 +249,25 @@ describe("threadFromMessages", () => {
     expect(thread.messages).toHaveLength(1000);
     expect(thread.messages).toEqual(messages.slice(1));
     expect(thread.streaming).toBeNull();
+  });
+});
+
+describe("afterPiExit", () => {
+  test("keeps the finished messages and drops what needed a running pi", () => {
+    const events = fixture("stream-1000.jsonl");
+    const firstDelta = events.findIndex((event) => event.type === "message_update");
+    const midStream = applyEvents(empty, [
+      ...events.slice(0, firstDelta + 1),
+      { type: "queue_update", steering: ["stop there"], followUp: [] },
+      { type: "compaction_start", reason: "overflow" },
+    ]);
+    expect(midStream.streaming).not.toBeNull();
+    expect(midStream.running).toBe(true);
+
+    expect(afterPiExit(midStream)).toEqual({
+      ...empty,
+      messages: midStream.messages,
+    });
+    expect(midStream.messages.length).toBeGreaterThan(0);
   });
 });

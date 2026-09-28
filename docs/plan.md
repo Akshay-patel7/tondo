@@ -13,8 +13,8 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 0 | Foundation: toolchain, secure window, test layers, CI | M | Done |
 | 1 | Streaming spike that settles React vs Solid | L | Done |
 | 2 | Host process and MessagePort transport | S | Done |
-| 3 | pi supervisor | M | In review |
-| 4 | First usable thread | M | Not started |
+| 3 | pi supervisor | M | Done |
+| 4 | First usable thread | M | In review |
 | 5 | Projects, threads, sidebar, process pool | M | Not started |
 | 6 | Tool cards and edit diffs | M | Not started |
 | 7 | Extension UI and slash commands | M | Not started |
@@ -602,6 +602,8 @@ You accepted these defaults on 2026-09-25.
 - Linux ships as deb and AppImage, with the AppImage sandbox caveat documented.
 - No telemetry and no crash-reporting service. Logs stay local.
 - Reverting a turn waits until after v1. T3 can do it, and T3's own code warns that restoring a shared folder "can erase a sibling's work".
+
+At the Stage 4 design checkpoint on 2026-09-27 you picked the Warm direction over Neutral (T3 Code's values) and Terminal (monospace, sharp corners). Its tokens are in `src/renderer/index.css`: warm off-white and charcoal neutrals, a terracotta primary (`oklch(62% 0.15 42)` light, `oklch(70% 0.14 45)` dark), 12 px corners on controls and 20 px on panels, and the system sans font. Stage 12 builds its shadcn components on them.
 
 ## Stage report template
 

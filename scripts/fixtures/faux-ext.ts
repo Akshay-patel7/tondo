@@ -19,8 +19,12 @@ export default function fauxExtension(pi: ExtensionAPI): void {
 
   const faux = fauxProvider({
     provider: "faux",
-    // A context window this large keeps pi from compacting the long transcript.
-    models: [{ id: "faux-1", name: "Faux 1", reasoning: true, contextWindow: 100_000_000 }],
+    models: [
+      // A context window this large keeps pi from compacting the long transcript.
+      { id: "faux-1", name: "Faux 1", reasoning: true, contextWindow: 100_000_000 },
+      // A model to switch to, whose context meter shows more than 0%.
+      { id: "faux-2", name: "Faux 2", reasoning: false, contextWindow: 200_000 },
+    ],
     ...(script.tokensPerSecond === undefined ? {} : { tokensPerSecond: script.tokensPerSecond }),
   });
   faux.setResponses(script.responses);

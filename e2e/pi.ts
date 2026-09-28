@@ -1,0 +1,231 @@
+// Helpers for tests that run the real pi, offline with pi-ai's faux provider.
+// The faux model answers each model call with the next reply in the test's
+// script. Every pi a test starts reads the script from the top.
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import type { FauxScript } from "../scripts/fixtures/faux-ext";
+import { launchTondo, type LaunchOptions, type Tondo } from "./launch";
+
+const repoRoot = path.resolve(__dirname, "..");
+
+/** The pi that pnpm installed. */
+export const PI_CLI = path.join(
+  repoRoot,
+  "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+);
+
+/** pi's arguments in tests: the faux model, and nothing from your own pi setup. */
+const PI_ARGS = [
+  "--no-extensions",
+  "-e",
+  path.join(repoRoot, "scripts/fixtures/faux-ext.ts"),
+  "--no-skills",
+  "--no-context-files",
+  "--offline",
+  "--provider",
+  "faux",
+  "--model",
+  "faux-1",
+];
+
+/** Starting pi runs your login shell first, which can take seconds on CI. */
+export const PI_START_TIMEOUT_MS = 30_000;
+
+export interface PiOptions extends LaunchOptions {
+  /** A folder for pi's install and the faux script. The test deletes it. */
+  workDir: string;
+  script: FauxScript;
+  /** More arguments for pi, such as `--fork`. */
+  piArgs?: string[];
+  /** The cli.js to run as pi. The one pnpm installed by default. */
+  cli?: string;
+}
+
+/** Launches Tondo with the faux pi. Each call needs its own `workDir`. */
+export function launchWithPi({
+  workDir,
+  script,
+  piArgs = [],
+  cli = PI_CLI,
+  settings,
+  env,
+  ...options
+}: PiOptions): Promise<Tondo> {
+  const scriptPath = path.join(workDir, "script.json");
+  writeFileSync(scriptPath, JSON.stringify(script));
+  return launchTondo({
+    ...options,
+    settings: { ...settings, piPath: installPi(cli, path.join(workDir, "bin")) },
+    env: {
+      ...env,
+      TONDO_PI_ARGS: JSON.stringify([...PI_ARGS, ...piArgs]),
+      TONDO_FAUX_SCRIPT: scriptPath,
+    },
+  });
+}
+
+/** Installs `cli` the way Tondo finds pi: a `pi` command in `bin` with a node beside it. */
+function installPi(cli: string, bin: string): string {
+  mkdirSync(bin);
+  symlinkSync(cli, path.join(bin, "pi"));
+  symlinkSync(process.execPath, path.join(bin, "node"));
+  return path.join(bin, "pi");
+}
+
+/** Makes main's folder dialog pick `folder` from now on, without showing it. */
+export function answerFolderDialog(app: ElectronApplication, folder: string): Promise<void> {
+  return app.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
+  }, folder);
+}
+
+/** Opens `folder` from the window Tondo starts with. */
+export async function openProject({ app, page }: Tondo, folder: string): Promise<void> {
+  await answerFolderDialog(app, folder);
+  await page.getByRole("button", { name: "Open project…" }).click();
+}
+
+/** Waits until pi has started in the open project and takes prompts. */
+export async function waitForPi(page: Page): Promise<void> {
+  // The pickers show once pi has reported its model.
+  await expect(page.getByLabel("Model")).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
+}
+
+/** The composer's text box. Its label, "Message", is also part of "Send message". */
+export function composer(page: Page) {
+  return page.getByRole("textbox", { name: "Message" });
+}
+
+/** Writes `text` in the composer and presses `key`: Enter sends, or steers while pi works. */
+export async function send(page: Page, text: string, key = "Enter"): Promise<void> {
+  await composer(page).fill(text);
+  await composer(page).press(key);
+}
+
+/** Waits until pi's turn has ended. */
+export async function waitForIdle(page: Page, options?: { timeout?: number }): Promise<void> {
+  await expect(page.getByRole("button", { name: "Stop pi" })).toBeHidden(options);
+}
+
+/**
+ * Records the text of every status the page shows from now on, such as a
+ * banner, once each. It watches the DOM, so it catches ones too brief to poll for.
+ */
+export function recordStatuses(page: Page) {
+  return page.evaluateHandle(() => {
+    const seen: string[] = [];
+    new MutationObserver(() => {
+      for (const status of document.querySelectorAll("[role=status]")) {
+        const text = status.textContent ?? "";
+        if (!seen.includes(text)) seen.push(text);
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    return seen;
+  });
+}
+
+const NO_TOKENS = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+/**
+ * A faux model message, as pi-ai's fauxAssistantMessage builds it. Playwright
+ * can't load pi-ai at run time, since pi-ai exports nothing to `require`.
+ */
+function assistant(
+  content: AssistantMessage["content"],
+  stopReason: AssistantMessage["stopReason"],
+  errorMessage?: string,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content,
+    api: "faux",
+    provider: "faux",
+    model: "faux-1",
+    usage: { ...NO_TOKENS, totalTokens: 0, cost: { ...NO_TOKENS, total: 0 } },
+    stopReason,
+    ...(errorMessage === undefined ? {} : { errorMessage }),
+    timestamp: Date.now(),
+  };
+}
+
+export function reply(text: string): AssistantMessage {
+  return assistant([{ type: "text", text }], "stop");
+}
+
+/** A reply that runs `command` with pi's bash tool. */
+export function bashCall(command: string): AssistantMessage {
+  const call = { type: "toolCall" as const, id: `call_${randomUUID()}`, name: "bash" };
+  return assistant([{ ...call, arguments: { command } }], "toolUse");
+}
+
+/** A model call that fails with `errorMessage`. */
+export function failure(errorMessage: string): AssistantMessage {
+  return assistant([], "error", errorMessage);
+}
+
+/** A bash command that runs until `file` exists, which holds pi's turn open until the test creates it. */
+export function waitForFileCommand(file: string): string {
+  return `until [ -e '${file}' ]; do sleep 0.05; done`;
+}
+
+/**
+ * The 20,000-token reply, markdown with code, that `pnpm fixtures` recorded
+ * from the faux model into fixtures/stream-1000.jsonl.
+ */
+export function longReply(): AssistantMessage {
+  const fixture = path.join(repoRoot, "fixtures/stream-1000.jsonl");
+  const records = readFileSync(fixture, "utf8")
+    .trim()
+    .split("\n")
+    .map(
+      (line) =>
+        (JSON.parse(line) as { record: { type: string; message?: AssistantMessage } }).record,
+    );
+  const end = records.findLast(
+    (record) => record.type === "message_end" && record.message?.role === "assistant",
+  );
+  if (!end?.message) throw new Error(`${fixture} has no reply`);
+  return assistant(end.message.content, "stop");
+}
+
+/** `count` plain words, numbered, so a stretch missing from a reply shows. */
+export function words(count: number): string {
+  return Array.from({ length: count }, (_, index) => `word${index}`).join(" ");
+}
+
+/**
+ * Writes fixtures/transcript-1000.json as a pi session in `file`, with its
+ * 1,000 messages repeated `copies` times. pi started with `--fork file`
+ * opens a thread that holds them.
+ */
+export function seedSession(file: string, project: string, copies = 1): void {
+  const transcript = path.join(repoRoot, "fixtures/transcript-1000.json");
+  const { messages } = JSON.parse(readFileSync(transcript, "utf8")) as {
+    messages: { role: string; timestamp: number }[];
+  };
+  // pi keeps its system prompt as the session's first message.
+  const [system, ...rest] = messages;
+  if (system?.role !== "system") throw new Error(`${transcript} doesn't start with pi's prompt`);
+  const header = {
+    type: "session",
+    version: 3,
+    id: randomUUID(),
+    timestamp: new Date().toISOString(),
+    cwd: project,
+  };
+  const lines = [JSON.stringify(header)];
+  let parentId: string | null = null;
+  for (const [index, message] of [
+    system,
+    ...Array.from({ length: copies }, () => rest).flat(),
+  ].entries()) {
+    const id = index.toString(16).padStart(8, "0");
+    const timestamp = new Date(message.timestamp).toISOString();
+    lines.push(JSON.stringify({ type: "message", id, parentId, timestamp, message }));
+    parentId = id;
+  }
+  writeFileSync(file, `${lines.join("\n")}\n`);
+}

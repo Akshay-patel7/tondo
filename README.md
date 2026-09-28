@@ -4,7 +4,7 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** early. The app doesn't run pi yet. It replays a recorded pi reply into a 1,000-message transcript, which is how Tondo measures streaming. [docs/plan.md](docs/plan.md) lays out the rest of the build, and [AGENTS.md](AGENTS.md) lists the commands.
+**Status:** early. You can open a project folder and work with pi in one thread: send prompts, stop, steer, queue follow-ups, and pick the model and thinking level. More threads and a sidebar come in Stage 5. [docs/plan.md](docs/plan.md) lays out the rest of the build, and [AGENTS.md](AGENTS.md) lists the commands.
 
 ## Goals
 

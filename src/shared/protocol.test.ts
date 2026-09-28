@@ -12,9 +12,16 @@ function rejection(data: unknown): string {
 describe("parseClientMessage", () => {
   it("accepts every message the page sends, as a copy", () => {
     for (const message of [
-      { v, type: "play", fixture: "stream-1000", speed: 1 },
-      { v, type: "play", fixture: "abort", speed: 0.25 },
+      { v, type: "open-project" },
+      { v, type: "trust", trusted: true },
+      { v, type: "trust", trusted: false },
+      { v, type: "prompt", text: "Fix the parser", streamingBehavior: "steer" },
+      { v, type: "prompt", text: "then run the tests", streamingBehavior: "followUp" },
       { v, type: "stop" },
+      { v, type: "dequeue" },
+      { v, type: "set-model", provider: "anthropic", modelId: "claude-opus-4-5" },
+      { v, type: "set-thinking-level", level: "high" },
+      { v, type: "restart" },
       { v, type: "reopen" },
       { v, type: "ping", id: 0 },
     ]) {
@@ -40,30 +47,48 @@ describe("parseClientMessage", () => {
 
   it("rejects unknown message types", () => {
     expect(rejection({ v })).toBe("unknown message type undefined");
-    expect(rejection({ v, type: "open" })).toBe('unknown message type "open"');
+    expect(rejection({ v, type: "play" })).toBe('unknown message type "play"');
     expect(rejection({ v, type: "snapshot" })).toBe('unknown message type "snapshot"');
   });
 
-  it("rejects play with an unknown fixture", () => {
-    expect(rejection({ v, type: "play", speed: 1 })).toBe("play: unknown fixture undefined");
-    expect(rejection({ v, type: "play", fixture: "../secrets", speed: 1 })).toBe(
-      'play: unknown fixture "../secrets"',
+  it("rejects a trust answer that isn't true or false", () => {
+    expect(rejection({ v, type: "trust" })).toBe(
+      "trust: trusted must be true or false, not undefined",
+    );
+    expect(rejection({ v, type: "trust", trusted: "yes" })).toBe(
+      'trust: trusted must be true or false, not "yes"',
     );
   });
 
-  it("rejects play at a speed that isn't a positive number", () => {
-    for (const [speed, shown] of [
-      [0, "0"],
-      [-1, "-1"],
-      [Number.NaN, "NaN"],
-      [Number.POSITIVE_INFINITY, "Infinity"],
-      ["1", '"1"'],
+  it("rejects a prompt without text", () => {
+    for (const [text, shown] of [
+      ["", '""'],
+      [" \n\t", '" \\n\\t"'],
       [undefined, "undefined"],
+      [["hi"], "an array"],
     ] as const) {
-      expect(rejection({ v, type: "play", fixture: "tools", speed })).toBe(
-        `play: speed must be a positive number, not ${shown}`,
+      expect(rejection({ v, type: "prompt", text, streamingBehavior: "steer" })).toBe(
+        `prompt: text must be a string that isn't blank, not ${shown}`,
       );
     }
+  });
+
+  it("rejects a prompt that doesn't say how to queue", () => {
+    expect(rejection({ v, type: "prompt", text: "hi" })).toBe(
+      'prompt: streamingBehavior must be "steer" or "followUp", not undefined',
+    );
+    expect(rejection({ v, type: "prompt", text: "hi", streamingBehavior: "all" })).toBe(
+      'prompt: streamingBehavior must be "steer" or "followUp", not "all"',
+    );
+  });
+
+  it("rejects a model or thinking level that isn't a string", () => {
+    expect(rejection({ v, type: "set-model", provider: "faux" })).toBe(
+      'set-model: provider and modelId must be strings, not "faux" and undefined',
+    );
+    expect(rejection({ v, type: "set-thinking-level", level: 3 })).toBe(
+      "set-thinking-level: level must be a string, not 3",
+    );
   });
 
   it("rejects ping ids that aren't safe integers", () => {
@@ -84,15 +109,18 @@ describe("parseClientMessage", () => {
     expect(rejection({ v, type: "ping", id: 1, sentAt: 0 })).toBe(
       'ping: unexpected field "sentAt"',
     );
+    expect(rejection({ v, type: "open-project", folder: "/etc" })).toBe(
+      'open-project: unexpected field "folder"',
+    );
   });
 
   it("describes hostile values without calling them", () => {
     const hostile = { toString: 1, valueOf: 1 };
-    expect(rejection(hostile)).toBe("protocol version undefined isn't 1");
+    expect(rejection(hostile)).toBe(`protocol version undefined isn't ${v}`);
     expect(rejection({ v: hostile })).toBe(`protocol version an object isn't ${v}`);
     expect(rejection({ v, type: hostile })).toBe("unknown message type an object");
-    expect(rejection({ v, type: "play", fixture: hostile, speed: 1 })).toBe(
-      "play: unknown fixture an object",
+    expect(rejection({ v, type: "prompt", text: hostile, streamingBehavior: "steer" })).toBe(
+      "prompt: text must be a string that isn't blank, not an object",
     );
   });
 

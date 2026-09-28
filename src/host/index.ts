@@ -1,8 +1,7 @@
-// The host runs in an Electron utility process and will own pi, git and the
-// terminals. For now the page shows the fixture player that stands in for pi,
-// and only tests start pi. Main hands the host a MessagePort to the page on
-// every page load. The host sends each new port a snapshot of the thread, and
-// after that only batches of events.
+// The host runs in an Electron utility process and owns pi. Git and the
+// terminals come later. Main hands the host a MessagePort to the page on every
+// page load. The host sends each new port a snapshot of the workspace and its
+// thread, and after that only what changes.
 import type { MessagePortMain } from "electron";
 import {
   parseClientMessage,
@@ -13,14 +12,19 @@ import {
   type HostToMainMessage,
   type MainToHostMessage,
 } from "../shared/protocol";
+import { threadFromMessages } from "../shared/thread";
+import { LiveThread } from "./liveThread";
 import { PiExitError } from "./piProcess";
-import { openPlayer, type Player } from "./player";
 import { Supervisor } from "./supervisor";
 
 const v = PROTOCOL_VERSION;
 
 /** The port of the page on screen. A new page load replaces it. */
 let page: MessagePortMain | undefined;
+/** The open project's thread. Stage 5 keeps one for each session. */
+let thread: LiveThread | undefined;
+/** Whether main is showing the folder dialog. */
+let choosing = false;
 
 function send(message: HostMessage): void {
   page?.postMessage(message);
@@ -30,15 +34,15 @@ function tellMain(message: HostToMainMessage): void {
   process.parentPort.postMessage(message);
 }
 
-/** Perf opens a longer thread by setting TONDO_TRANSCRIPT_MESSAGES. */
-function messageCount(): number | undefined {
-  const value = process.env.TONDO_TRANSCRIPT_MESSAGES;
-  if (!value) return undefined;
-  const count = Number(value);
-  if (!Number.isSafeInteger(count) || count <= 0) {
-    throw new Error(`TONDO_TRANSCRIPT_MESSAGES must be a positive integer, not "${value}"`);
-  }
-  return count;
+function snapshot(): HostMessage {
+  return (
+    thread?.snapshot() ?? {
+      v,
+      type: "snapshot",
+      workspace: { project: null, askingTrust: false, pi: { state: "stopped" } },
+      thread: threadFromMessages([]),
+    }
+  );
 }
 
 /** What main passed as the host's first argument. */
@@ -48,19 +52,6 @@ function readConfig(): HostConfig {
   return JSON.parse(json) as HostConfig;
 }
 
-/** Tests only, until the page can start pi: starts pi in `cwd` and sends it `prompt`. */
-async function runPi(supervisor: Supervisor, cwd: string, prompt: string): Promise<void> {
-  const pi = await supervisor.start(cwd, () => {});
-  // Nothing stops this pi, so it exiting at all is worth a line in the log.
-  pi.exited.then((exit) =>
-    console.error(`pi ${pi.pid} in ${cwd}: ${new PiExitError(exit).message}`),
-  );
-  await pi.rpc.request({ type: "prompt", message: prompt }).catch((error: unknown) => {
-    // The line above already reports a pi that exits before it answers.
-    if (!(error instanceof PiExitError)) throw error;
-  });
-}
-
 /** Runs V8's last-resort collection. Main exposes gc() to the host only under perf. */
 async function collectGarbage(): Promise<void> {
   const { gc } = globalThis;
@@ -68,43 +59,70 @@ async function collectGarbage(): Promise<void> {
   await gc({ type: "major", execution: "async", flavor: "last-resort" });
 }
 
-function serve(player: Player, port: MessagePortMain): void {
-  const snapshot = (): HostMessage => ({
-    v,
-    type: "snapshot",
-    thread: player.thread,
-    status: player.status,
-  });
-  const handle = (message: ClientMessage) => {
-    switch (message.type) {
-      case "play":
-        player.play(message.fixture, message.speed).catch((error: unknown) => {
-          console.error(`Tondo Host couldn't play ${message.fixture}:`, error);
-          send({
-            v,
-            type: "error",
-            message: `Playing ${message.fixture} failed: ${String(error)}`,
-          });
-        });
-        break;
-      case "stop":
-        player.stop();
-        break;
-      case "reopen":
-        port.postMessage(snapshot());
-        break;
-      case "ping":
-        port.postMessage({ v, type: "pong", id: message.id } satisfies HostMessage);
-        break;
-    }
-  };
+/** Closes the open thread, if any, and opens one in `folder`. */
+function openProject(supervisor: Supervisor, folder: string): void {
+  void thread?.close();
+  thread = new LiveThread(folder, supervisor, send);
+  send(thread.snapshot());
+  withThread((opened) => opened.open());
+}
 
+/** Runs `work` on the open thread and tells the page if it fails. A pi that exited reports itself. */
+function withThread(work: (thread: LiveThread) => Promise<void>): void {
+  const done = thread ? work(thread) : Promise.reject(new Error("No project is open."));
+  done.catch((error: unknown) => {
+    if (error instanceof PiExitError) return;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Tondo Host: ${message}`);
+    send({ v, type: "error", message });
+  });
+}
+
+function handle(message: ClientMessage, port: MessagePortMain): void {
+  switch (message.type) {
+    case "open-project":
+      if (!choosing) {
+        choosing = true;
+        tellMain({ type: "choose-project" });
+      }
+      break;
+    case "trust":
+      withThread((open) => open.trust(message.trusted));
+      break;
+    case "prompt":
+      withThread((open) => open.prompt(message.text, message.streamingBehavior));
+      break;
+    case "stop":
+      withThread((open) => open.stop());
+      break;
+    case "dequeue":
+      withThread((open) => open.dequeue());
+      break;
+    case "set-model":
+      withThread((open) => open.setModel(message.provider, message.modelId));
+      break;
+    case "set-thinking-level":
+      withThread((open) => open.setThinkingLevel(message.level));
+      break;
+    case "restart":
+      withThread((open) => open.restart());
+      break;
+    case "reopen":
+      port.postMessage(snapshot());
+      break;
+    case "ping":
+      port.postMessage({ v, type: "pong", id: message.id } satisfies HostMessage);
+      break;
+  }
+}
+
+function serve(port: MessagePortMain): void {
   page?.close();
   page = port;
   port.on("message", ({ data }) => {
     const result = parseClientMessage(data);
     if (result.ok) {
-      handle(result.message);
+      handle(result.message, port);
     } else {
       console.error(`Tondo Host rejected a message from the page: ${result.error}`);
       port.postMessage({ v, type: "error", message: result.error } satisfies HostMessage);
@@ -117,20 +135,23 @@ function serve(player: Player, port: MessagePortMain): void {
   port.postMessage(snapshot());
 }
 
-async function start(): Promise<void> {
+function start(): void {
   const supervisor = new Supervisor(readConfig(), (pgids) => {
     tellMain({ type: "process-groups", pgids });
   });
-  const player = await openPlayer(send, messageCount());
   process.parentPort.on("message", ({ data, ports }) => {
     const message = data as MainToHostMessage;
     switch (message.type) {
       case "connect": {
         const [port] = ports;
         if (!port) throw new Error("Main sent connect without a port");
-        serve(player, port);
+        serve(port);
         break;
       }
+      case "project-chosen":
+        choosing = false;
+        if (message.folder !== null) openProject(supervisor, message.folder);
+        break;
       case "collect-garbage":
         collectGarbage().then(
           () => tellMain({ type: "garbage-collected" }),
@@ -140,17 +161,14 @@ async function start(): Promise<void> {
           },
         );
         break;
-      case "run-pi":
-        runPi(supervisor, message.cwd, message.prompt).catch((error: unknown) => {
-          console.error(`Tondo Host couldn't run pi in ${message.cwd}:`, error);
-        });
-        break;
     }
   });
   tellMain({ type: "ready" });
 }
 
-start().catch((error: unknown) => {
+try {
+  start();
+} catch (error) {
   console.error("Tondo Host failed to start:", error);
   process.exit(1);
-});
+}

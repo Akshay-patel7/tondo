@@ -47,7 +47,12 @@ describe("startHost", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(stopProcessGroups).mockResolvedValue();
     hosts = [];
-    options = { entry: "host.js", config, onOutput: vi.fn() };
+    options = {
+      entry: "host.js",
+      config,
+      chooseFolder: vi.fn().mockResolvedValue(null),
+      onOutput: vi.fn(),
+    };
     electron.fork.mockImplementation(() => {
       const host = new FakeHost();
       hosts.push(host);
@@ -171,17 +176,28 @@ describe("startHost", () => {
     expect(hosts).toHaveLength(1);
   });
 
-  it("asks a ready host to run pi", () => {
-    const host = startHost(options);
-    expect(() => host.runPi("/project", "Hello")).toThrow("isn't running");
-
+  it("shows the folder dialog when the host asks for a project", async () => {
+    options.chooseFolder = vi.fn().mockResolvedValue("/project");
+    startHost(options);
     latest().ready();
-    host.runPi("/project", "Hello");
-    expect(latest().postMessage).toHaveBeenLastCalledWith({
-      type: "run-pi",
-      cwd: "/project",
-      prompt: "Hello",
-    });
+    const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+
+    latest().emit("message", { type: "choose-project" });
+    await expect(answered).resolves.toEqual({ type: "project-chosen", folder: "/project" });
+  });
+
+  it("answers with no folder when the dialog fails", async () => {
+    options.chooseFolder = vi.fn().mockRejectedValue(new Error("No window"));
+    startHost(options);
+    latest().ready();
+    const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+
+    latest().emit("message", { type: "choose-project" });
+    await expect(answered).resolves.toEqual({ type: "project-chosen", folder: null });
+    expect(console.error).toHaveBeenCalledWith(
+      "Tondo couldn't show the folder dialog:",
+      new Error("No window"),
+    );
   });
 
   it("fails a garbage collection the host dies in", async () => {

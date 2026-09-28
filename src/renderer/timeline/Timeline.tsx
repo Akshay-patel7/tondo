@@ -54,6 +54,7 @@ export function Timeline() {
   const messages = useThread((thread) => thread.messages);
   const streaming = useThread((thread) => thread.streaming !== null);
   const listRef = useRef<LegendListRef>(null);
+  const opened = useRef(false);
   const [following, setFollowing] = useState(true);
   const lastScroll = useRef(0);
   const rows: readonly TimelineRow[] = streaming ? [...messages, STREAMING] : messages;
@@ -66,12 +67,26 @@ export function Timeline() {
     setFollowing((wasFollowing) => followsAfterScroll(wasFollowing, previousScroll, state));
   };
 
-  // Legend List keeps its opening scroll to the end alive for 2 s. A new row in
-  // that window restarts it with visible-position upkeep off, and the rows above
-  // move by their size estimates' error, about 325,000 px in the 1,000-message
-  // fixture, for a frame. Any imperative scroll ends the opening scroll for good.
-  const onReady = () => {
+  // Legend List hides the rows until its opening scroll to the end finishes.
+  // That scroll can't finish while the last row grows, so a thread opened
+  // mid-reply stays blank until a fallback timer ends it, 150 to 170 ms in.
+  // It also stays alive for 2 s, and a new row in that window restarts it with
+  // visible-position upkeep off: the rows above move by their size estimates'
+  // error, about 325,000 px in the 1,000-message fixture, for a frame. Any
+  // imperative scroll ends it for good. Ending it while the view is still far
+  // from the end shows the rows there for a frame, so wait until the view is
+  // within a screen of the end, or until Legend List finishes it.
+  const endOpeningScroll = () => {
+    if (opened.current) return;
+    opened.current = true;
     void listRef.current?.scrollToEnd({ animated: false });
+  };
+  const onItemSizeChanged = () => {
+    if (opened.current) return;
+    const state = listRef.current?.getState();
+    if (state && state.contentLength - state.scroll - state.scrollLength <= state.scrollLength) {
+      endOpeningScroll();
+    }
   };
 
   return (
@@ -88,7 +103,8 @@ export function Timeline() {
         maintainScrollAtEndThreshold={1}
         maintainVisibleContentPosition={KEEP_POSITION}
         onScroll={onScroll}
-        onReady={onReady}
+        onItemSizeChanged={onItemSizeChanged}
+        onReady={endOpeningScroll}
         className="h-full min-h-0 overflow-x-hidden overscroll-y-contain px-4 [overflow-anchor:none]"
       />
     </div>

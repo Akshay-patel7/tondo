@@ -1,30 +1,90 @@
+// Helpers for tests on a thread that holds the recorded 1,000-message
+// transcript. pi opens it from a session file the test writes.
 import { expect, type Page } from "@playwright/test";
-import type { FixtureName } from "../src/shared/protocol";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import type { FauxScript } from "../scripts/fixtures/faux-ext";
+import { bringToFront, type Tondo } from "./launch";
+import { launchWithPi, openProject, PI_START_TIMEOUT_MS, seedSession } from "./pi";
 
 /**
  * transcript-1000.json holds pi's system prompt and 1,000 messages. The
  * timeline doesn't show the system prompt, so its rows are 0 to 999.
  */
-export const LAST_TRANSCRIPT_ROW = 999;
+export const TRANSCRIPT_MESSAGES = 1000;
+export const LAST_TRANSCRIPT_ROW = TRANSCRIPT_MESSAGES - 1;
 
 /** The follow threshold in src/renderer/timeline/follow.ts. */
 export const FOLLOW_THRESHOLD_PX = 40;
 
-/** Waits until the fixture player has opened the transcript. */
-export async function waitForTranscript(page: Page): Promise<void> {
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle");
+export interface TranscriptOptions {
+  script: FauxScript;
+  /** How many times over the thread holds the transcript's messages. */
+  copies?: number;
+  /** Gives every JavaScript heap `gc()`, for measureMemory. */
+  exposeGc?: boolean;
 }
 
-/** Starts replaying a fixture with the player controls, at the recorded pace. */
-export async function play(page: Page, fixture: FixtureName): Promise<void> {
-  await page.getByLabel("Fixture").selectOption(fixture);
-  await page.getByRole("button", { name: "Play" }).click();
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "playing");
+export interface TranscriptTondo extends Tondo {
+  /** An empty folder. A thread opened in it starts with the transcript. */
+  project: string;
+  /** The rows that thread shows. */
+  messages: number;
 }
 
-/** Waits until the player has replayed the whole fixture. */
-export async function waitForPlayback(page: Page, timeout: number): Promise<void> {
-  await expect(page.getByTestId("player")).toHaveAttribute("data-status", "idle", { timeout });
+/**
+ * Launches Tondo in front with the faux pi, which forks a session holding the
+ * transcript into each thread it starts. `close` also deletes the session.
+ */
+export async function launchOnTranscript({
+  script,
+  copies = 1,
+  exposeGc = false,
+}: TranscriptOptions): Promise<TranscriptTondo> {
+  const workDir = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-transcript-")));
+  const removeWorkDir = () => rmSync(workDir, { recursive: true, force: true });
+  const project = path.join(workDir, "project");
+  mkdirSync(project);
+  const session = path.join(workDir, "transcript.jsonl");
+  seedSession(session, project, copies);
+
+  const tondo = await launchWithPi({
+    workDir,
+    script,
+    piArgs: ["--fork", session],
+    exposeGc,
+  }).catch((error: unknown) => {
+    removeWorkDir();
+    throw error;
+  });
+  const onTranscript: TranscriptTondo = {
+    ...tondo,
+    project,
+    messages: copies * TRANSCRIPT_MESSAGES,
+    async close() {
+      await tondo.close();
+      removeWorkDir();
+    },
+  };
+  await bringToFront(onTranscript).catch(async (error: unknown) => {
+    await onTranscript.close();
+    throw error;
+  });
+  return onTranscript;
+}
+
+/** Opens the project, and waits until the page shows the thread's last row. */
+export async function openTranscript(tondo: TranscriptTondo): Promise<void> {
+  await openProject(tondo, tondo.project);
+  await waitForTranscript(tondo.page, tondo.messages);
+}
+
+/** Waits until the page shows the last row of a thread with `messages` rows. */
+export async function waitForTranscript(page: Page, messages = TRANSCRIPT_MESSAGES): Promise<void> {
+  await expect(page.locator(`[data-index="${messages - 1}"]`)).toBeAttached({
+    timeout: PI_START_TIMEOUT_MS,
+  });
 }
 
 /** Waits until the reply streaming in is at least `chars` characters long. */

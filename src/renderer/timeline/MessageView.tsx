@@ -19,7 +19,7 @@ export function MessageView({ message, streaming }: { message: PiMessage; stream
     case "user":
       return (
         <div className="flex justify-end py-3">
-          <p className="max-w-[80%] rounded-2xl bg-neutral-100 px-4 py-2 whitespace-pre-wrap dark:bg-neutral-800">
+          <p className="max-w-[80%] rounded-panel bg-message px-4 py-2 whitespace-pre-wrap text-message-foreground">
             {plainText(message.content)}
           </p>
         </div>
@@ -28,12 +28,12 @@ export function MessageView({ message, streaming }: { message: PiMessage; stream
       return <AssistantView message={message} streaming={streaming} />;
     case "toolResult":
       return (
-        <pre className="my-2 max-h-40 overflow-auto rounded-lg bg-neutral-50 p-3 text-xs dark:bg-neutral-950">
+        <pre className="my-2 max-h-40 overflow-auto rounded-control bg-muted p-3 text-xs">
           {message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n")}
         </pre>
       );
     default:
-      return <p className="py-2 text-sm text-neutral-500">{message.role} message</p>;
+      return <p className="py-2 text-sm text-muted-foreground">{message.role} message</p>;
   }
 }
 
@@ -46,7 +46,7 @@ function AssistantView({ message, streaming }: { message: AssistantMessage; stre
         <ContentBlockView key={index} block={block} streaming={streaming} />
       ))}
       {message.stopReason === "error" || message.stopReason === "aborted" ? (
-        <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+        <p className="mt-2 text-sm text-destructive">
           {message.errorMessage ?? message.stopReason}
         </p>
       ) : null}
@@ -58,7 +58,7 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
   switch (block.type) {
     case "thinking":
       return (
-        <details className="mb-2 text-sm text-neutral-500">
+        <details className="mb-2 text-sm text-muted-foreground">
           <summary className="cursor-default select-none">Thinking</summary>
           <p className="mt-1 whitespace-pre-wrap">{block.thinking}</p>
         </details>
@@ -71,7 +71,7 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
       );
     case "toolCall":
       return (
-        <pre className="my-2 rounded-lg border border-neutral-200 p-3 text-xs dark:border-neutral-800">
+        <pre className="my-2 rounded-control border border-border p-3 text-xs">
           {block.name} {JSON.stringify(block.arguments)}
         </pre>
       );
