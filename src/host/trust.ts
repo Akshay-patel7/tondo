@@ -116,8 +116,11 @@ function piAgentDir(cwd: string, env: Record<string, string>, home: string): str
   return path.resolve(cwd, expanded);
 }
 
-/** Mirrors pi's canonicalizePath: the realpath, or the path itself if it doesn't exist. */
-function canonical(file: string): string {
+/**
+ * Mirrors pi's canonicalizePath: the realpath, or the path itself if it
+ * doesn't exist. Tondo keeps your trust answers under it too.
+ */
+export function canonical(file: string): string {
   const resolved = path.resolve(file);
   try {
     return realpathSync(resolved);
