@@ -19,6 +19,8 @@ import type { FauxScript } from "../../scripts/fixtures/faux-ext";
 import { PiExitError, startPi, type PiProcess } from "./piProcess";
 import { PiCommandError, type PiRecord } from "./piRpc";
 import { signalGroup } from "./processGroup";
+import { sessionFolder } from "./sessionFolder";
+import { SessionIndex } from "./sessionIndex";
 import { needsTrustDecision, trustArgs } from "./trust";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
@@ -326,6 +328,77 @@ describe("pi 0.87.1's RPC protocol", () => {
     await settled;
     const header = JSON.parse(readFileSync(state.sessionFile, "utf8").split("\n")[0]!) as unknown;
     expect(header).toMatchObject({ type: "session", id, cwd: workDir });
+  });
+});
+
+/** The environment startRealPi gives pi, as far as its session folder goes. */
+const sessionEnv = () => ({
+  ...(process.env as Record<string, string>),
+  PI_CODING_AGENT_DIR: path.join(workDir, "agent"),
+});
+
+/** Starts a thread with --session-id, asks one thing, names it, stops pi, and returns the thread's file. */
+async function namedThread(): Promise<{ id: string; file: string }> {
+  const id = randomUUID();
+  const { pi, next } = await startRealPi({ responses: [fauxAssistantMessage(fauxText("Done."))] }, [
+    "--session-id",
+    id,
+  ]);
+  const settled = next(isSettled);
+  await pi.rpc.request({ type: "prompt", message: "Name me." });
+  await settled;
+  await pi.rpc.request({ type: "set_session_name", name: "Named thread" });
+  const { sessionFile } = (await pi.rpc.request({ type: "get_state" })).data as {
+    sessionFile: string;
+  };
+  await pi.stop();
+  return { id, file: sessionFile };
+}
+
+describe("pi 0.87.1's session files", () => {
+  it("keeps a thread where Tondo looks for it, and Tondo reads its name", async () => {
+    const { id, file } = await namedThread();
+    const folder = sessionFolder(workDir, [], sessionEnv());
+    expect(path.dirname(file)).toBe(folder.dir);
+    expect(await new SessionIndex().list(workDir, folder)).toEqual([
+      expect.objectContaining({
+        id,
+        file,
+        cwd: workDir,
+        name: "Named thread",
+        firstMessage: "Name me.",
+      }),
+    ]);
+  });
+
+  it("keeps threads where the project's sessionDir setting says, before any trust answer", async () => {
+    mkdirSync(path.join(workDir, ".pi"));
+    writeFileSync(
+      path.join(workDir, ".pi", "settings.json"),
+      JSON.stringify({ sessionDir: "threads" }),
+    );
+    const { id, file } = await namedThread();
+    const folder = sessionFolder(workDir, [], sessionEnv());
+    expect(folder).toEqual({ dir: path.join(workDir, "threads"), shared: true });
+    // pi reports the file relative to the project when the setting is relative.
+    expect(path.dirname(file)).toBe("threads");
+    expect(path.dirname(path.resolve(workDir, file))).toBe(folder.dir);
+    const listed = await new SessionIndex().list(workDir, folder);
+    expect(listed.map((summary) => summary.id)).toEqual([id]);
+  });
+
+  it("resumes a thread from its file", async () => {
+    const { id, file } = await namedThread();
+    const { pi } = await startRealPi({ responses: [] }, ["--session", file]);
+    expect((await pi.rpc.request({ type: "get_state" })).data).toMatchObject({
+      sessionId: id,
+      sessionFile: file,
+      sessionName: "Named thread",
+    });
+    expect(await transcript(pi)).toEqual([
+      ["user", "Name me."],
+      ["assistant", "Done."],
+    ]);
   });
 });
 

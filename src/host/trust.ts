@@ -109,7 +109,7 @@ function defaultTrust(agentDir: string): string {
 }
 
 /** Mirrors pi's getAgentDir: PI_CODING_AGENT_DIR with `~` expanded, else `~/.pi/agent`. */
-function piAgentDir(cwd: string, env: Record<string, string>, home: string): string {
+export function piAgentDir(cwd: string, env: Record<string, string>, home: string): string {
   const dir = env.PI_CODING_AGENT_DIR;
   if (!dir) return path.join(home, ".pi", "agent");
   const expanded = dir === "~" ? home : dir.startsWith("~/") ? path.join(home, dir.slice(2)) : dir;
@@ -130,7 +130,7 @@ export function canonical(file: string): string {
 }
 
 /** Parses a JSON file, skipping a byte order mark as pi does. */
-function readJson(file: string): unknown {
+export function readJson(file: string): unknown {
   const text = readFileSync(file, "utf8");
   return JSON.parse(text.startsWith("\uFEFF") ? text.slice(1) : text);
 }
