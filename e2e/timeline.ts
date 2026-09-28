@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FauxScript } from "../scripts/fixtures/faux-ext";
 import { bringToFront, type Tondo } from "./launch";
-import { launchWithPi, openProject, PI_START_TIMEOUT_MS, seedSession } from "./pi";
+import { addProject, launchWithPi, PI_START_TIMEOUT_MS } from "./pi";
+import { seedSession } from "./sessions";
 
 /**
  * transcript-1000.json holds pi's system prompt and 1,000 messages. The
@@ -46,8 +47,7 @@ export async function launchOnTranscript({
   const removeWorkDir = () => rmSync(workDir, { recursive: true, force: true });
   const project = path.join(workDir, "project");
   mkdirSync(project);
-  const session = path.join(workDir, "transcript.jsonl");
-  seedSession(session, project, copies);
+  const session = seedSession(workDir, project, copies);
 
   const tondo = await launchWithPi({
     workDir,
@@ -74,10 +74,25 @@ export async function launchOnTranscript({
   return onTranscript;
 }
 
-/** Opens the project, and waits until the page shows the thread's last row. */
+/** Adds the project, and waits until the page shows its new thread's last row. */
 export async function openTranscript(tondo: TranscriptTondo): Promise<void> {
-  await openProject(tondo, tondo.project);
+  await addProject(tondo, tondo.project);
   await waitForTranscript(tondo.page, tondo.messages);
+}
+
+/**
+ * Starts a new thread in the open thread's project, the way the app's
+ * shortcut does, and waits until the page shows its transcript. The faux pi
+ * forks the transcript into every thread it starts.
+ */
+export async function newTranscriptThread(tondo: TranscriptTondo): Promise<void> {
+  const { page } = tondo;
+  const before = await page.getByTestId("timeline").elementHandle();
+  await page.keyboard.press("ControlOrMeta+n");
+  // The new thread's first snapshot replaces the timeline.
+  await page.waitForFunction((timeline) => !timeline?.isConnected, before);
+  await before?.dispose();
+  await waitForTranscript(page, tondo.messages);
 }
 
 /** Waits until the page shows the last row of a thread with `messages` rows. */

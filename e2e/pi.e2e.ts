@@ -7,10 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { hostPid, type Tondo } from "./launch";
 import {
+  addProject,
   bashCall,
   composer,
   launchWithPi,
-  openProject,
   PI_START_TIMEOUT_MS,
   send,
   waitForPi,
@@ -80,7 +80,7 @@ test("a pi that fails to start shows why, and offers a restart", async () => {
     cli: path.join(broken, "cli.js"),
   });
   const { page } = tondo;
-  await openProject(tondo, project);
+  await addProject(tondo, project);
 
   const banner = page.getByRole("alert");
   await expect(banner).toContainText("pi exited with code 3.", { timeout: PI_START_TIMEOUT_MS });
@@ -105,7 +105,7 @@ function runTool() {
  * running, with pi's pid and every group to watch: pi's and the command's.
  */
 async function startTurn(started: Tondo) {
-  await openProject(started, project);
+  await addProject(started, project);
   await waitForPi(started.page);
   await send(started.page, "Run the tool.");
 

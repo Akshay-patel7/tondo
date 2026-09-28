@@ -42,7 +42,7 @@ describe("piLaunch", () => {
   it("runs the node beside pi on pi's cli.js, in RPC mode on the session, with the extra arguments last", () => {
     const loginEnv = { HOME: path.join(root, "home"), PI_CODING_AGENT_DIR: "/yours" };
     const settings = { piPath: path.join(bin, "pi"), projectTrust: {} };
-    expect(piLaunch(project, "session-1", loginEnv, config, settings)).toEqual({
+    expect(piLaunch(project, { id: "session-1" }, loginEnv, config, settings)).toEqual({
       command: path.join(bin, "node"),
       args: [cli, "--mode", "rpc", "--session-id", "session-1", "-e", "faux-ext.ts"],
       cwd: project,
@@ -50,11 +50,28 @@ describe("piLaunch", () => {
     });
   });
 
+  it("opens a session pi saved by its file", () => {
+    const loginEnv = { HOME: path.join(root, "home") };
+    const settings = { piPath: path.join(bin, "pi"), projectTrust: {} };
+    const file = path.join(root, "agent/sessions/--x--/2026_thread.jsonl");
+    expect(piLaunch(project, { file }, loginEnv, config, settings).args).toEqual([
+      cli,
+      "--mode",
+      "rpc",
+      "--session",
+      file,
+      "-e",
+      "faux-ext.ts",
+    ]);
+  });
+
   it("keeps your PI_CODING_AGENT_DIR when the config sets none", () => {
     const loginEnv = { HOME: path.join(root, "home"), PI_CODING_AGENT_DIR: "/yours" };
     const settings = { piPath: path.join(bin, "pi"), projectTrust: {} };
     const packaged = { userData: config.userData, piArgs: [] };
-    expect(piLaunch(project, "session-1", loginEnv, packaged, settings).env).toEqual(loginEnv);
+    expect(piLaunch(project, { id: "session-1" }, loginEnv, packaged, settings).env).toEqual(
+      loginEnv,
+    );
   });
 
   it("passes your trust answer, checked against the agent folder pi will use", () => {
@@ -66,7 +83,7 @@ describe("piLaunch", () => {
       PI_CODING_AGENT_DIR: path.join(root, "yours"),
     };
     const settings = { piPath: path.join(bin, "pi"), projectTrust: { [project]: false } };
-    expect(piLaunch(project, "session-1", loginEnv, config, settings).args).toEqual([
+    expect(piLaunch(project, { id: "session-1" }, loginEnv, config, settings).args).toEqual([
       cli,
       "--mode",
       "rpc",

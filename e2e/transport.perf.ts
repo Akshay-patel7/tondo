@@ -6,10 +6,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { PROTOCOL_VERSION } from "../src/shared/protocol";
-import type { Tondo } from "./launch";
+import { PROTOCOL_VERSION, type HostMessage } from "../src/shared/protocol";
 import { listenOnPort, median, percentile, perfRunDir, type PerfWindow } from "./perf";
-import { launchOnTranscript, openTranscript, TRANSCRIPT_MESSAGES } from "./timeline";
+import {
+  launchOnTranscript,
+  newTranscriptThread,
+  openTranscript,
+  TRANSCRIPT_MESSAGES,
+  type TranscriptTondo,
+} from "./timeline";
 
 const PINGS = 1000;
 /** Round trips that warm up the code on both ends first and don't count. */
@@ -21,9 +26,9 @@ const THREAD_SIZES = [1000, 5000] as const;
 const BUDGET = { roundTripP95: 1 };
 
 interface SnapshotRun {
-  /** From sending reopen until the snapshot's data is in hand. */
+  /** From sending open-thread until the snapshot's data is in hand. */
   totalMs: number;
-  /** From sending reopen until the page's first listener runs. */
+  /** From sending open-thread until the page's first listener runs. */
   arrivedMs: number;
   /** Reading `event.data`, which deserializes the snapshot if it isn't already. */
   readMs: number;
@@ -67,8 +72,9 @@ test("round trip from the page to the host and back", async () => {
 
 for (const size of THREAD_SIZES) {
   test(`snapshot of a ${size.toLocaleString("en-US")}-message thread`, async () => {
-    await withTondo(size, async ({ page }) => {
-      const snapshot = await measureSnapshots(page);
+    await withTondo(size, async (tondo) => {
+      await newTranscriptThread(tondo);
+      const snapshot = await measureSnapshots(tondo.page);
       expect(snapshot.messages, "the host opened a thread of that size").toBe(size);
       results.snapshots[size] = snapshot;
     });
@@ -86,7 +92,10 @@ test("budgets", () => {
  * Launches Tondo in front with listenOnPort's script, opens a thread of
  * `messages` messages, runs `body` and quits.
  */
-async function withTondo(messages: number, body: (tondo: Tondo) => Promise<void>): Promise<void> {
+async function withTondo(
+  messages: number,
+  body: (tondo: TranscriptTondo) => Promise<void>,
+): Promise<void> {
   const tondo = await launchOnTranscript({
     script: { responses: [] },
     copies: messages / TRANSCRIPT_MESSAGES,
@@ -140,13 +149,18 @@ function measureRoundTrips(page: Page): Promise<{ times: number[]; totalMs: numb
   );
 }
 
-/** Asks the host to send the thread again, SNAPSHOTS times plus one to warm up. */
+/**
+ * Opens the two threads the host has shown the page in turn, SNAPSHOTS times
+ * plus one to warm up, and times the snapshot the host answers each with.
+ */
 function measureSnapshots(page: Page): Promise<SnapshotResult> {
   return page.evaluate(
     async ({ snapshots, v }) => {
       const perf = (window as PerfWindow).tondoPerf;
       if (!perf) throw new Error("The perf script didn't get the page's port");
-      const { port } = perf;
+      // The second is on screen.
+      const { port, threads } = perf;
+      if (threads.length !== 2) throw new Error(`The host showed ${threads.length} threads, not 2`);
       const result: SnapshotResult = { messages: 0, jsonChars: 0, runs: [] };
       for (let run = 0; run <= snapshots; run++) {
         // Let the app finish showing the snapshot before, so the page is idle.
@@ -154,9 +168,9 @@ function measureSnapshots(page: Page): Promise<SnapshotResult> {
         await new Promise((resolve) => requestAnimationFrame(resolve));
         await new Promise((resolve) => requestIdleCallback(resolve));
         const sent = performance.now();
-        const { measured, thread } = await new Promise<{
+        const { measured, snapshot } = await new Promise<{
           measured: SnapshotRun;
-          thread: unknown;
+          snapshot: Extract<HostMessage, { type: "snapshot" }>;
         }>((resolve) => {
           perf.onMessage = (event) => {
             const arrived = performance.now();
@@ -165,14 +179,14 @@ function measureSnapshots(page: Page): Promise<SnapshotResult> {
             if (data.type !== "snapshot") return;
             resolve({
               measured: { totalMs: read - sent, arrivedMs: arrived - sent, readMs: read - arrived },
-              thread: data.thread,
+              snapshot: data,
             });
           };
-          port.postMessage({ v, type: "reopen" });
+          port.postMessage({ v, type: "open-thread", threadId: threads[run % 2] });
         });
         if (run === 0) {
-          result.messages = (thread as { messages: unknown[] }).messages.length;
-          result.jsonChars = JSON.stringify(thread).length;
+          result.messages = snapshot.state.messages.length;
+          result.jsonChars = JSON.stringify(snapshot).length;
         } else {
           result.runs.push(measured);
         }
@@ -209,7 +223,7 @@ function formatReport(): string {
     ``,
     `The page's clock steps by ${results.clockStepMs === undefined ? "an unmeasured amount" : ms(results.clockStepMs)}, which bounds each single reading.`,
     `Round trips: ${WARM_UP_PINGS} to warm up, then ${PINGS} counted, one at a time.`,
-    `Snapshots: the median of ${SNAPSHOTS} after one to warm up, each sent once the page is idle, from sending reopen until the page's first listener has the data.`,
+    `Snapshots: the median of ${SNAPSHOTS} after one to warm up, switching between two threads of that size once the page is idle, from sending open-thread until the page's first listener has the data.`,
     ``,
     `| Metric | Budget | Result |`,
     `|---|---|---|`,

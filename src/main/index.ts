@@ -93,10 +93,10 @@ if (!app.requestSingleInstanceLock()) {
       handleAppProtocol(path.join(__dirname, "../renderer"));
       denyAllPermissions(session.defaultSession);
       const userData = app.getPath("userData");
-      const piArgs = process.env.TONDO_PI_ARGS;
+      const { TONDO_PI_ARGS: piArgs, TONDO_POOL: pool } = process.env;
       const started = startHost({
         entry: path.join(__dirname, "host.js"),
-        config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs }) },
+        config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs, pool }) },
         chooseFolder,
         onOutput: (stream, text) => {
           hostOutput[stream](text);

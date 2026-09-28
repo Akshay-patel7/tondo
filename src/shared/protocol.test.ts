@@ -11,18 +11,29 @@ function rejection(data: unknown): string {
 
 describe("parseClientMessage", () => {
   it("accepts every message the page sends, as a copy", () => {
+    const threadId = "0199c5e0-4a2b-7c3d-9e8f-1a2b3c4d5e6f";
     for (const message of [
-      { v, type: "open-project" },
-      { v, type: "trust", trusted: true },
-      { v, type: "trust", trusted: false },
-      { v, type: "prompt", text: "Fix the parser", streamingBehavior: "steer" },
-      { v, type: "prompt", text: "then run the tests", streamingBehavior: "followUp" },
-      { v, type: "stop" },
-      { v, type: "dequeue" },
-      { v, type: "set-model", provider: "anthropic", modelId: "claude-opus-4-5" },
-      { v, type: "set-thinking-level", level: "high" },
-      { v, type: "restart" },
-      { v, type: "reopen" },
+      { v, type: "add-project" },
+      { v, type: "remove-project", projectId: 1 },
+      { v, type: "set-collapsed", projectId: 1, collapsed: true },
+      { v, type: "new-thread", projectId: 2 },
+      { v, type: "open-thread", threadId },
+      { v, type: "rename-thread", threadId, name: "Parser fix" },
+      { v, type: "pin-thread", threadId, pinned: true },
+      { v, type: "archive-thread", threadId, archived: false },
+      { v, type: "set-draft", threadId, text: "" },
+      { v, type: "set-draft", threadId, text: "half a thought" },
+      { v, type: "set-sidebar-hidden", hidden: true },
+      { v, type: "refresh" },
+      { v, type: "trust", threadId, trusted: true },
+      { v, type: "trust", threadId, trusted: false },
+      { v, type: "prompt", threadId, text: "Fix the parser", streamingBehavior: "steer" },
+      { v, type: "prompt", threadId, text: "then run the tests", streamingBehavior: "followUp" },
+      { v, type: "stop", threadId },
+      { v, type: "dequeue", threadId },
+      { v, type: "set-model", threadId, provider: "anthropic", modelId: "claude-opus-4-5" },
+      { v, type: "set-thinking-level", threadId, level: "high" },
+      { v, type: "restart", threadId },
       { v, type: "ping", id: 0 },
     ]) {
       const result = parseClientMessage(message);
@@ -52,11 +63,62 @@ describe("parseClientMessage", () => {
   });
 
   it("rejects a trust answer that isn't true or false", () => {
-    expect(rejection({ v, type: "trust" })).toBe(
+    expect(rejection({ v, type: "trust", threadId: "t" })).toBe(
       "trust: trusted must be true or false, not undefined",
     );
-    expect(rejection({ v, type: "trust", trusted: "yes" })).toBe(
+    expect(rejection({ v, type: "trust", threadId: "t", trusted: "yes" })).toBe(
       'trust: trusted must be true or false, not "yes"',
+    );
+  });
+
+  it("rejects a thread id that isn't a short string", () => {
+    for (const [threadId, shown] of [
+      [undefined, "undefined"],
+      ["", '""'],
+      [7, "7"],
+      ["x".repeat(201), `"${"x".repeat(40)}…"`],
+    ] as const) {
+      for (const type of ["open-thread", "stop", "dequeue", "restart"]) {
+        expect(rejection({ v, type, threadId })).toBe(
+          `${type}: threadId must be a string of 1 to 200 characters, not ${shown}`,
+        );
+      }
+    }
+    expect(parseClientMessage({ v, type: "stop", threadId: "x".repeat(200) }).ok).toBe(true);
+  });
+
+  it("rejects a project id that isn't an integer", () => {
+    for (const [projectId, shown] of [
+      [undefined, "undefined"],
+      ["1", '"1"'],
+      [1.5, "1.5"],
+    ] as const) {
+      for (const type of ["remove-project", "new-thread"]) {
+        expect(rejection({ v, type, projectId })).toBe(
+          `${type}: projectId must be an integer, not ${shown}`,
+        );
+      }
+    }
+    expect(rejection({ v, type: "set-collapsed", projectId: 1, collapsed: "no" })).toBe(
+      'set-collapsed: collapsed must be true or false, not "no"',
+    );
+  });
+
+  it("rejects a blank name, a draft that isn't text and flags that aren't true or false", () => {
+    expect(rejection({ v, type: "rename-thread", threadId: "t", name: "  " })).toBe(
+      'rename-thread: name must be a string that isn\'t blank, not "  "',
+    );
+    expect(rejection({ v, type: "set-draft", threadId: "t", text: null })).toBe(
+      "set-draft: text must be a string, not null",
+    );
+    expect(rejection({ v, type: "pin-thread", threadId: "t", pinned: 1 })).toBe(
+      "pin-thread: pinned must be true or false, not 1",
+    );
+    expect(rejection({ v, type: "archive-thread", threadId: "t" })).toBe(
+      "archive-thread: archived must be true or false, not undefined",
+    );
+    expect(rejection({ v, type: "set-sidebar-hidden", hidden: "yes" })).toBe(
+      'set-sidebar-hidden: hidden must be true or false, not "yes"',
     );
   });
 
@@ -67,26 +129,26 @@ describe("parseClientMessage", () => {
       [undefined, "undefined"],
       [["hi"], "an array"],
     ] as const) {
-      expect(rejection({ v, type: "prompt", text, streamingBehavior: "steer" })).toBe(
-        `prompt: text must be a string that isn't blank, not ${shown}`,
-      );
+      expect(
+        rejection({ v, type: "prompt", threadId: "t", text, streamingBehavior: "steer" }),
+      ).toBe(`prompt: text must be a string that isn't blank, not ${shown}`);
     }
   });
 
   it("rejects a prompt that doesn't say how to queue", () => {
-    expect(rejection({ v, type: "prompt", text: "hi" })).toBe(
+    expect(rejection({ v, type: "prompt", threadId: "t", text: "hi" })).toBe(
       'prompt: streamingBehavior must be "steer" or "followUp", not undefined',
     );
-    expect(rejection({ v, type: "prompt", text: "hi", streamingBehavior: "all" })).toBe(
-      'prompt: streamingBehavior must be "steer" or "followUp", not "all"',
-    );
+    expect(
+      rejection({ v, type: "prompt", threadId: "t", text: "hi", streamingBehavior: "all" }),
+    ).toBe('prompt: streamingBehavior must be "steer" or "followUp", not "all"');
   });
 
   it("rejects a model or thinking level that isn't a string", () => {
-    expect(rejection({ v, type: "set-model", provider: "faux" })).toBe(
+    expect(rejection({ v, type: "set-model", threadId: "t", provider: "faux" })).toBe(
       'set-model: provider and modelId must be strings, not "faux" and undefined',
     );
-    expect(rejection({ v, type: "set-thinking-level", level: 3 })).toBe(
+    expect(rejection({ v, type: "set-thinking-level", threadId: "t", level: 3 })).toBe(
       "set-thinking-level: level must be a string, not 3",
     );
   });
@@ -103,14 +165,14 @@ describe("parseClientMessage", () => {
   });
 
   it("rejects fields a message doesn't have", () => {
-    expect(rejection({ v, type: "stop", fixture: "tools" })).toBe(
+    expect(rejection({ v, type: "stop", threadId: "t", fixture: "tools" })).toBe(
       'stop: unexpected field "fixture"',
     );
     expect(rejection({ v, type: "ping", id: 1, sentAt: 0 })).toBe(
       'ping: unexpected field "sentAt"',
     );
-    expect(rejection({ v, type: "open-project", folder: "/etc" })).toBe(
-      'open-project: unexpected field "folder"',
+    expect(rejection({ v, type: "add-project", folder: "/etc" })).toBe(
+      'add-project: unexpected field "folder"',
     );
   });
 
@@ -119,8 +181,11 @@ describe("parseClientMessage", () => {
     expect(rejection(hostile)).toBe(`protocol version undefined isn't ${v}`);
     expect(rejection({ v: hostile })).toBe(`protocol version an object isn't ${v}`);
     expect(rejection({ v, type: hostile })).toBe("unknown message type an object");
-    expect(rejection({ v, type: "prompt", text: hostile, streamingBehavior: "steer" })).toBe(
-      "prompt: text must be a string that isn't blank, not an object",
+    expect(
+      rejection({ v, type: "prompt", threadId: "t", text: hostile, streamingBehavior: "steer" }),
+    ).toBe("prompt: text must be a string that isn't blank, not an object");
+    expect(rejection({ v, type: "open-thread", threadId: hostile })).toBe(
+      "open-thread: threadId must be a string of 1 to 200 characters, not an object",
     );
   });
 

@@ -82,10 +82,10 @@ export function answerFolderDialog(app: ElectronApplication, folder: string): Pr
   }, folder);
 }
 
-/** Opens `folder` from the window Tondo starts with. */
-export async function openProject({ app, page }: Tondo, folder: string): Promise<void> {
+/** Adds `folder` with the sidebar's Add project button. Tondo opens a new thread in it. */
+export async function addProject({ app, page }: Tondo, folder: string): Promise<void> {
   await answerFolderDialog(app, folder);
-  await page.getByRole("button", { name: "Open project…" }).click();
+  await page.getByRole("button", { name: "Add project", exact: true }).click();
 }
 
 /** Waits until pi has started in the open project and takes prompts. */
@@ -97,6 +97,23 @@ export async function waitForPi(page: Page): Promise<void> {
 /** The composer's text box. Its label, "Message", is also part of "Send message". */
 export function composer(page: Page) {
   return page.getByRole("textbox", { name: "Message" });
+}
+
+/** The sidebar. */
+export function threads(page: Page) {
+  return page.getByRole("navigation", { name: "Threads" });
+}
+
+/**
+ * A thread's row in the sidebar. Its title attribute holds the thread's
+ * title. The row's list item also holds a "Thread actions" button, which an
+ * aria-label names.
+ */
+export const THREAD_ROW = "li > button[title]:not([aria-label])";
+
+/** The sidebar's thread rows. */
+export function threadRows(page: Page) {
+  return threads(page).locator(THREAD_ROW);
 }
 
 /** Writes `text` in the composer and presses `key`: Enter sends, or steers while pi works. */
@@ -194,38 +211,4 @@ export function longReply(): AssistantMessage {
 /** `count` plain words, numbered, so a stretch missing from a reply shows. */
 export function words(count: number): string {
   return Array.from({ length: count }, (_, index) => `word${index}`).join(" ");
-}
-
-/**
- * Writes fixtures/transcript-1000.json as a pi session in `file`, with its
- * 1,000 messages repeated `copies` times. pi started with `--fork file`
- * opens a thread that holds them.
- */
-export function seedSession(file: string, project: string, copies = 1): void {
-  const transcript = path.join(repoRoot, "fixtures/transcript-1000.json");
-  const { messages } = JSON.parse(readFileSync(transcript, "utf8")) as {
-    messages: { role: string; timestamp: number }[];
-  };
-  // pi keeps its system prompt as the session's first message.
-  const [system, ...rest] = messages;
-  if (system?.role !== "system") throw new Error(`${transcript} doesn't start with pi's prompt`);
-  const header = {
-    type: "session",
-    version: 3,
-    id: randomUUID(),
-    timestamp: new Date().toISOString(),
-    cwd: project,
-  };
-  const lines = [JSON.stringify(header)];
-  let parentId: string | null = null;
-  for (const [index, message] of [
-    system,
-    ...Array.from({ length: copies }, () => rest).flat(),
-  ].entries()) {
-    const id = index.toString(16).padStart(8, "0");
-    const timestamp = new Date(message.timestamp).toISOString();
-    lines.push(JSON.stringify({ type: "message", id, parentId, timestamp, message }));
-    parentId = id;
-  }
-  writeFileSync(file, `${lines.join("\n")}\n`);
 }

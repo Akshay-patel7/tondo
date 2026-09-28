@@ -34,25 +34,47 @@ describe("piOptions", () => {
   const userData = path.resolve("/work/tondo/.dev/userData");
   const piArgs = JSON.stringify(["--offline", "-e", "faux-ext.ts"]);
 
-  it("keeps unpackaged runs' pi files in the profile, with TONDO_PI_ARGS added", () => {
-    expect(piOptions({ isPackaged: false, userData, piArgs })).toEqual({
+  const pool = JSON.stringify({ maxLive: 1, idleMs: 0 });
+
+  it("keeps unpackaged runs' pi files in the profile, with TONDO_PI_ARGS and TONDO_POOL", () => {
+    expect(piOptions({ isPackaged: false, userData, piArgs, pool })).toEqual({
       piAgentDir: path.join(userData, "pi-agent"),
       piArgs: ["--offline", "-e", "faux-ext.ts"],
+      pool: { maxLive: 1, idleMs: 0 },
     });
-    expect(piOptions({ isPackaged: false, userData, piArgs: undefined }).piArgs).toEqual([]);
-    expect(piOptions({ isPackaged: false, userData, piArgs: "" }).piArgs).toEqual([]);
+    expect(piOptions({ isPackaged: false, userData, piArgs: undefined, pool: undefined })).toEqual({
+      piAgentDir: path.join(userData, "pi-agent"),
+      piArgs: [],
+    });
+    expect(piOptions({ isPackaged: false, userData, piArgs: "", pool: "" })).toEqual({
+      piAgentDir: path.join(userData, "pi-agent"),
+      piArgs: [],
+    });
   });
 
-  it("runs pi as you set it up in a packaged app, ignoring TONDO_PI_ARGS", () => {
-    expect(piOptions({ isPackaged: true, userData, piArgs })).toEqual({ piArgs: [] });
-    expect(piOptions({ isPackaged: true, userData, piArgs: "not json" })).toEqual({ piArgs: [] });
+  it("runs pi as you set it up in a packaged app, ignoring TONDO_PI_ARGS and TONDO_POOL", () => {
+    expect(piOptions({ isPackaged: true, userData, piArgs, pool })).toEqual({ piArgs: [] });
+    expect(piOptions({ isPackaged: true, userData, piArgs: "not json", pool: "[]" })).toEqual({
+      piArgs: [],
+    });
   });
 
   it.each(["--offline", '"--offline"', '["-e", 5]', '{"args": []}'])(
     "fails on a TONDO_PI_ARGS of %s",
     (value) => {
-      expect(() => piOptions({ isPackaged: false, userData, piArgs: value })).toThrow(
-        `TONDO_PI_ARGS must be a JSON array of strings, not ${value}`,
+      expect(() =>
+        piOptions({ isPackaged: false, userData, piArgs: value, pool: undefined }),
+      ).toThrow(`TONDO_PI_ARGS must be a JSON array of strings, not ${value}`);
+    },
+  );
+
+  it.each(["4", "[1]", "null", '{"maxLive": -1}', '{"maxLive": 1.5}', '{"size": 4}', "{"])(
+    "fails on a TONDO_POOL of %s",
+    (value) => {
+      expect(() =>
+        piOptions({ isPackaged: false, userData, piArgs: undefined, pool: value }),
+      ).toThrow(
+        `TONDO_POOL must be a JSON object with whole numbers for maxLive and idleMs, not ${value}`,
       );
     },
   );

@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { Page } from "@playwright/test";
-import { PORT_MESSAGE, PROTOCOL_VERSION, type HostMessage } from "../src/shared/protocol";
+import type { Locator, Page } from "@playwright/test";
+import { PORT_MESSAGE, type HostMessage } from "../src/shared/protocol";
 import type { Tondo } from "./launch";
 
 const execFileAsync = promisify(execFile);
@@ -193,6 +193,8 @@ export async function recordStream(
 export interface PerfWindow extends Window {
   tondoPerf?: {
     port: MessagePort;
+    /** The ids of the threads the host has put on screen, in the order it first did. */
+    threads: string[];
     /** Gets each message from the host before the app's own listener does. */
     onMessage?: ((event: MessageEvent<HostMessage>) => void) | undefined;
   };
@@ -201,8 +203,8 @@ export interface PerfWindow extends Window {
 /**
  * Reloads the page with a script that takes the page's port to the host the
  * way the app does, and listens on it before the app does. A measurement can
- * then send the host what the app never sends, and see each message from the
- * host before the app starts working on it.
+ * then send the host messages itself, and see each message from the host
+ * before the app starts working on it.
  */
 export async function listenOnPort({ app, page }: Tondo): Promise<void> {
   await app.context().addInitScript((portMessage) => {
@@ -210,11 +212,16 @@ export async function listenOnPort({ app, page }: Tondo): Promise<void> {
       if (event.source !== window || event.data !== portMessage) return;
       const [port] = event.ports;
       if (!port) return;
-      const perf: NonNullable<PerfWindow["tondoPerf"]> = { port };
+      const perf: NonNullable<PerfWindow["tondoPerf"]> = { port, threads: [] };
       (window as PerfWindow).tondoPerf = perf;
-      port.addEventListener("message", (message: MessageEvent<HostMessage>) =>
-        perf.onMessage?.(message),
-      );
+      port.addEventListener("message", (message: MessageEvent<HostMessage>) => {
+        perf.onMessage?.(message);
+        // Read after onMessage, which times reading the data.
+        const { data } = message;
+        if (data.type === "snapshot" && data.thread && !perf.threads.includes(data.thread.id)) {
+          perf.threads.push(data.thread.id);
+        }
+      });
     });
   }, PORT_MESSAGE);
   await page.reload();
@@ -222,29 +229,24 @@ export async function listenOnPort({ app, page }: Tondo): Promise<void> {
 }
 
 /**
- * Switches to the thread again, the stand-in for switching threads until
- * Stage 5. It sends the host `reopen` on the port listenOnPort took, and the
- * page opens the snapshot the host answers with in a new timeline. Resolves
- * with the milliseconds from sending until the paint of the first frame where
- * the new timeline shows the streaming reply at the bottom. Legend List renders
- * rows transparent until its opening scroll finishes, so the reply must also
- * be opaque.
+ * Clicks `row`, a thread in the sidebar whose pi is streaming a reply, and
+ * the page opens the snapshot the host answers with in a new timeline.
+ * Resolves with the milliseconds from the click until the paint of the first
+ * frame where the new timeline shows the streaming reply at the bottom.
+ * Legend List renders rows transparent until its opening scroll finishes, so
+ * the reply must also be opaque.
  */
-export function switchThread(page: Page, bottomPx: number): Promise<number> {
-  return page.evaluate(
-    ({ threshold, v }) => {
-      const perf = (window as PerfWindow).tondoPerf;
-      const before = document.querySelector("[data-testid=timeline]");
-      if (!perf || !before) throw new Error("The page's port or the timeline is missing");
-      const { port } = perf;
-
-      return new Promise<number>((resolve) => {
-        const sent = performance.now();
+export async function switchThread(page: Page, row: Locator, bottomPx: number): Promise<number> {
+  const switched = await page.evaluateHandle((threshold) => {
+    const before = document.querySelector("[data-testid=timeline]");
+    if (!before) throw new Error("The timeline isn't on the page");
+    const done = new Promise<number>((resolve) => {
+      const onClick = (click: MouseEvent) => {
         let atBottom = false;
         const onFrame = (time: number) => {
           // The state checked in the previous frame painted before this one began.
           if (atBottom) {
-            resolve(time - sent);
+            resolve(time - click.timeStamp);
             return;
           }
           const timeline = document.querySelector("[data-testid=timeline]");
@@ -252,22 +254,25 @@ export function switchThread(page: Page, bottomPx: number): Promise<number> {
           const streaming = timeline?.querySelector("[data-streaming]");
           if (timeline !== before && scroller && streaming) {
             const view = scroller.getBoundingClientRect();
-            const row = streaming.getBoundingClientRect();
+            const reply = streaming.getBoundingClientRect();
             const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
             let opaque = true;
             for (let at: Element | null = streaming; at && opaque; at = at.parentElement) {
               opaque = getComputedStyle(at).opacity === "1";
             }
-            atBottom = opaque && gap <= threshold && row.bottom > view.top && row.top < view.bottom;
+            atBottom =
+              opaque && gap <= threshold && reply.bottom > view.top && reply.top < view.bottom;
           }
           requestAnimationFrame(onFrame);
         };
-        port.postMessage({ v, type: "reopen" });
         requestAnimationFrame(onFrame);
-      });
-    },
-    { threshold: bottomPx, v: PROTOCOL_VERSION },
-  );
+      };
+      addEventListener("click", onClick, { capture: true, once: true });
+    });
+    return { done };
+  }, bottomPx);
+  await row.click();
+  return switched.evaluate(({ done }) => done);
 }
 
 /** The folder this `pnpm perf` run writes its results to, named by playwright.perf.config.ts. */

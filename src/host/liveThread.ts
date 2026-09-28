@@ -1,18 +1,15 @@
-// A thread the host runs: one pi in a project folder, the thread state the
-// host keeps for it, and what the page sees of both. pi's events apply to the
-// host's copy as they arrive and go to the page in one batch per frame, so a
-// page that connects mid-stream gets the whole thread as it stands.
-import { randomUUID } from "node:crypto";
+// A thread the host runs: one pi on one pi session, and the thread state the
+// host keeps for it. pi's events apply to the host's copy as they arrive, so
+// the host can hand the page the whole thread at any moment. While the thread
+// is on screen, the events also go to the page in one batch per frame.
+import path from "node:path";
 import type { RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
-import {
-  PROTOCOL_VERSION,
-  type HostMessage,
-  type ModelOption,
-  type PiSession,
-  type PiStatus,
-  type StreamingBehavior,
-  type ThinkingLevel,
-  type Workspace,
+import type {
+  ModelOption,
+  PiSession,
+  PiStatus,
+  StreamingBehavior,
+  ThinkingLevel,
 } from "../shared/protocol";
 import {
   afterPiExit,
@@ -23,15 +20,25 @@ import {
 } from "../shared/thread";
 import { PiExitError, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
-import type { Supervisor } from "./supervisor";
-
-const v = PROTOCOL_VERSION;
+import type { Supervisor, ThreadSession } from "./supervisor";
 
 /** The host has no display to sync to, so it batches on a 60 Hz timer. */
 const FRAME_MS = 1000 / 60;
 
 /** Events after which pi's model, thinking level or context may have changed. */
 const REFRESH_AFTER = new Set(["agent_settled", "compaction_end", "thinking_level_changed"]);
+
+/** Events after which the sidebar may show the thread differently: whether pi works, or when the thread last moved. */
+const CHANGE_AFTER = new Set([
+  "agent_start",
+  "agent_settled",
+  "message_end",
+  "queue_update",
+  "auto_retry_start",
+  "auto_retry_end",
+  "compaction_start",
+  "compaction_end",
+]);
 
 /** Extension dialogs that wait for an answer. Stage 7 shows them, and until then the host cancels them. */
 const DIALOGS = new Set(["select", "confirm", "input", "editor"]);
@@ -48,16 +55,39 @@ async function ask<C extends RpcCommand>(
   return response.data as AnswerData<C["type"]>;
 }
 
+/** What a LiveThread tells the workspace that holds it. */
+export interface ThreadListener {
+  /** Events for the page, in one batch per frame, sent only while the thread is on screen. */
+  events(events: PiEvent[]): void;
+  /** The thread changed whole: pi started and loaded it, or pi exited. */
+  reset(): void;
+  /** Something the sidebar or the header shows changed: pi's status, whether it works, the name or the trust question. */
+  changed(): void;
+  /** Text for the composer: messages taken back from pi's queue, or a prompt pi didn't take. */
+  restore(text: string): void;
+  /** Something failed that you should hear about. */
+  error(message: string): void;
+}
+
 export class LiveThread {
+  readonly id: string;
+  readonly projectId: number;
+  /** The project folder, where pi runs. */
   readonly project: string;
-  /** Every pi this thread starts opens this session, so a restart keeps the transcript. */
-  private readonly sessionId = randomUUID();
+  /** When you last looked at the thread or pi last finished something in it. */
+  lastUsed = Date.now();
+  private file: string | null;
   private readonly supervisor: Supervisor;
-  private readonly send: (message: HostMessage) => void;
-  private askingTrust = false;
-  private status: PiStatus = { state: "starting" };
+  private readonly listener: ThreadListener;
+  private sessionName: string | undefined;
+  private lastMessageAt: number | undefined;
+  private waitingForTrust = false;
+  private piStatus: PiStatus = { state: "starting" };
   private thread: ThreadState = threadFromMessages([]);
+  private onScreen = false;
   private pi: PiProcess | undefined;
+  /** The latest open(), which rename waits for. */
+  private opening: Promise<void> = Promise.resolve();
   /** Bumped when pi is replaced and when the thread closes, so an old pi's records and answers are dropped. */
   private generation = 0;
   private closed = false;
@@ -67,55 +97,99 @@ export class LiveThread {
   private refreshing = false;
   private refreshAgain = false;
 
-  /** `send` delivers messages to the page, if one is connected. */
-  constructor(project: string, supervisor: Supervisor, send: (message: HostMessage) => void) {
-    this.project = project;
+  constructor(
+    project: { readonly id: number; readonly path: string },
+    session: ThreadSession,
+    supervisor: Supervisor,
+    listener: ThreadListener,
+  ) {
+    this.id = session.id;
+    this.projectId = project.id;
+    this.project = project.path;
+    this.file = session.file;
     this.supervisor = supervisor;
-    this.send = send;
+    this.listener = listener;
   }
 
-  get workspace(): Workspace {
-    return { project: this.project, askingTrust: this.askingTrust, pi: this.status };
+  /** Where pi keeps the session. pi says at start, and writes it with the first reply. */
+  get sessionFile(): string | null {
+    return this.file;
   }
 
-  /** The whole thread, for a page that has none of it. It holds the events not sent yet, so they're dropped. */
-  snapshot(): HostMessage {
+  /** The name pi has for the session, if you gave it one. */
+  get name(): string | undefined {
+    return this.sessionName;
+  }
+
+  /** When you or pi last added a message while the thread was live. */
+  get updatedAt(): number | undefined {
+    return this.lastMessageAt;
+  }
+
+  /** Whether Tondo is waiting to hear if pi may load the project's own settings and extensions. */
+  get askingTrust(): boolean {
+    return this.waitingForTrust;
+  }
+
+  get status(): PiStatus {
+    return this.piStatus;
+  }
+
+  get state(): ThreadState {
+    return this.thread;
+  }
+
+  get visible(): boolean {
+    return this.onScreen;
+  }
+
+  /** Whether pi is starting or working, or holds messages you queued. The pool never stops a busy thread's pi. */
+  get busy(): boolean {
+    const { running, compaction, retry, queue } = this.thread;
+    return (
+      this.piStatus.state === "starting" ||
+      running ||
+      compaction !== null ||
+      retry !== null ||
+      queue.steering.length + queue.followUp.length > 0
+    );
+  }
+
+  /** Puts the thread on screen. Its events go to the page after its next snapshot. */
+  show(): void {
+    this.onScreen = true;
+  }
+
+  /** The whole thread for a snapshot. It holds every event not sent yet, so they're dropped. */
+  snapshot(): ThreadState {
     this.dropPending();
-    return { v, type: "snapshot", workspace: this.workspace, thread: this.thread };
+    return this.thread;
   }
 
-  /** Starts pi, after asking whether to trust the project if pi needs to know. */
-  async open(): Promise<void> {
-    const generation = ++this.generation;
-    this.setStatus({ state: "starting" });
-    let asking: boolean;
-    try {
-      asking = await this.supervisor.needsTrustAnswer(this.project);
-    } catch (error) {
-      if (generation === this.generation)
-        this.setStatus({ state: "exited", error: messageOf(error) });
-      return;
-    }
-    if (generation !== this.generation) return;
-    if (asking) {
-      this.askingTrust = true;
-      this.setStatus({ state: "stopped" });
-      return;
-    }
-    await this.start(generation);
+  /** Takes the thread off screen. Its events keep applying to the host's copy. */
+  hide(): void {
+    this.onScreen = false;
+    this.dropPending();
+  }
+
+  /** Starts pi, after asking whether to trust the project if pi needs to know. It resolves once pi is ready, waiting for you, or gone. */
+  open(): Promise<void> {
+    this.opening = this.openOnce(++this.generation);
+    return this.opening;
   }
 
   /** Your answer to whether to trust the project. Tondo remembers it and starts pi. */
   async trust(trusted: boolean): Promise<void> {
-    if (!this.askingTrust) throw new Error("Tondo isn't asking whether to trust this project.");
+    if (!this.waitingForTrust) throw new Error("Tondo isn't asking whether to trust this project.");
     this.supervisor.saveTrustAnswer(this.project, trusted);
-    this.askingTrust = false;
-    await this.start(++this.generation);
+    this.waitingForTrust = false;
+    this.opening = this.start(++this.generation);
+    await this.opening;
   }
 
   /** Starts pi again after it exited. It opens the same session. */
   async restart(): Promise<void> {
-    if (this.status.state !== "exited")
+    if (this.piStatus.state !== "exited")
       throw new Error("pi hasn't exited, so there's nothing to restart.");
     await this.open();
   }
@@ -164,7 +238,21 @@ export class LiveThread {
     this.refresh();
   }
 
-  /** Stops pi for good. The thread sends nothing after this. */
+  /** Names the session. pi saves the name in the session file, as /name does. */
+  async rename(name: string): Promise<void> {
+    await this.opening;
+    if (this.waitingForTrust) {
+      throw new Error(
+        "Open the thread and answer whether to trust its project before you rename it.",
+      );
+    }
+    const { pi } = this.ready();
+    await ask(pi, { type: "set_session_name", name });
+    this.sessionName = name;
+    this.changed();
+  }
+
+  /** Stops pi for good. The thread reports nothing after this. */
   async close(): Promise<void> {
     this.closed = true;
     this.generation++;
@@ -174,10 +262,30 @@ export class LiveThread {
     await pi?.stop();
   }
 
+  private async openOnce(generation: number): Promise<void> {
+    this.setStatus({ state: "starting" });
+    let asking: boolean;
+    try {
+      asking = await this.supervisor.needsTrustAnswer(this.project);
+    } catch (error) {
+      if (generation === this.generation)
+        this.setStatus({ state: "exited", error: messageOf(error) });
+      return;
+    }
+    if (generation !== this.generation) return;
+    if (asking) {
+      this.waitingForTrust = true;
+      this.setStatus({ state: "stopped" });
+      return;
+    }
+    await this.start(generation);
+  }
+
   private async start(generation: number): Promise<void> {
     this.setStatus({ state: "starting" });
     try {
-      const pi = await this.supervisor.start(this.project, this.sessionId, (record) => {
+      const session: ThreadSession = { id: this.id, file: this.file };
+      const pi = await this.supervisor.start(this.project, session, (record) => {
         if (generation === this.generation) this.receive(record);
       });
       if (generation !== this.generation) {
@@ -188,14 +296,17 @@ export class LiveThread {
       void pi.exited.then((exit) => {
         if (generation === this.generation) this.lost(new PiExitError(exit));
       });
-      const [session, { messages }] = await Promise.all([
+      const [read, { messages }] = await Promise.all([
         this.readSession(pi),
         ask(pi, { type: "get_messages" }),
       ]);
       if (generation !== this.generation) return;
       this.thread = threadFromMessages(messages);
-      this.status = { state: "ready", session };
-      this.send(this.snapshot());
+      this.piStatus = { state: "ready", session: read.session };
+      this.sessionName = read.name;
+      if (read.file) this.file = read.file;
+      this.dropPending();
+      this.listener.reset();
     } catch (error) {
       // lost() reports a pi that exited.
       if (generation !== this.generation || error instanceof PiExitError) return;
@@ -215,8 +326,9 @@ export class LiveThread {
     this.pi = undefined;
     const { steering, followUp } = this.thread.queue;
     this.thread = afterPiExit(this.thread);
-    this.status = { state: "exited", error: error.message };
-    this.send(this.snapshot());
+    this.piStatus = { state: "exited", error: error.message };
+    this.dropPending();
+    this.listener.reset();
     // pi's queue went with it, so the messages in it go back into the composer.
     this.restore([...steering, ...followUp]);
   }
@@ -233,15 +345,28 @@ export class LiveThread {
       return;
     }
     const event = record as PiEvent;
+    if (event.type === "session_info_changed") {
+      this.sessionName = event.name?.trim() || undefined;
+      this.changed();
+      return;
+    }
     const next = applyEvent(this.thread, event);
     if (next !== this.thread) {
       this.thread = next;
-      this.pending.push(event);
-      this.flushTimer ??= setTimeout(() => this.flush(), FRAME_MS);
+      if (this.onScreen) {
+        this.pending.push(event);
+        this.flushTimer ??= setTimeout(() => this.flush(), FRAME_MS);
+      }
     }
+    if (event.type === "message_end") {
+      const { role } = event.message;
+      if (role === "user" || role === "assistant") this.lastMessageAt = Date.now();
+    }
+    if (event.type === "agent_settled") this.lastUsed = Date.now();
     if (event.type === "compaction_end" && event.errorMessage && !event.aborted) {
       this.fail(`Compaction failed: ${event.errorMessage}`);
     }
+    if (CHANGE_AFTER.has(event.type)) this.changed();
     if (
       REFRESH_AFTER.has(event.type) ||
       (event.type === "message_end" && event.message.role === "assistant")
@@ -261,14 +386,14 @@ export class LiveThread {
       this.refreshAgain = true;
       return;
     }
-    const { pi, status, generation } = this;
-    if (!pi || status.state !== "ready") return;
+    const { pi, piStatus, generation } = this;
+    if (!pi || piStatus.state !== "ready") return;
     this.refreshing = true;
-    this.readSession(pi, status.session.models)
+    this.readSession(pi, piStatus.session.models)
       .then(
-        (session) => {
-          if (generation !== this.generation || this.status.state !== "ready") return;
-          if (JSON.stringify(session) === JSON.stringify(this.status.session)) return;
+        ({ session }) => {
+          if (generation !== this.generation || this.piStatus.state !== "ready") return;
+          if (JSON.stringify(session) === JSON.stringify(this.piStatus.session)) return;
           this.setStatus({ state: "ready", session });
         },
         (error: unknown) => {
@@ -285,8 +410,14 @@ export class LiveThread {
       });
   }
 
-  /** What pi says about its model, thinking level and context. Pass `models` to skip asking for the list again. */
-  private async readSession(pi: PiProcess, models?: readonly ModelOption[]): Promise<PiSession> {
+  /**
+   * What pi says about its model, thinking level and context, and the
+   * session's name and file. Pass `models` to skip asking for the list again.
+   */
+  private async readSession(
+    pi: PiProcess,
+    models?: readonly ModelOption[],
+  ): Promise<{ session: PiSession; name: string | undefined; file: string | undefined }> {
     const [state, { levels }, stats, available] = await Promise.all([
       ask(pi, { type: "get_state" }),
       ask(pi, { type: "get_available_thinking_levels" }),
@@ -297,45 +428,53 @@ export class LiveThread {
         ),
     ]);
     return {
-      model: state.model ? { provider: state.model.provider, id: state.model.id } : null,
-      models: available,
-      thinkingLevel: state.thinkingLevel,
-      thinkingLevels: levels,
-      context: stats.contextUsage ?? null,
+      session: {
+        model: state.model ? { provider: state.model.provider, id: state.model.id } : null,
+        models: available,
+        thinkingLevel: state.thinkingLevel,
+        thinkingLevels: levels,
+        context: stats.contextUsage ?? null,
+      },
+      name: state.sessionName?.trim() || undefined,
+      // pi gives the file relative to the project when its session folder setting is relative.
+      file: state.sessionFile && path.resolve(this.project, state.sessionFile),
     };
   }
 
   private ready(): { pi: PiProcess; session: PiSession } {
-    if (!this.pi || this.status.state !== "ready") throw new Error("pi isn't ready.");
-    return { pi: this.pi, session: this.status.session };
+    if (!this.pi || this.piStatus.state !== "ready") throw new Error("pi isn't ready.");
+    return { pi: this.pi, session: this.piStatus.session };
   }
 
   private setStatus(status: PiStatus): void {
-    this.status = status;
-    this.post({ v, type: "workspace", workspace: this.workspace });
+    this.piStatus = status;
+    this.changed();
+  }
+
+  /** Tells the workspace, after the events that came before. */
+  private changed(): void {
+    if (this.closed) return;
+    this.flush();
+    this.listener.changed();
   }
 
   /** Puts `texts` back into the composer. */
   private restore(texts: readonly string[]): void {
     if (this.closed || texts.length === 0) return;
-    this.post({ v, type: "restore", text: texts.join("\n\n") });
+    this.flush();
+    this.listener.restore(texts.join("\n\n"));
   }
 
   private fail(message: string): void {
     console.error(`Tondo Host: ${message}`);
-    this.post({ v, type: "error", message });
-  }
-
-  /** Sends `message` after the events that came before it. */
-  private post(message: HostMessage): void {
     this.flush();
-    this.send(message);
+    this.listener.error(message);
   }
 
   private flush(): void {
     const events = this.pending;
     this.dropPending();
-    if (events.length > 0) this.send({ v, type: "events", events });
+    if (events.length > 0) this.listener.events(events);
   }
 
   private dropPending(): void {
