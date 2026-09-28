@@ -32,16 +32,24 @@ function isHostGroup(pgid: number): boolean {
 async function stopGroup(pgid: number, graceMs: number): Promise<void> {
   if (await emptiesWithin(pgid, graceMs)) return;
   if (!signalGroup(pgid, "SIGTERM") || (await emptiesWithin(pgid, graceMs))) return;
-  signalGroup(pgid, "SIGKILL");
-  if (!(await emptiesWithin(pgid, graceMs))) {
+  // On macOS, a process that forks while SIGKILL goes out can leave a child
+  // that never gets it, so every check sends SIGKILL again.
+  if (!(await emptiesWithin(pgid, graceMs, "SIGKILL"))) {
     console.error(`Process group ${pgid} still has processes after SIGKILL.`);
   }
 }
 
-/** Resolves true once group `pgid` has no processes, or false after `ms`. */
-async function emptiesWithin(pgid: number, ms: number): Promise<boolean> {
+/**
+ * Resolves true once group `pgid` has no processes, or false after `ms`.
+ * Each check sends `signal` to the group.
+ */
+async function emptiesWithin(
+  pgid: number,
+  ms: number,
+  signal: NodeJS.Signals | 0 = 0,
+): Promise<boolean> {
   const deadline = performance.now() + ms;
-  while (signalGroup(pgid, 0)) {
+  while (signalGroup(pgid, signal)) {
     if (performance.now() >= deadline) return false;
     // oxlint-disable-next-line eslint/no-await-in-loop -- each check waits for the one before it.
     await delay(POLL_MS);
