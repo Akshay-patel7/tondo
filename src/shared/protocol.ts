@@ -6,7 +6,7 @@ import type { ContextUsage, RpcSessionState } from "@earendil-works/pi-coding-ag
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";

@@ -7,10 +7,12 @@ import {
   applyEvent,
   applyEvents,
   threadFromMessages,
+  toolRun,
   type AssistantMessage,
   type PiEvent,
   type PiMessage,
   type ThreadState,
+  type ToolResultMessage,
 } from "./thread";
 
 const fixturesDir = path.resolve(import.meta.dirname, "../../fixtures");
@@ -166,7 +168,21 @@ describe("applyEvent", () => {
     const unchanged: PiEvent[] = [
       { type: "turn_start" },
       { type: "queue_update", steering: [], followUp: [] },
-      { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: {} },
+      // Updates and ends for a call that never started.
+      {
+        type: "tool_execution_update",
+        toolCallId: "call_1",
+        toolName: "bash",
+        args: {},
+        partialResult: { content: [] },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "constructor",
+        toolName: "bash",
+        result: { content: [] },
+        isError: false,
+      },
       { type: "message_start", message: prompt! },
       { type: "agent_settled" },
       { type: "auto_retry_end", success: true, attempt: 1 },
@@ -235,6 +251,120 @@ describe("applyEvent", () => {
       errorMessage: "The summary request failed",
     });
     expect(ended.compaction).toBeNull();
+  });
+});
+
+const start = (id: string): PiEvent => ({
+  type: "tool_execution_start",
+  toolCallId: id,
+  toolName: "bash",
+  args: { command: "make" },
+});
+const update = (id: string, partialResult: unknown): PiEvent => ({
+  type: "tool_execution_update",
+  toolCallId: id,
+  toolName: "bash",
+  args: { command: "make" },
+  partialResult,
+});
+const end = (id: string, printed: string, isError = false): PiEvent => ({
+  type: "tool_execution_end",
+  toolCallId: id,
+  toolName: "bash",
+  result: { content: [{ type: "text", text: printed }] },
+  isError,
+});
+function resultMessage(id: string, printed: string): PiEvent {
+  const message: ToolResultMessage = {
+    role: "toolResult",
+    toolCallId: id,
+    toolName: "bash",
+    content: [{ type: "text", text: printed }],
+    isError: false,
+    timestamp: 0,
+  };
+  return { type: "message_end", message };
+}
+const output = (printed: string) => ({ content: [{ type: "text", text: printed }] });
+
+describe("tool calls", () => {
+  test("a call runs from tool_execution_start until its result message", () => {
+    const events = fixture("tools.jsonl");
+    const index = (type: string) => events.findIndex((event) => event.type === type);
+    const at = (type: string) => applyEvents(empty, events.slice(0, index(type) + 1));
+
+    expect(toolRun(at("tool_execution_start"), "call_tools_1")).toEqual({
+      partial: null,
+      result: null,
+      isError: false,
+    });
+    const listing = "src/buffer.ts\nsrc/stream.ts\nsrc/parser.ts\nsrc/stream.ts\nsrc/parser.ts\n";
+    expect(toolRun(at("tool_execution_end"), "call_tools_1")).toEqual({
+      partial: { content: [{ type: "text", text: listing }], details: {} },
+      result: output(listing),
+      isError: false,
+    });
+    const done = applyEvents(empty, events);
+    expect(done.tools).toEqual({});
+    expect(done.messages.find((message) => message.role === "toolResult")).toMatchObject({
+      toolCallId: "call_tools_1",
+      content: [{ type: "text", text: listing }],
+    });
+  });
+
+  test("each partial result replaces the one before", () => {
+    const running = applyEvents(empty, [
+      start("call_1"),
+      update("call_1", output("line 1\n")),
+      update("call_1", output("line 1\nline 2\n")),
+    ]);
+
+    expect(toolRun(running, "call_1")?.partial).toEqual(output("line 1\nline 2\n"));
+  });
+
+  test("a partial result that isn't a tool result counts as empty", () => {
+    const running = applyEvents(empty, [
+      start("call_1"),
+      update("call_1", "not an object"),
+      update("call_2", output("never started")),
+    ]);
+
+    expect(toolRun(running, "call_1")?.partial).toEqual({ content: [] });
+    expect(toolRun(running, "call_2")).toBeUndefined();
+  });
+
+  test("a finished call keeps its result while its message waits for an earlier call", () => {
+    // pi runs both calls at once, and sends their result messages in call order.
+    const bothRan = applyEvents(empty, [start("slow"), start("quick"), end("quick", "done")]);
+
+    expect(toolRun(bothRan, "slow")).toEqual({ partial: null, result: null, isError: false });
+    expect(toolRun(bothRan, "quick")).toEqual({
+      partial: null,
+      result: output("done"),
+      isError: false,
+    });
+    const slowDone = applyEvents(bothRan, [end("slow", "failed", true), resultMessage("slow", "")]);
+    expect(Object.keys(slowDone.tools)).toEqual(["quick"]);
+    expect(applyEvent(slowDone, resultMessage("quick", "done")).tools).toEqual({});
+  });
+
+  test("agent_settled drops calls that never got a result", () => {
+    const settled = applyEvents(empty, [
+      { type: "agent_start" },
+      start("call_1"),
+      { type: "agent_settled" },
+    ]);
+
+    expect(settled.tools).toEqual({});
+    expect(settled.running).toBe(false);
+  });
+
+  test("an id the model made up can't reach the prototype", () => {
+    const thread = applyEvents(empty, [start("__proto__"), update("__proto__", output("x"))]);
+
+    expect(toolRun(thread, "__proto__")?.partial).toEqual(output("x"));
+    expect(toolRun(thread, "toString")).toBeUndefined();
+    expect(Object.getPrototypeOf(thread.tools)).toBe(Object.prototype);
   });
 });
 
