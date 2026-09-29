@@ -47,13 +47,25 @@ const DIALOGS = new Set(["select", "confirm", "input", "editor"]);
 type AnswerData<C extends RpcCommand["type"]> =
   Extract<RpcResponse, { command: C; success: true }> extends { data: infer D } ? D : undefined;
 
+/**
+ * Sends `command` and resolves with the data in pi's answer. Pass
+ * `deadlineMs` for commands pi may take long to answer.
+ */
 async function ask<C extends RpcCommand>(
   pi: PiProcess,
   command: C,
+  deadlineMs?: number,
 ): Promise<AnswerData<C["type"]>> {
-  const response = await pi.rpc.request(command);
+  const response = await pi.rpc.request(command, deadlineMs);
   return response.data as AnswerData<C["type"]>;
 }
+
+/**
+ * No deadline. pi answers a prompt only after an extension command it names
+ * has finished, which can wait on a dialog for as long as you take, and
+ * after any compaction it runs first.
+ */
+const NO_DEADLINE = Number.POSITIVE_INFINITY;
 
 /** What a LiveThread tells the workspace that holds it. */
 export interface ThreadListener {
@@ -200,7 +212,7 @@ export class LiveThread {
     try {
       // pi ignores streamingBehavior when it's idle, so the page needn't know
       // whether pi finished just before you pressed Enter.
-      await ask(pi, { type: "prompt", message: text, streamingBehavior });
+      await ask(pi, { type: "prompt", message: text, streamingBehavior }, NO_DEADLINE);
     } catch (error) {
       // pi didn't take the text, so it goes back into the composer.
       this.restore([text]);

@@ -270,7 +270,7 @@ describe("pi 0.87.1's RPC protocol", () => {
     await expect.poll(() => signalGroup(shell, 0)).toBe(false);
   });
 
-  it("round-trips an extension's dialog", async () => {
+  it("round-trips an extension's dialog, and answers the prompt only once the command ends", async () => {
     const { pi, next } = await startRealPi({ responses: [] });
     const asked = next(
       (record) => record.type === "extension_ui_request" && record.method === "select",
@@ -278,9 +278,15 @@ describe("pi 0.87.1's RPC protocol", () => {
     const told = next(
       (record) => record.type === "extension_ui_request" && record.method === "notify",
     );
-    const accepted = pi.rpc.request({ type: "prompt", message: "/tondo-pick" });
+    let answered = false;
+    const accepted = pi.rpc.request({ type: "prompt", message: "/tondo-pick" }, Infinity);
+    void accepted.then(() => (answered = true));
     const dialog = await asked;
     expect(dialog).toMatchObject({ title: "Pick a fruit", options: ["apple", "pear"] });
+    // Tondo reads pi's output in order, so a response written before the dialog
+    // would have arrived first. pi answers the prompt only once the command's
+    // handler returns, which is why Tondo gives prompt no deadline.
+    expect(answered).toBe(false);
     pi.rpc.send({ type: "extension_ui_response", id: dialog.id as string, value: "pear" });
     expect(await told).toMatchObject({ message: "picked pear", notifyType: "info" });
     expect(await accepted).toMatchObject({ success: true });
