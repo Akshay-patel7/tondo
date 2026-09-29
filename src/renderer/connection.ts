@@ -7,6 +7,7 @@ import {
   PORT_MESSAGE,
   PROTOCOL_VERSION,
   type ClientMessage,
+  type DialogAnswer,
   type HostMessage,
   type OpenThread,
   type PiStatus,
@@ -15,8 +16,11 @@ import {
   type ThinkingLevel,
 } from "../shared/protocol";
 import { joinDrafts, setDraft, useDraft } from "./composer/draft";
+import { showExtensionUi } from "./extensionUi/store";
+import { closeSheet, openSheet } from "./sheets/store";
 import { keepUnchanged } from "./sidebar/model";
 import { receiveEvents, showThread } from "./thread/store";
+import { addToast } from "./toasts/store";
 
 type Connection = "connecting" | "connected" | "reconnecting";
 
@@ -70,9 +74,13 @@ function receive(message: HostMessage): void {
     case "snapshot": {
       const shown = shownId();
       showThread(message.state);
+      showExtensionUi(message.ui);
       useHost.setState({ connection: "connected", thread: message.thread });
       // The composer holds newer text than the host for the thread it already shows.
-      if (message.thread?.id !== shown) setDraft(message.draft);
+      if (message.thread?.id !== shown) {
+        setDraft(message.draft);
+        closeSheet();
+      }
       break;
     }
     case "events":
@@ -89,6 +97,25 @@ function receive(message: HostMessage): void {
       break;
     case "restore":
       if (message.threadId === shownId()) editDraft(joinDrafts(message.text, useDraft.getState()));
+      break;
+    case "extension-ui":
+      if (message.threadId === shownId()) showExtensionUi(message.ui);
+      break;
+    case "editor-text":
+      if (message.threadId === shownId()) editDraft(message.text);
+      break;
+    case "toast": {
+      const { level, message: text, thread, reveal } = message;
+      addToast({
+        level,
+        message: text,
+        ...(thread === undefined ? {} : { thread }),
+        ...(reveal === undefined ? {} : { reveal }),
+      });
+      break;
+    }
+    case "sheet":
+      if (message.threadId === shownId()) openSheet(message.sheet);
       break;
     case "pong":
       break;
@@ -228,4 +255,42 @@ export function setThinkingLevel(level: ThinkingLevel): void {
 
 export function restartPi(): void {
   send({ v, type: "restart", threadId: requireShownId() });
+}
+
+/** Answers an extension's dialog in the thread on screen. */
+export function answerDialog(dialogId: string, answer: DialogAnswer): void {
+  send({ v, type: "answer", threadId: requireShownId(), dialogId, answer });
+}
+
+export function compactContext(instructions: string): void {
+  send({ v, type: "compact", threadId: requireShownId(), instructions });
+}
+
+export function copyLastReply(): void {
+  send({ v, type: "copy-reply", threadId: requireShownId() });
+}
+
+export function exportThread(path: string): void {
+  send({ v, type: "export", threadId: requireShownId(), path });
+}
+
+export function showSessionInfo(): void {
+  send({ v, type: "session-info", threadId: requireShownId() });
+}
+
+export function showSettingsFiles(): void {
+  send({ v, type: "settings-files", threadId: requireShownId() });
+}
+
+export function showTrust(): void {
+  send({ v, type: "trust-status", threadId: requireShownId() });
+}
+
+export function reloadPi(): void {
+  send({ v, type: "reload", threadId: requireShownId() });
+}
+
+/** Shows a file the host offered in Finder. */
+export function revealFile(path: string): void {
+  send({ v, type: "reveal", path });
 }

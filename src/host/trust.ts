@@ -35,21 +35,38 @@ export function trustArgs(
   return [answer ? "--approve" : "--no-approve"];
 }
 
+/** Who settles whether pi, started in a project, trusts it. */
+export type PiTrust =
+  /** The project has no protected files, so there's nothing to trust. */
+  | { readonly decidedBy: "nothing" }
+  /** pi's trust.json holds a decision for `folder`, the project or a folder above it. */
+  | { readonly decidedBy: "trust-file"; readonly trusted: boolean; readonly folder: string }
+  /** pi's defaultProjectTrust setting is "always" or "never". */
+  | { readonly decidedBy: "default"; readonly trusted: boolean }
+  /** pi would ask, and can't in RPC mode, so someone has to answer for it. */
+  | { readonly decidedBy: "ask" };
+
 /**
- * Whether pi, started in `cwd` with `env`, needs someone to decide whether to
- * trust the project: it has protected files, pi's trust.json holds no decision
- * for it or a parent folder, and pi's defaultProjectTrust is "ask". Tondo
+ * Who settles project trust for pi started in `cwd` with `env`: nobody if
+ * the project has no protected files, else pi's trust.json for the project or
+ * a parent folder, else pi's defaultProjectTrust unless it's "ask". Tondo
  * can't see extensions that answer pi's project_trust event, and an answer
  * passed as a flag overrides them.
  */
-export function needsTrustDecision(cwd: string, env: Record<string, string>): boolean {
+export function piTrust(cwd: string, env: Record<string, string>): PiTrust {
   const home = env.HOME || os.homedir();
   const agentDir = piAgentDir(cwd, env, home);
-  return (
-    hasProtectedFiles(cwd, home) &&
-    savedDecision(agentDir, cwd) === undefined &&
-    defaultTrust(agentDir) === "ask"
-  );
+  if (!hasProtectedFiles(cwd, home)) return { decidedBy: "nothing" };
+  const saved = savedDecision(agentDir, cwd);
+  if (saved) return { decidedBy: "trust-file", ...saved };
+  const fallback = defaultTrust(agentDir);
+  if (fallback !== "ask") return { decidedBy: "default", trusted: fallback === "always" };
+  return { decidedBy: "ask" };
+}
+
+/** Whether pi, started in `cwd` with `env`, needs someone to decide whether to trust the project. */
+export function needsTrustDecision(cwd: string, env: Record<string, string>): boolean {
+  return piTrust(cwd, env).decidedBy === "ask";
 }
 
 /** Mirrors hasTrustRequiringProjectResources: protected files, or `.agents/skills` above that isn't your home's. */
@@ -66,8 +83,11 @@ function hasProtectedFiles(cwd: string, home: string): boolean {
   }
 }
 
-/** The decision pi's trust.json holds for `cwd` or the nearest parent folder with one. */
-function savedDecision(agentDir: string, cwd: string): boolean | undefined {
+/** The decision pi's trust.json holds for `cwd` or the nearest parent folder with one, and that folder. */
+function savedDecision(
+  agentDir: string,
+  cwd: string,
+): { trusted: boolean; folder: string } | undefined {
   const file = path.join(agentDir, "trust.json");
   if (!existsSync(file)) return undefined;
   let decisions: unknown;
@@ -91,7 +111,7 @@ function savedDecision(agentDir: string, cwd: string): boolean | undefined {
   }
   for (let dir = canonical(cwd); ; dir = path.dirname(dir)) {
     const decision = byFolder[dir];
-    if (typeof decision === "boolean") return decision;
+    if (typeof decision === "boolean") return { trusted: decision, folder: dir };
     if (path.dirname(dir) === dir) return undefined;
   }
 }

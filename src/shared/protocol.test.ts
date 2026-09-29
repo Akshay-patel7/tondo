@@ -34,6 +34,20 @@ describe("parseClientMessage", () => {
       { v, type: "set-model", threadId, provider: "anthropic", modelId: "claude-opus-4-5" },
       { v, type: "set-thinking-level", threadId, level: "high" },
       { v, type: "restart", threadId },
+      { v, type: "answer", threadId, dialogId: "d1", answer: { value: "apple" } },
+      { v, type: "answer", threadId, dialogId: "d1", answer: { value: "" } },
+      { v, type: "answer", threadId, dialogId: "d2", answer: { confirmed: false } },
+      { v, type: "answer", threadId, dialogId: "d3", answer: { cancelled: true } },
+      { v, type: "compact", threadId, instructions: "" },
+      { v, type: "compact", threadId, instructions: "Keep the plan" },
+      { v, type: "copy-reply", threadId },
+      { v, type: "export", threadId, path: "" },
+      { v, type: "export", threadId, path: "notes/thread.html" },
+      { v, type: "session-info", threadId },
+      { v, type: "settings-files", threadId },
+      { v, type: "trust-status", threadId },
+      { v, type: "reload", threadId },
+      { v, type: "reveal", path: "/tmp/pi-session.html" },
       { v, type: "ping", id: 0 },
     ]) {
       const result = parseClientMessage(message);
@@ -78,7 +92,17 @@ describe("parseClientMessage", () => {
       [7, "7"],
       ["x".repeat(201), `"${"x".repeat(40)}…"`],
     ] as const) {
-      for (const type of ["open-thread", "stop", "dequeue", "restart"]) {
+      for (const type of [
+        "open-thread",
+        "stop",
+        "dequeue",
+        "restart",
+        "copy-reply",
+        "session-info",
+        "settings-files",
+        "trust-status",
+        "reload",
+      ]) {
         expect(rejection({ v, type, threadId })).toBe(
           `${type}: threadId must be a string of 1 to 200 characters, not ${shown}`,
         );
@@ -150,6 +174,41 @@ describe("parseClientMessage", () => {
     );
     expect(rejection({ v, type: "set-thinking-level", threadId: "t", level: 3 })).toBe(
       "set-thinking-level: level must be a string, not 3",
+    );
+  });
+
+  it("rejects a dialog answer that isn't exactly one field of the right type", () => {
+    const answer = (value: unknown) =>
+      rejection({ v, type: "answer", threadId: "t", dialogId: "d", answer: value });
+    for (const [value, shown] of [
+      [undefined, "undefined"],
+      ["apple", '"apple"'],
+      [["apple"], "an array"],
+      [{}, "an object"],
+      [{ value: 1 }, "an object"],
+      [{ confirmed: "yes" }, "an object"],
+      [{ cancelled: false }, "an object"],
+      [{ value: "apple", cancelled: true }, "an object"],
+      [{ choice: "apple" }, "an object"],
+    ] as const) {
+      expect(answer(value)).toBe(
+        `answer: answer must hold one value, confirmed or cancelled field, not ${shown}`,
+      );
+    }
+    expect(
+      rejection({ v, type: "answer", threadId: "t", dialogId: "", answer: { cancelled: true } }),
+    ).toBe('answer: dialogId must be a string of 1 to 200 characters, not ""');
+  });
+
+  it("rejects slash command details that aren't text", () => {
+    expect(rejection({ v, type: "compact", threadId: "t" })).toBe(
+      "compact: instructions must be a string, not undefined",
+    );
+    expect(rejection({ v, type: "export", threadId: "t", path: 1 })).toBe(
+      "export: path must be a string, not 1",
+    );
+    expect(rejection({ v, type: "reveal", path: "" })).toBe(
+      'reveal: path must be a string that isn\'t empty, not ""',
     );
   });
 

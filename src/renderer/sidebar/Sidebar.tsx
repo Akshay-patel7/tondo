@@ -235,10 +235,12 @@ function ProjectGroup({
   );
 }
 
-const ACTIVITY: Record<Exclude<ThreadActivity, "idle">, { label: string; color: string }> = {
-  starting: { label: "Starting pi", color: "bg-muted-foreground/50" },
-  working: { label: "Working", color: "bg-primary" },
-  error: { label: "pi stopped with an error", color: "bg-destructive" },
+const ACTIVITY: Record<Exclude<ThreadActivity, "idle">, { label: string; look: string }> = {
+  starting: { label: "Starting pi", look: "size-1.5 bg-muted-foreground/50" },
+  working: { label: "Working", look: "size-1.5 bg-primary" },
+  // A ring, so a thread that waits for you doesn't look like one that works.
+  waiting: { label: "Waiting for your answer", look: "size-2 border-[1.5px] border-warning" },
+  error: { label: "pi stopped with an error", look: "size-1.5 bg-destructive" },
 };
 
 /** What a thread's pi is doing, or that it finished while you were away. It doesn't pulse. */
@@ -247,7 +249,7 @@ function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: b
     activity !== "idle"
       ? ACTIVITY[activity]
       : unread
-        ? { label: "Unread", color: "bg-foreground" }
+        ? { label: "Unread", look: "size-1.5 bg-foreground" }
         : null;
   return (
     <span className="flex size-2 shrink-0 items-center justify-center">
@@ -256,7 +258,7 @@ function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: b
           role="img"
           aria-label={dot.label}
           title={dot.label}
-          className={`size-1.5 rounded-full ${dot.color}`}
+          className={`rounded-full ${dot.look}`}
         />
       ) : null}
     </span>

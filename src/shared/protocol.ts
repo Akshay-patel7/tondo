@@ -2,11 +2,16 @@
 // the host talk over a MessagePort that main hands them on each page load.
 // The page renders content from pi and the web, so the host checks every
 // message the page sends with parseClientMessage before acting on it.
-import type { ContextUsage, RpcSessionState } from "@earendil-works/pi-coding-agent";
+import type {
+  ContextUsage,
+  RpcSessionState,
+  SessionStats,
+  SlashCommandSource,
+} from "@earendil-works/pi-coding-agent";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -23,6 +28,15 @@ export interface ModelOption {
   readonly name: string;
 }
 
+/** A command from pi's get_commands: an extension's command, a prompt template or a skill. */
+export interface SlashCommand {
+  /** What you type after "/". A skill's starts with "skill:". */
+  readonly name: string;
+  /** Empty if the command has none. */
+  readonly description: string;
+  readonly source: SlashCommandSource;
+}
+
 /** What a running pi last said about its model, thinking level and context. */
 export interface PiSession {
   /** The model get_state reports, or null if pi has none. */
@@ -34,6 +48,8 @@ export interface PiSession {
   readonly thinkingLevels: readonly ThinkingLevel[];
   /** From get_session_stats. Null while the model or its context window is unknown. */
   readonly context: ContextUsage | null;
+  /** What the slash menu offers from pi, read once when pi starts. */
+  readonly commands: readonly SlashCommand[];
 }
 
 export type PiStatus =
@@ -44,8 +60,95 @@ export type PiStatus =
   /** pi exited or couldn't start, for the reason in `error`. You can restart it. */
   | { readonly state: "exited"; readonly error: string };
 
-/** What pi is doing in a thread, as the sidebar shows it. */
-export type ThreadActivity = "idle" | "starting" | "working" | "error";
+/** What pi is doing in a thread, as the sidebar shows it. "waiting": an extension waits for your answer. */
+export type ThreadActivity = "idle" | "starting" | "working" | "waiting" | "error";
+
+interface DialogBase {
+  /** pi's id for the request, which the answer repeats. */
+  readonly id: string;
+  readonly title: string;
+  /** When pi stops waiting and answers for you, in milliseconds since 1970, or null if it waits for ever. */
+  readonly expiresAt: number | null;
+}
+
+/** An extension's dialog, waiting for your answer. */
+export type ExtensionDialog =
+  | (DialogBase & { readonly method: "select"; readonly options: readonly string[] })
+  | (DialogBase & { readonly method: "confirm"; readonly message: string })
+  | (DialogBase & { readonly method: "input"; readonly placeholder: string })
+  | (DialogBase & { readonly method: "editor"; readonly prefill: string });
+
+/** Your answer to a dialog: the option or text, yes or no, or no answer. */
+export type DialogAnswer =
+  | { readonly value: string }
+  | { readonly confirmed: boolean }
+  | { readonly cancelled: true };
+
+export type WidgetPlacement = "aboveEditor" | "belowEditor";
+
+/** What a thread's extensions show, from pi's extension UI requests. */
+export interface ExtensionUi {
+  /** setStatus texts, in the order their keys first appeared. */
+  readonly statuses: readonly { readonly key: string; readonly text: string }[];
+  /** setWidget lines, in the order their keys first appeared. */
+  readonly widgets: readonly {
+    readonly key: string;
+    readonly lines: readonly string[];
+    readonly placement: WidgetPlacement;
+  }[];
+  /** setTitle's title for the window, or null if no extension set one. */
+  readonly title: string | null;
+  /** Dialogs waiting for your answer, oldest first. */
+  readonly dialogs: readonly ExtensionDialog[];
+}
+
+export const NO_EXTENSION_UI: ExtensionUi = { statuses: [], widgets: [], title: null, dialogs: [] };
+
+export type NotifyLevel = "info" | "warning" | "error";
+
+/** What /session shows, from pi's get_state and get_session_stats. */
+export interface SessionInfo {
+  readonly name: string | null;
+  /** Null until pi has written the session. */
+  readonly file: string | null;
+  readonly id: string;
+  readonly stats: Pick<
+    SessionStats,
+    | "userMessages"
+    | "assistantMessages"
+    | "toolCalls"
+    | "toolResults"
+    | "totalMessages"
+    | "tokens"
+    | "cost"
+  >;
+  readonly context: ContextUsage | null;
+}
+
+/** Who settles whether pi trusts a project, as /trust explains it. */
+export type TrustInfo =
+  /** The project has no .pi settings or resources, so there's nothing to trust. */
+  | { readonly decidedBy: "nothing" }
+  /** pi's trust.json holds a decision for the project or a folder above it. */
+  | { readonly decidedBy: "trust-file"; readonly trusted: boolean; readonly folder: string }
+  /** pi's defaultProjectTrust setting is "always" or "never". */
+  | { readonly decidedBy: "default"; readonly trusted: boolean }
+  /** pi would ask, so your answer in Tondo decides. Null until you give one. */
+  | { readonly decidedBy: "tondo"; readonly trusted: boolean | null };
+
+/** A file pi reads its settings from, which Tondo can show in Finder. */
+export interface SettingsFile {
+  /** "Global" or "Project". */
+  readonly scope: string;
+  readonly path: string;
+  readonly exists: boolean;
+}
+
+/** A panel a slash command opens, with what the host found out for it. */
+export type Sheet =
+  | { readonly kind: "session"; readonly info: SessionInfo }
+  | { readonly kind: "settings"; readonly files: readonly SettingsFile[] }
+  | { readonly kind: "trust"; readonly project: string; readonly trust: TrustInfo };
 
 /** A thread as the sidebar lists it. */
 export interface SidebarThread {
@@ -119,6 +222,24 @@ export type ClientMessage = Versioned<
   | { type: "set-thinking-level"; threadId: string; level: ThinkingLevel }
   /** Start pi again after it exited. */
   | { type: "restart"; threadId: string }
+  /** Your answer to an extension's dialog. */
+  | { type: "answer"; threadId: string; dialogId: string; answer: DialogAnswer }
+  /** /compact. Empty instructions leave the summary to pi. */
+  | { type: "compact"; threadId: string; instructions: string }
+  /** /copy: put pi's last reply on the clipboard. */
+  | { type: "copy-reply"; threadId: string }
+  /** /export. An empty path lets pi name the file. */
+  | { type: "export"; threadId: string; path: string }
+  /** /session: answered with a session sheet. */
+  | { type: "session-info"; threadId: string }
+  /** /settings: answered with a settings sheet. */
+  | { type: "settings-files"; threadId: string }
+  /** /trust: answered with a trust sheet. */
+  | { type: "trust-status"; threadId: string }
+  /** /reload: stop pi and start it again on the same session. */
+  | { type: "reload"; threadId: string }
+  /** Show a file in Finder. Only a file the host offered, such as an export. */
+  | { type: "reveal"; path: string }
   | { type: "ping"; id: number }
 >;
 
@@ -129,7 +250,13 @@ export type HostMessage = Versioned<
    * new port, when you open a thread and when its pi starts or exits.
    * `thread` is null while no thread is open.
    */
-  | { type: "snapshot"; thread: OpenThread | null; state: ThreadState; draft: string }
+  | {
+      type: "snapshot";
+      thread: OpenThread | null;
+      state: ThreadState;
+      draft: string;
+      ui: ExtensionUi;
+    }
   /** Events that came due since the last batch, already applied to the host's copy of the thread. */
   | { type: "events"; threadId: string; events: PiEvent[] }
   /** The title, the trust question or pi's status of the thread on screen changed. */
@@ -139,6 +266,18 @@ export type HostMessage = Versioned<
   | { type: "ui"; sidebarHidden: boolean }
   /** Text for the thread's composer: messages taken back from pi's queue, or a prompt pi didn't take. */
   | { type: "restore"; threadId: string; text: string }
+  /** What the thread's extensions show changed. */
+  | { type: "extension-ui"; threadId: string; ui: ExtensionUi }
+  /** An extension set the composer's text, replacing what's there. */
+  | { type: "editor-text"; threadId: string; text: string }
+  /**
+   * A short message: an extension's notify, or how a slash command went.
+   * `thread` names the thread it came from when that isn't the one on screen,
+   * and `reveal` is a file the toast can show in Finder.
+   */
+  | { type: "toast"; level: NotifyLevel; message: string; thread?: string; reveal?: string }
+  /** A panel a slash command asked for. */
+  | { type: "sheet"; threadId: string; sheet: Sheet }
   | { type: "pong"; id: number }
   | { type: "error"; message: string }
 >;
@@ -151,7 +290,9 @@ export type MainToHostMessage =
   | { type: "connect" }
   | { type: "collect-garbage" }
   /** The folder you picked in the dialog `choose-project` asked for, or null if you cancelled. */
-  | { type: "project-chosen"; folder: string | null };
+  | { type: "project-chosen"; folder: string | null }
+  /** You clicked the notification about a thread. */
+  | { type: "open-thread"; threadId: string };
 
 /** What main tells the host as it forks it, as JSON in the host's first argument. */
 export interface HostConfig {
@@ -165,6 +306,15 @@ export interface HostConfig {
   pool?: { maxLive?: number; idleMs?: number };
 }
 
+/** A thread that needs you, for main to raise a notification about. */
+export interface Attention {
+  readonly threadId: string;
+  /** Whether the thread is on screen. Main notifies anyway if its window isn't focused. */
+  readonly visible: boolean;
+  readonly title: string;
+  readonly body: string;
+}
+
 /** What the host sends main. */
 export type HostToMainMessage =
   /** The host is listening, so main can connect a page. */
@@ -173,12 +323,20 @@ export type HostToMainMessage =
   | { type: "process-groups"; pgids: number[] }
   | { type: "garbage-collected" }
   /** Show the folder dialog and answer with project-chosen. */
-  | { type: "choose-project" };
+  | { type: "choose-project" }
+  /**
+   * An extension in the thread waits for your answer. Main raises a
+   * notification unless the thread is on screen in the focused window.
+   */
+  | ({ type: "attention" } & Attention)
+  | { type: "copy"; text: string }
+  /** Show the file in Finder. The host sends only files it offered. */
+  | { type: "reveal"; path: string };
 
 export type ParseResult = { ok: true; message: ClientMessage } | { ok: false; error: string };
 
-/** Longer than any session id pi or Tondo makes, and short enough to log. */
-const MAX_THREAD_ID = 200;
+/** Longer than any session or request id pi or Tondo makes, and short enough to log. */
+const MAX_ID = 200;
 
 /**
  * Checks a message from the page and returns a fresh copy of it. Anything
@@ -219,7 +377,12 @@ export function parseClientMessage(data: unknown): ParseResult {
     case "open-thread":
     case "stop":
     case "dequeue":
-    case "restart": {
+    case "restart":
+    case "copy-reply":
+    case "session-info":
+    case "settings-files":
+    case "trust-status":
+    case "reload": {
       const bad = badThreadId(type, threadId);
       if (bad) return invalid(bad);
       return exactly(message, { v, type, threadId: threadId as string });
@@ -326,6 +489,54 @@ export function parseClientMessage(data: unknown): ParseResult {
         level: level as ThinkingLevel,
       });
     }
+    case "answer": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { dialogId, answer } = message;
+      if (typeof dialogId !== "string" || dialogId.length === 0 || dialogId.length > MAX_ID) {
+        return invalid(
+          `answer: dialogId must be a string of 1 to ${MAX_ID} characters, not ${describe(dialogId)}`,
+        );
+      }
+      const parsed = parseAnswer(answer);
+      if (!parsed) {
+        return invalid(
+          `answer: answer must hold one value, confirmed or cancelled field, not ${describe(answer)}`,
+        );
+      }
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        dialogId,
+        answer: parsed,
+      });
+    }
+    case "compact": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { instructions } = message;
+      if (typeof instructions !== "string") {
+        return invalid(`compact: instructions must be a string, not ${describe(instructions)}`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string, instructions });
+    }
+    case "export": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { path } = message;
+      if (typeof path !== "string") {
+        return invalid(`export: path must be a string, not ${describe(path)}`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string, path });
+    }
+    case "reveal": {
+      const { path } = message;
+      if (typeof path !== "string" || path === "") {
+        return invalid(`reveal: path must be a string that isn't empty, not ${describe(path)}`);
+      }
+      return exactly(message, { v, type, path });
+    }
     case "ping": {
       const { id } = message;
       if (!Number.isSafeInteger(id)) {
@@ -340,10 +551,22 @@ export function parseClientMessage(data: unknown): ParseResult {
 
 /** Why `threadId` isn't one, or undefined if it is. The host still checks that the thread exists. */
 function badThreadId(type: string, threadId: unknown): string | undefined {
-  if (typeof threadId === "string" && threadId.length > 0 && threadId.length <= MAX_THREAD_ID) {
+  if (typeof threadId === "string" && threadId.length > 0 && threadId.length <= MAX_ID) {
     return undefined;
   }
-  return `${type}: threadId must be a string of 1 to ${MAX_THREAD_ID} characters, not ${describe(threadId)}`;
+  return `${type}: threadId must be a string of 1 to ${MAX_ID} characters, not ${describe(threadId)}`;
+}
+
+/** A dialog answer with exactly one field of the right type, or undefined. The host checks it fits the dialog. */
+function parseAnswer(answer: unknown): DialogAnswer | undefined {
+  if (typeof answer !== "object" || answer === null || Array.isArray(answer)) return undefined;
+  const fields = Object.keys(answer);
+  if (fields.length !== 1) return undefined;
+  const { value, confirmed, cancelled } = answer as Record<string, unknown>;
+  if (fields[0] === "value" && typeof value === "string") return { value };
+  if (fields[0] === "confirmed" && typeof confirmed === "boolean") return { confirmed };
+  if (fields[0] === "cancelled" && cancelled === true) return { cancelled };
+  return undefined;
 }
 
 /** Why `projectId` isn't one, or undefined if it is. The host still checks that the project exists. */

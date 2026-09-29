@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { needsTrustDecision, trustArgs } from "./trust";
+import { needsTrustDecision, piTrust, trustArgs } from "./trust";
 
 let root: string;
 let home: string;
@@ -116,6 +116,26 @@ describe("needsTrustDecision", () => {
   it("doesn't read trust.json for a project with nothing protected", () => {
     create(path.join(root, "agent/trust.json"), "{");
     expect(needsTrustDecision(project, env)).toBe(false);
+  });
+});
+
+describe("piTrust", () => {
+  it("says who settles trust, for /trust to explain", () => {
+    expect(piTrust(project, env)).toEqual({ decidedBy: "nothing" });
+    create(path.join(project, ".pi/prompts/hello.md"));
+    expect(piTrust(project, env)).toEqual({ decidedBy: "ask" });
+    create(
+      path.join(root, "agent/settings.json"),
+      JSON.stringify({ defaultProjectTrust: "never" }),
+    );
+    expect(piTrust(project, env)).toEqual({ decidedBy: "default", trusted: false });
+    // A saved decision comes before the default, and names the folder it's for.
+    trustStore({ [project]: null, [path.join(root, "work")]: true });
+    expect(piTrust(project, env)).toEqual({
+      decidedBy: "trust-file",
+      trusted: true,
+      folder: path.join(root, "work"),
+    });
   });
 });
 

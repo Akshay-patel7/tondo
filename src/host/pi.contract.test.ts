@@ -270,7 +270,7 @@ describe("pi 0.87.1's RPC protocol", () => {
     await expect.poll(() => signalGroup(shell, 0)).toBe(false);
   });
 
-  it("round-trips an extension's dialog", async () => {
+  it("round-trips an extension's dialog, and answers the prompt only once the command ends", async () => {
     const { pi, next } = await startRealPi({ responses: [] });
     const asked = next(
       (record) => record.type === "extension_ui_request" && record.method === "select",
@@ -278,11 +278,36 @@ describe("pi 0.87.1's RPC protocol", () => {
     const told = next(
       (record) => record.type === "extension_ui_request" && record.method === "notify",
     );
-    const accepted = pi.rpc.request({ type: "prompt", message: "/tondo-pick" });
+    let answered = false;
+    const accepted = pi.rpc.request({ type: "prompt", message: "/tondo-pick" }, Infinity);
+    void accepted.then(() => (answered = true));
     const dialog = await asked;
     expect(dialog).toMatchObject({ title: "Pick a fruit", options: ["apple", "pear"] });
+    // Tondo reads pi's output in order, so a response written before the dialog
+    // would have arrived first. pi answers the prompt only once the command's
+    // handler returns, which is why Tondo gives prompt no deadline.
+    expect(answered).toBe(false);
     pi.rpc.send({ type: "extension_ui_response", id: dialog.id as string, value: "pear" });
     expect(await told).toMatchObject({ message: "picked pear", notifyType: "info" });
+    expect(await accepted).toMatchObject({ success: true });
+  });
+
+  it("answers a timed-out dialog for the client and tells the client nothing", async () => {
+    const { pi, records, next } = await startRealPi({ responses: [] });
+    const asked = next(
+      (record) => record.type === "extension_ui_request" && record.method === "confirm",
+    );
+    const told = next(
+      (record) => record.type === "extension_ui_request" && record.method === "notify",
+    );
+    const accepted = pi.rpc.request({ type: "prompt", message: "/tondo-wait" });
+    expect(await asked).toMatchObject({ title: "Still there?", timeout: 100 });
+    // Tondo closes a timed dialog itself, since pi writes nothing between the
+    // question and what the command does with pi's own answer.
+    expect(await told).toMatchObject({ message: "confirmed false" });
+    expect(records.slice(records.indexOf(await asked) + 1, records.indexOf(await told))).toEqual(
+      [],
+    );
     expect(await accepted).toMatchObject({ success: true });
   });
 
@@ -298,6 +323,53 @@ describe("pi 0.87.1's RPC protocol", () => {
         source: "extension",
       }),
     );
+  });
+
+  it("lists prompt templates and skills given by path, even with --no-skills", async () => {
+    const template = path.join(workDir, "tondo-hello.md");
+    writeFileSync(template, "---\ndescription: Says hello\n---\nSay hello to $1.\n");
+    const skill = path.join(workDir, "tondo-skill");
+    mkdirSync(skill);
+    writeFileSync(
+      path.join(skill, "SKILL.md"),
+      "---\nname: tondo-skill\ndescription: A test skill.\n---\nSay it ran.\n",
+    );
+    const { pi } = await startRealPi({ responses: [] }, [
+      "--no-session",
+      "--prompt-template",
+      template,
+      "--skill",
+      skill,
+    ]);
+    const { commands } = (await pi.rpc.request({ type: "get_commands" })).data as {
+      commands: { name: string; description: string; source: string }[];
+    };
+    expect(commands).toContainEqual(
+      expect.objectContaining({ name: "tondo-hello", description: "Says hello", source: "prompt" }),
+    );
+    expect(commands).toContainEqual(
+      expect.objectContaining({ name: "skill:tondo-skill", source: "skill" }),
+    );
+  });
+
+  it("reports a failed compaction in compaction_end before it answers compact", async () => {
+    const { pi, next } = await startRealPi({ responses: [fauxAssistantMessage(fauxText("Hi."))] });
+    const settled = next(isSettled);
+    await pi.rpc.request({ type: "prompt", message: "Hello." });
+    await settled;
+    const ended = next((record) => record.type === "compaction_end");
+    let reported = false;
+    void ended.then(() => (reported = true));
+    // pi's message starts with what failed, so Tondo shows it as it is.
+    await expect(pi.rpc.request({ type: "compact" })).rejects.toThrow(
+      "pi couldn't run compact: Nothing to compact (session too small)",
+    );
+    expect(reported).toBe(true);
+    expect(await ended).toMatchObject({
+      reason: "manual",
+      aborted: false,
+      errorMessage: "Compaction failed: Nothing to compact (session too small)",
+    });
   });
 
   it("reports its state", async () => {

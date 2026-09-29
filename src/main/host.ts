@@ -1,6 +1,7 @@
 // Runs the host utility process, restarts it when it dies, and hands the page
 // a new MessagePort to it after every page load and every host start. It also
-// shows the folder dialog when the host asks for a project.
+// does what the host can't from a utility process: the folder dialog,
+// notifications, the clipboard and Finder.
 // The restart backoff is T3 Code's calculateRestartDelay, and piping the
 // host's output into main follows T3's handling of its backend's output, both
 // in apps/desktop/src/backend/DesktopBackendManager.ts.
@@ -13,6 +14,7 @@ import {
 } from "electron";
 import {
   PORT_MESSAGE,
+  type Attention,
   type HostConfig,
   type HostToMainMessage,
   type MainToHostMessage,
@@ -28,6 +30,12 @@ export interface HostOptions {
   config: HostConfig;
   /** Shows the folder dialog. Resolves with the folder, or null if you cancel. */
   chooseFolder: () => Promise<string | null>;
+  /** Raises a notification about a thread that needs you. */
+  attention: (attention: Attention) => void;
+  /** Puts text on the clipboard. */
+  copy: (text: string) => void;
+  /** Shows a file in Finder. */
+  reveal: (file: string) => void;
   /** Gets everything the host prints, as it prints it. */
   onOutput: (stream: "stdout" | "stderr", text: string) => void;
 }
@@ -35,6 +43,8 @@ export interface HostOptions {
 export interface Host {
   /** Hands `page` a port to the host now, or once the host is ready. */
   connect(page: WebContents): void;
+  /** Puts a thread on screen, as when you click its notification. */
+  openThread(threadId: string): void;
   /** Collects the host's garbage. It works only when main has gc(), as under perf. */
   collectGarbage(): Promise<void>;
   /** The process groups the running host has reported. */
@@ -46,7 +56,8 @@ export interface Host {
   stop(): Promise<void>;
 }
 
-export function startHost({ entry, config, chooseFolder, onOutput }: HostOptions): Host {
+export function startHost(options: HostOptions): Host {
+  const { entry, config, chooseFolder, onOutput } = options;
   let child: UtilityProcess | undefined;
   let ready = false;
   let page: WebContents | undefined;
@@ -96,6 +107,13 @@ export function startHost({ entry, config, chooseFolder, onOutput }: HostOptions
         connectPage();
       } else if (message.type === "process-groups") {
         processGroups = message.pgids;
+      } else if (message.type === "attention") {
+        const { type: _type, ...attention } = message;
+        options.attention(attention);
+      } else if (message.type === "copy") {
+        options.copy(message.text);
+      } else if (message.type === "reveal") {
+        options.reveal(message.path);
       } else if (message.type === "choose-project") {
         void chooseFolder()
           .catch((error: unknown) => {
@@ -130,6 +148,12 @@ export function startHost({ entry, config, chooseFolder, onOutput }: HostOptions
     connect(webContents) {
       page = webContents;
       connectPage();
+    },
+    openThread(threadId) {
+      // A host that isn't ready opens the thread you had open when it starts.
+      if (child && ready) {
+        child.postMessage({ type: "open-thread", threadId } satisfies MainToHostMessage);
+      }
     },
     async collectGarbage() {
       const current = runningHost("collect garbage");

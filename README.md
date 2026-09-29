@@ -4,7 +4,7 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Extension dialogs and slash commands come in Stage 7. [docs/plan.md](docs/plan.md) lays out the rest of the build, and [AGENTS.md](AGENTS.md) lists the commands.
+**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The composer is still a plain text box until Stage 8. [docs/plan.md](docs/plan.md) lays out the rest of the build, and [AGENTS.md](AGENTS.md) lists the commands.
 
 ## Goals
 
@@ -38,7 +38,8 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 
 - Extension UI built from terminal components (`ctx.ui.custom()`, custom headers, footers and editors) does not render.
 - Custom tool renderers are terminal components, so Tondo draws its own tool cards.
-- Built-in terminal commands such as `/settings` and `/login` do not run over RPC. Tondo needs its own screens for them.
+- pi's built-in commands, such as `/model` and `/session`, run only in its terminal UI. Tondo runs its own versions of most of them. The rest, such as `/login`, `/tree` and `/share`, say they aren't in Tondo yet.
+- pi doesn't tell a client when an extension withdraws a dialog with an abort signal, so the dialog stays open in Tondo, and answering it does nothing. Dialogs that time out close on time.
 
 pi doesn't lock session files. If the same session is open in terminal pi and in Tondo at once, both append to it and their entries interleave.
 

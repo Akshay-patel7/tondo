@@ -4,22 +4,33 @@ import { runAppCommand } from "./commands";
 import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
 import { toggleSidebar, useHost } from "./connection";
+import { DialogPanel } from "./extensionUi/DialogPanel";
+import { useExtensionUi } from "./extensionUi/store";
+import { StatusLine, Widgets } from "./extensionUi/Widgets";
 import { folderName } from "./format";
 import { CommandPalette } from "./palette/CommandPalette";
 import { togglePalette, usePalette } from "./palette/store";
 import { isMac } from "./platform";
 import { NoThread } from "./project/NoThread";
 import { TrustPrompt } from "./project/TrustPrompt";
+import { Sheets } from "./sheets/Sheets";
 import { appCommand, shortcutLabel } from "./shortcuts";
 import { Sidebar } from "./sidebar/Sidebar";
 import { useThreadKey } from "./thread/store";
 import { Timeline } from "./timeline/Timeline";
+import { Toasts } from "./toasts/Toasts";
 import { SearchIcon, SidebarIcon } from "./ui/icons";
 import { IconButton } from "./ui/IconButton";
 
 export function App() {
   const sidebarHidden = useHost((host) => host.sidebarHidden);
   const paletteOpen = usePalette((open) => open);
+  const title = useExtensionUi((ui) => ui.title);
+
+  // An extension's setTitle names the window while its thread is on screen.
+  useEffect(() => {
+    document.title = title ?? "Tondo";
+  }, [title]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -41,6 +52,8 @@ export function App() {
         <Header sidebarHidden={sidebarHidden} />
         <Body />
       </div>
+      <Toasts />
+      <Sheets />
       {paletteOpen ? <CommandPalette /> : null}
     </div>
   );
@@ -100,6 +113,7 @@ function Body() {
 
 function Thread() {
   const threadKey = useThreadKey((key) => key);
+  const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
   return (
     <>
       <main className="min-h-0 flex-1">
@@ -109,7 +123,12 @@ function Thread() {
         <div className="mx-auto max-w-3xl">
           <Banners />
           <QueueList />
-          <Composer />
+          <Widgets placement="aboveEditor" />
+          {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
+          <DialogPanel />
+          <Composer hidden={asking} />
+          <Widgets placement="belowEditor" />
+          <StatusLine />
         </div>
       </footer>
     </>

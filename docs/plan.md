@@ -16,8 +16,8 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 3 | pi supervisor | M | Done |
 | 4 | First usable thread | M | Done |
 | 5 | Projects, threads, sidebar, process pool | M | Done |
-| 6 | Tool cards and edit diffs | M | In review |
-| 7 | Extension UI and slash commands | M | Not started |
+| 6 | Tool cards and edit diffs | M | Done |
+| 7 | Extension UI and slash commands | M | In review |
 | 8 | Composer | L | Not started |
 | 9 | Per-turn diff panel | M | Not started |
 | 10 | Integrated terminal | M | Not started |
@@ -425,6 +425,16 @@ Gotchas:
 - A built-in sent through `prompt` reaches the model as plain text. pi's RPC docs say built-ins "would not execute if sent via `prompt`".
 - Over RPC, `ctx.ui.custom()` returns `undefined`, custom header, footer and editor components do nothing, widgets are plain lines, and themes aren't supported.
 - Dialogs with a timeout resolve on pi's side when time runs out, so Tondo has to close them at the same moment.
+- pi tells the client nothing when a dialog times out, or when its extension withdraws it with an AbortSignal, and it ignores answers to requests it no longer waits for. Tondo closes a timed dialog on its own timer, started when the request arrives. A withdrawn dialog stays open in Tondo, and answering it does nothing.
+- pi answers a `prompt` that runs an extension command only after the command's handler returns, and the handler can wait on a dialog for as long as you take. With the 30 s command deadline, Tondo would report a failure and put the command back in the composer after it ran, so `prompt` and `compact` wait with no deadline.
+- Extensions color text with pi's theme even over RPC, so a status can arrive as `\u001b[38;2;138;190;183mtext\u001b[39m`. Tondo strips terminal escapes from what it shows, and answers a select with pi's own option, escapes included.
+- Extensions can start showing things as soon as pi starts, before pi answers its first command, so a thread keeps what they show from then on.
+- pi's hidden llama.cpp extension registers `/llama`, so `get_commands` lists it even with `--no-extensions`. pi's terminal UI hides an extension command named like a built-in and runs the built-in, and Tondo does the same.
+- `get_commands` lists every skill pi loaded, and a scratch `PI_CODING_AGENT_DIR` still loads skills from `~/.agents/skills`. Tests keep `--no-skills` and pass `--skill` paths, which load anyway.
+- The page is denied every permission, so `navigator.clipboard.writeText` fails with NotAllowedError. `/copy` goes through main's clipboard.
+- On this Mac, macOS refuses notifications from the unpackaged app, which runs as Electron: `show()` fails with "UNErrorDomain error 1". The packaged app is a different app to macOS, so Stage 13 checks notifications again. The e2e suite replaces `Notification.prototype.show`.
+- While a native select's list is open on macOS, Playwright's input doesn't reach the page, so no e2e test opens the model picker.
+- pi's `compaction_end` message already says what failed ("Compaction failed: …", "Auto-compaction failed: …"), and a failed `compact` sends that event before its error answer. `/compact` reports a failure once. pi's `compact` also aborts the run in progress first.
 
 Done when:
 - A test extension that calls every UI method passes an e2e round trip.
@@ -625,6 +635,13 @@ For Stage 6 you took my recommended option on each question (2026-09-28):
 - `pnpm perf` fails unless Tondo's window is on a 2x display refreshing at 120 Hz. There's no switch to pick a display, so with an external monitor as the main display, make the built-in one main before a run.
 - The CSP allows inline styles, as T3 Code's does, because @pierre/diffs colors code with them. Scripts stay blocked, and images, fonts and connections stay limited to the app.
 - Diffs get syntax colors up to 2,500 lines a side, and bigger ones show uncolored at once.
+
+For Stage 7 you took my recommended option on each question (2026-09-29):
+
+- An extension's dialog takes the composer's place until you answer it, as in pi's terminal UI. The transcript stays readable, Escape cancels, and your draft comes back.
+- A dialog raises an OS notification when its thread isn't on screen or Tondo's window isn't focused. Clicking the notification opens the thread.
+- The slash menu lists the built-ins Tondo can't run yet after everything else, dimmed, with the reason.
+- The files /settings and /export name get a Show in Finder button. The host shows only files it offered.
 
 ## Stage report template
 
