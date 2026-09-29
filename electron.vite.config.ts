@@ -72,5 +72,9 @@ export default defineConfig({
       tailwindcss(),
       failOnCompilerProblems(),
     ],
+    // @pierre/diffs's worker loads Shiki's WebAssembly engine with a dynamic
+    // import, for pools that ask for it. Only an ES module worker can split
+    // that into a chunk of its own.
+    worker: { format: "es" },
   },
 });

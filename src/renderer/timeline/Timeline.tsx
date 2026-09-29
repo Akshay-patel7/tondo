@@ -8,14 +8,16 @@ import {
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
 import { useRef, useState } from "react";
-import type { PiMessage } from "../../shared/thread";
 import { useThread } from "../thread/store";
+import { timelineRows } from "../tools/model";
 import { followsAfterScroll } from "./follow";
 import { MessageView } from "./MessageView";
 
-/** Stands in for the message pi is writing, at the end of the list. */
-const STREAMING = "streaming";
-type TimelineRow = PiMessage | typeof STREAMING;
+/**
+ * A row is the index of the message it shows. The row after the last message
+ * shows the message pi is writing, which lands at that index when it ends.
+ */
+type TimelineRow = number;
 
 /**
  * Follow the end only for new rows and growing rows. Scrolling to the end
@@ -27,22 +29,19 @@ const FOLLOW: MaintainScrollAtEndOptions = {
 };
 const KEEP_POSITION = { data: true, size: true };
 
-// Rows are only ever appended, so an index is a stable key. It also lets the
-// finished message take over the streaming row instead of remounting it.
-const keyByIndex = (_row: TimelineRow, index: number) => String(index);
-const rowType = (row: TimelineRow) => (row === STREAMING ? "assistant" : row.role);
-const renderRow = ({ item, index }: LegendListRenderItemProps<TimelineRow>) => (
-  <Row row={item} index={index} />
-);
+// Messages are only ever appended, so a message's index is a stable key. It
+// also lets the finished message take over the streaming row instead of
+// remounting it.
+const keyByMessage = (row: TimelineRow) => String(row);
+const renderRow = ({ item }: LegendListRenderItemProps<TimelineRow>) => <Row index={item} />;
 
-function Row({ row, index }: { row: TimelineRow; index: number }) {
+function Row({ index }: { index: number }) {
   // Only the streaming row reads the streaming message, so only it re-renders
   // while pi writes. Once message_end lands, the same index holds the message.
-  const live = useThread((thread) =>
-    row === STREAMING ? (thread.streaming ?? thread.messages[index] ?? null) : null,
+  const message = useThread((thread) => thread.messages[index] ?? thread.streaming);
+  const streaming = useThread(
+    (thread) => index >= thread.messages.length && thread.streaming !== null,
   );
-  const streaming = useThread((thread) => row === STREAMING && thread.streaming !== null);
-  const message = row === STREAMING ? live : row;
   return (
     <div className="mx-auto max-w-3xl" data-index={index} data-streaming={streaming || undefined}>
       {message ? <MessageView message={message} streaming={streaming} /> : null}
@@ -57,7 +56,9 @@ export function Timeline() {
   const opened = useRef(false);
   const [following, setFollowing] = useState(true);
   const lastScroll = useRef(0);
-  const rows: readonly TimelineRow[] = streaming ? [...messages, STREAMING] : messages;
+  const shown = timelineRows(messages);
+  const rows: readonly TimelineRow[] = streaming ? [...shown, messages.length] : shown;
+  const rowType = (row: TimelineRow) => messages[row]?.role ?? "assistant";
 
   const onScroll = () => {
     const state = listRef.current?.getState();
@@ -94,7 +95,7 @@ export function Timeline() {
       <LegendList<TimelineRow>
         ref={listRef}
         data={rows}
-        keyExtractor={keyByIndex}
+        keyExtractor={keyByMessage}
         getItemType={rowType}
         renderItem={renderRow}
         estimatedItemSize={90}

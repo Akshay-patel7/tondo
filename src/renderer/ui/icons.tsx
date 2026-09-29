@@ -69,6 +69,22 @@ export function PinIcon() {
   );
 }
 
+export function CheckIcon() {
+  return (
+    <Icon className="size-3.5 shrink-0">
+      <path d="m3.5 8.5 3 3 6-7" />
+    </Icon>
+  );
+}
+
+export function CrossIcon() {
+  return (
+    <Icon className="size-3.5 shrink-0">
+      <path d="m4.5 4.5 7 7M11.5 4.5l-7 7" />
+    </Icon>
+  );
+}
+
 export function PenIcon() {
   return (
     <Icon className="size-3.5 shrink-0">

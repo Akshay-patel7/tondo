@@ -5,6 +5,7 @@ import {
   type PiEvent,
   type ThreadState,
 } from "../../shared/thread";
+import { collapseAll } from "../tools/expanded";
 
 /** The open thread. Components read it through atomic selectors. */
 export const useThread = create<ThreadState>()(() => threadFromMessages([]));
@@ -33,6 +34,7 @@ export function receiveEvents(events: readonly PiEvent[]): void {
 /** Shows a whole thread, replacing the one on screen. */
 export function showThread(thread: ThreadState): void {
   pending = null;
+  collapseAll();
   useThread.setState(thread, true);
   useThreadKey.setState((key) => key + 1, true);
 }
