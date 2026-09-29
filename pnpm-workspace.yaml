@@ -8,3 +8,7 @@ allowBuilds:
   # in. Neither build script is needed.
   "@google/genai": false
   protobufjs: false
+overrides:
+  # @pierre/diffs asks for @shikijs/transformers ^3 || ^4, and 4.x brings a
+  # second copy of Shiki's core. Pin it to the Shiki that @streamdown/code uses.
+  "@pierre/diffs>@shikijs/transformers": 3.23.0
