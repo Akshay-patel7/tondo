@@ -7,7 +7,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { PROTOCOL_VERSION, type HostMessage } from "../src/shared/protocol";
-import { listenOnPort, median, percentile, perfRunDir, type PerfWindow } from "./perf";
+import {
+  checkDisplay,
+  listenOnPort,
+  median,
+  percentile,
+  perfRunDir,
+  type PerfWindow,
+} from "./perf";
 import {
   launchOnTranscript,
   newTranscriptThread,
@@ -101,6 +108,7 @@ async function withTondo(
     copies: messages / TRANSCRIPT_MESSAGES,
   });
   try {
+    await checkDisplay(tondo.page);
     await listenOnPort(tondo);
     await openTranscript(tondo);
     await body(tondo);
