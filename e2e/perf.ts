@@ -328,8 +328,9 @@ const collectGarbageHere = async () => {
 };
 
 /**
- * Collects garbage in every JavaScript heap: the main process, the host and
- * the page. Main can reach the host's heap only when it has `gc()` itself.
+ * Collects garbage in every JavaScript heap: the main process, the host, the
+ * page and its workers, such as @pierre/diffs's pool. Main can reach the host's
+ * heap only when it has `gc()` itself.
  */
 async function collectGarbage({ app, page }: Tondo): Promise<void> {
   await Promise.all([
@@ -346,6 +347,7 @@ async function collectGarbage({ app, page }: Tondo): Promise<void> {
       return main.tondoCollectHostGarbage();
     }),
     page.evaluate(collectGarbageHere),
+    ...page.workers().map((worker) => worker.evaluate(collectGarbageHere)),
   ]);
 }
 
