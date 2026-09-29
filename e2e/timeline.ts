@@ -47,7 +47,7 @@ export async function launchOnTranscript({
   const removeWorkDir = () => rmSync(workDir, { recursive: true, force: true });
   const project = path.join(workDir, "project");
   mkdirSync(project);
-  const session = seedSession(workDir, project, copies);
+  const session = seedSession(workDir, project, { copies });
 
   const tondo = await launchWithPi({
     workDir,

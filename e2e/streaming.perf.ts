@@ -14,6 +14,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { expect, test, type Page } from "@playwright/test";
 import { READY_MARK } from "../src/shared/ready";
 import {
+  checkDisplay,
   measureFrameInterval,
   measureMemory,
   median,
@@ -216,6 +217,7 @@ async function withTondo<T>(rate: Rate, body: (tondo: TranscriptTondo) => Promis
     exposeGc: true,
   });
   try {
+    await checkDisplay(tondo.page);
     return await body(tondo);
   } finally {
     await tondo.close();
@@ -233,6 +235,7 @@ async function measureColdStart(): Promise<ColdStart> {
   const tondo = await launchOnTranscript({ script: { responses: [] } });
   try {
     const { page, launchedAt } = tondo;
+    await checkDisplay(page);
     const readyAt = await page.evaluate(
       (mark) => performance.timeOrigin + performance.getEntriesByName(mark)[0]!.startTime,
       READY_MARK,

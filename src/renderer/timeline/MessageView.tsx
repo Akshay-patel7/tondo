@@ -1,6 +1,9 @@
 import { code } from "@streamdown/code";
 import { Streamdown } from "streamdown";
-import type { AssistantMessage, PiMessage } from "../../shared/thread";
+import type { AssistantMessage, PiMessage, ToolResultMessage } from "../../shared/thread";
+import { outputText } from "../tools/model";
+import { OutputView } from "../tools/OutputView";
+import { ToolCard } from "../tools/ToolCard";
 
 /** Code blocks are highlighted by Shiki with its JavaScript regex engine, so no WASM. */
 const MARKDOWN_PLUGINS = { code };
@@ -27,11 +30,9 @@ export function MessageView({ message, streaming }: { message: PiMessage; stream
     case "assistant":
       return <AssistantView message={message} streaming={streaming} />;
     case "toolResult":
-      return (
-        <pre className="my-2 max-h-40 overflow-auto rounded-control bg-muted p-3 text-xs">
-          {message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n")}
-        </pre>
-      );
+      // The timeline shows a result as its own row only when its call isn't
+      // in the transcript. Otherwise the call's card shows it.
+      return <OrphanResult message={message} />;
     default:
       return <p className="py-2 text-sm text-muted-foreground">{message.role} message</p>;
   }
@@ -70,10 +71,23 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
         </Streamdown>
       );
     case "toolCall":
-      return (
-        <pre className="my-2 rounded-control border border-border p-3 text-xs">
-          {block.name} {JSON.stringify(block.arguments)}
-        </pre>
-      );
+      return <ToolCard call={block} writing={streaming} />;
   }
+}
+
+function OrphanResult({ message }: { message: ToolResultMessage }) {
+  return (
+    <div className="my-2 rounded-control border border-border bg-card">
+      <p className="px-3 py-1.5 text-sm">
+        <span className="font-medium">{message.toolName}</span>{" "}
+        <span className="text-muted-foreground">result</span>
+      </p>
+      <div className="border-t border-border">
+        <OutputView
+          text={outputText(message.content)}
+          tone={message.isError ? "error" : "normal"}
+        />
+      </div>
+    </div>
+  );
 }

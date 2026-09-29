@@ -157,6 +157,10 @@ describe("PiProcess with fake pi", () => {
 
   it("fails the commands still waiting when pi exits", async () => {
     const { pi } = await start("never-answer");
+    // startPi resolves once the process exists, before fake pi reads its
+    // input. An answer shows it's reading, so it exits as soon as stdin
+    // closes, well within the short grace these tests give it.
+    await pi.rpc.request({ type: "abort" });
     const failed = expect(pi.rpc.request({ type: "get_state" }, Infinity)).rejects.toThrow(
       new PiExitError({ code: 0, signal: null, stderrTail: "" }),
     );

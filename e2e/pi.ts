@@ -146,6 +146,11 @@ export function recordStatuses(page: Page) {
 
 const NO_TOKENS = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
+type ToolCallArguments = Extract<
+  AssistantMessage["content"][number],
+  { type: "toolCall" }
+>["arguments"];
+
 /**
  * A faux model message, as pi-ai's fauxAssistantMessage builds it. Playwright
  * can't load pi-ai at run time, since pi-ai exports nothing to `require`.
@@ -172,10 +177,24 @@ export function reply(text: string): AssistantMessage {
   return assistant([{ type: "text", text }], "stop");
 }
 
+/** A reply that calls tools, which pi runs at the same time. Each call's id is `id`. */
+export function toolCalls(
+  ...calls: { name: string; arguments: ToolCallArguments; id?: string }[]
+): AssistantMessage {
+  return assistant(
+    calls.map((call) => ({
+      type: "toolCall",
+      id: call.id ?? `call_${randomUUID()}`,
+      name: call.name,
+      arguments: call.arguments,
+    })),
+    "toolUse",
+  );
+}
+
 /** A reply that runs `command` with pi's bash tool. */
-export function bashCall(command: string): AssistantMessage {
-  const call = { type: "toolCall" as const, id: `call_${randomUUID()}`, name: "bash" };
-  return assistant([{ ...call, arguments: { command } }], "toolUse");
+export function bashCall(command: string, id?: string): AssistantMessage {
+  return toolCalls({ name: "bash", arguments: { command }, ...(id === undefined ? {} : { id }) });
 }
 
 /** A model call that fails with `errorMessage`. */

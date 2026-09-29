@@ -25,6 +25,8 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-warning: var(--warning);
+  --color-addition: var(--addition);
+  --color-deletion: var(--deletion);
   --color-border: var(--border);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
@@ -49,6 +51,8 @@
   --destructive: oklch(55% 0.2 27);
   --destructive-foreground: oklch(99% 0 0);
   --warning: oklch(58% 0.13 65);
+  --addition: oklch(52% 0.13 150);
+  --deletion: oklch(55% 0.19 27);
   --border: oklch(89.5% 0.01 75);
   --ring: var(--primary);
   --sidebar: oklch(96.8% 0.007 80);
@@ -71,6 +75,8 @@
     --primary-foreground: oklch(20% 0.02 45);
     --destructive: oklch(66% 0.19 27);
     --warning: oklch(80% 0.13 80);
+    --addition: oklch(74% 0.14 150);
+    --deletion: oklch(70% 0.16 27);
     --border: oklch(100% 0 0 / 9%);
     --sidebar: oklch(24% 0.007 60);
     --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);

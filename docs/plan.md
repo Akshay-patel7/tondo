@@ -15,8 +15,8 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 2 | Host process and MessagePort transport | S | Done |
 | 3 | pi supervisor | M | Done |
 | 4 | First usable thread | M | Done |
-| 5 | Projects, threads, sidebar, process pool | M | In review |
-| 6 | Tool cards and edit diffs | M | Not started |
+| 5 | Projects, threads, sidebar, process pool | M | Done |
+| 6 | Tool cards and edit diffs | M | In review |
 | 7 | Extension UI and slash commands | M | Not started |
 | 8 | Composer | L | Not started |
 | 9 | Per-turn diff panel | M | Not started |
@@ -126,7 +126,7 @@ PI_CODING_AGENT_DIR=$(mktemp -d) pi --mode rpc --no-extensions -e ./faux-ext.ts 
 
 ## Performance budgets
 
-These are fixed now, before Stage 1 measures anything. They're measured on this Mac in a visible window, because Electron throttles timers and animation frames in background windows. The streaming scenario: a 20,000-token reply streams into a 1,000-message transcript at 200 and at 1,000 tokens per second while I type in the composer.
+These are fixed now, before Stage 1 measures anything. They're measured on this Mac in a visible window, because Electron throttles timers and animation frames in background windows, and on its built-in display at 2x and 120 Hz. Since Stage 6, `pnpm perf` fails on any other display. The streaming scenario: a 20,000-token reply streams into a 1,000-message transcript at 200 and at 1,000 tokens per second while I type in the composer.
 
 | Metric | Budget |
 |---|---|
@@ -366,7 +366,7 @@ Size: M. The T3 files under Read first are 10,618 lines.
 
 ## Stage 6: Tool cards and edit diffs
 
-Goal: every tool call renders as a card, and edit and write calls show real diffs, rendered by @pierre/diffs in a worker pool.
+Goal: every tool call renders as a card. Edit calls show real diffs and write calls the file they wrote, rendered by @pierre/diffs in a worker pool.
 
 Read first: `apps/web/src/components/DiffPanel.tsx`, `apps/web/src/components/chat/ChangedFilesTree.tsx`, `patches/@pierre%2Fdiffs@1.3.0-beta.10.patch`.
 
@@ -377,10 +377,13 @@ Build:
 - Diffs through the @pierre/diffs worker pool (`WorkerPoolManager`).
 
 Gotchas:
-- Whether `partialResult` replaces or extends earlier output depends on the tool.
-- T3 patched @pierre/diffs so the virtualized height cache resets when the code width changes, which matters for wrapped lines. Check 1.5.0 before porting the patch.
+- Whether `partialResult` replaces or extends earlier output depends on the tool. pi's own terminal UI replaces the result it shows with each one, and bash sends all of its output so far, at most every 100 ms. Tondo does the same.
+- T3 patched @pierre/diffs so the virtualized height cache resets when the code width changes, which matters for wrapped lines. 1.5.1 still lacks the reset, but Tondo's code views don't wrap lines, so the patch isn't needed.
 - Extensions' custom tool renderers don't exist over RPC, so their calls get the generic card. The README's known limits already say so.
-- The CSP must allow the workers (`worker-src`).
+- The CSP must allow the workers (`worker-src`). @pierre/diffs also colors code with style attributes and themes each diff with a `<style>` element, which `style-src 'self'` blocks, so styles may be inline since Stage 6.
+- pi's write reports no diff: its result is only "Successfully wrote to <path>", and no event carries the file's old content. Its card shows the file it wrote, as pi's terminal UI does. Stage 9's panel shows each turn's before and after.
+- pi runs a reply's tool calls at the same time and sends their result messages in call order, so a finished call's result can wait for a slower call before it. `tool_execution_end` carries the result as soon as the call ends.
+- A worker hands its colored diff back in one message, and the page takes it in with one task that grows with the diff: about 90 ms for 5,000 lines a side on this Mac. Diffs get colors up to 2,500 lines a side, and bigger ones show uncolored.
 
 Done when:
 - A fixture with every built-in tool plus an extension tool renders correctly (screenshots).
@@ -614,6 +617,14 @@ For Stage 5 you let me take my recommended option on each open question (2026-09
 - A new thread you leave before sending a message or typing a draft disappears, as T3's draft threads do, so Cmd+N doesn't leave empty rows behind.
 - The shortcuts take T3's defaults for the palette, the sidebar, a new thread and moving between threads, and add Cmd+O to add a project. They can't be changed yet.
 - Rename appears once a thread has a reply. pi saves a session only after the first reply, so a name set before then would be lost if pi stopped.
+
+For Stage 6 you took my recommended option on each question (2026-09-28):
+
+- A write card shows the file pi wrote, highlighted, since pi's write reports no diff.
+- While a shell command runs, its card shows the last 5 lines of output under the header. When the command ends, the card shrinks to one line.
+- `pnpm perf` fails unless Tondo's window is on a 2x display refreshing at 120 Hz. There's no switch to pick a display, so with an external monitor as the main display, make the built-in one main before a run.
+- The CSP allows inline styles, as T3 Code's does, because @pierre/diffs colors code with them. Scripts stay blocked, and images, fonts and connections stay limited to the app.
+- Diffs get syntax colors up to 2,500 lines a side, and bigger ones show uncolored at once.
 
 ## Stage report template
 

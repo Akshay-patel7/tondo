@@ -8,8 +8,33 @@ export type PiEvent = JsonAgentSessionEvent;
 /** A transcript message, as get_messages and message_end carry it. */
 export type PiMessage = Extract<PiEvent, { type: "message_end" }>["message"];
 export type AssistantMessage = Extract<PiMessage, { role: "assistant" }>;
+export type ToolResultMessage = Extract<PiMessage, { role: "toolResult" }>;
 type AssistantUpdate = Extract<PiEvent, { type: "message_update" }>["assistantMessageEvent"];
 type ContentBlock = AssistantMessage["content"][number];
+
+/** What a tool returns: text and images for the model, and details for a UI. */
+export interface ToolOutput {
+  readonly content: ToolResultMessage["content"];
+  /** Tool-specific. edit's holds its patch. */
+  readonly details?: unknown;
+}
+
+/**
+ * A tool call pi is running, from tool_execution_start until its result
+ * message arrives. pi runs a reply's tool calls at the same time and sends
+ * their result messages in call order, so a finished call can wait for a
+ * slower one before it.
+ */
+export interface ToolRun {
+  /**
+   * The tool's latest partial result. Each one replaces the one before, as in
+   * pi's own terminal UI. bash sends all of its output so far.
+   */
+  readonly partial: ToolOutput | null;
+  /** The result from tool_execution_end, until the result message takes over. */
+  readonly result: ToolOutput | null;
+  readonly isError: boolean;
+}
 
 /** The messages you sent while pi was working, which pi hasn't taken yet. */
 export interface Queue {
@@ -36,9 +61,12 @@ export interface ThreadState {
   readonly retry: Retry | null;
   /** Set from compaction_start until compaction_end. */
   readonly compaction: CompactionReason | null;
+  /** The tool calls pi is running, by tool call id. */
+  readonly tools: Readonly<Record<string, ToolRun>>;
 }
 
 const NOTHING_QUEUED: Queue = { steering: [], followUp: [] };
+const NO_TOOLS: Readonly<Record<string, ToolRun>> = {};
 
 /** A thread opened from a get_messages transcript. */
 export function threadFromMessages(messages: readonly PiMessage[]): ThreadState {
@@ -49,6 +77,7 @@ export function threadFromMessages(messages: readonly PiMessage[]): ThreadState 
     queue: NOTHING_QUEUED,
     retry: null,
     compaction: null,
+    tools: NO_TOOLS,
   };
 }
 
@@ -61,7 +90,10 @@ export function applyEvent(thread: ThreadState, event: PiEvent): ThreadState {
     case "agent_start":
       return thread.running ? thread : { ...thread, running: true };
     case "agent_settled":
-      return thread.running ? { ...thread, running: false } : thread;
+      // pi won't run anything more, so a call still listed will never finish.
+      return thread.running || thread.tools !== NO_TOOLS
+        ? { ...thread, running: false, tools: NO_TOOLS }
+        : thread;
     case "message_start":
       return event.message.role === "assistant" ? { ...thread, streaming: event.message } : thread;
     case "message_update": {
@@ -77,7 +109,25 @@ export function applyEvent(thread: ThreadState, event: PiEvent): ThreadState {
         ...thread,
         messages: [...thread.messages, message],
         streaming: message.role === "assistant" ? null : thread.streaming,
+        tools:
+          message.role === "toolResult" ? without(thread.tools, message.toolCallId) : thread.tools,
       };
+    }
+    case "tool_execution_start":
+      return withRun(thread, event.toolCallId, { partial: null, result: null, isError: false });
+    case "tool_execution_update": {
+      const run = toolRun(thread, event.toolCallId);
+      if (!run) return thread;
+      return withRun(thread, event.toolCallId, {
+        ...run,
+        partial: toolOutput(event.partialResult),
+      });
+    }
+    case "tool_execution_end": {
+      const run = toolRun(thread, event.toolCallId);
+      if (!run) return thread;
+      const result = toolOutput(event.result);
+      return withRun(thread, event.toolCallId, { ...run, result, isError: event.isError });
     }
     case "queue_update": {
       const { steering, followUp } = event;
@@ -98,6 +148,34 @@ export function applyEvent(thread: ThreadState, event: PiEvent): ThreadState {
     default:
       return thread;
   }
+}
+
+/** The run of tool call `id`. Ids come from the model, so an id like "constructor" finds nothing. */
+export function toolRun(thread: ThreadState, id: string): ToolRun | undefined {
+  return Object.hasOwn(thread.tools, id) ? thread.tools[id] : undefined;
+}
+
+function withRun(thread: ThreadState, id: string, run: ToolRun): ThreadState {
+  return { ...thread, tools: { ...thread.tools, [id]: run } };
+}
+
+function without(
+  tools: Readonly<Record<string, ToolRun>>,
+  id: string,
+): Readonly<Record<string, ToolRun>> {
+  if (!Object.hasOwn(tools, id)) return tools;
+  const { [id]: _finished, ...rest } = tools;
+  return Object.keys(rest).length === 0 ? NO_TOOLS : rest;
+}
+
+/** pi types tool results as `any`, and extensions' tools can send anything. */
+function toolOutput(value: unknown): ToolOutput {
+  if (typeof value !== "object" || value === null) return { content: [] };
+  const { content, details } = value as { content?: unknown; details?: unknown };
+  return {
+    content: Array.isArray(content) ? (content as ToolOutput["content"]) : [],
+    ...(details === undefined ? {} : { details }),
+  };
 }
 
 function sameTexts(a: readonly string[], b: readonly string[]): boolean {

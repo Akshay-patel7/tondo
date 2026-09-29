@@ -40,6 +40,30 @@ export function measureFrameInterval(page: Page): Promise<number> {
   );
 }
 
+/**
+ * The display the budgets and the Stage 1 baseline were measured on: the
+ * MacBook's built-in Retina, at 2x and 120 Hz.
+ */
+const PERF_DISPLAY = { devicePixelRatio: 2, frameIntervalMs: 1000 / 120 };
+
+/**
+ * Fails unless Tondo's window is on a display like PERF_DISPLAY. On a 1x
+ * display the window has a quarter of the pixels, so memory reads low, and on
+ * another refresh rate frame times don't compare.
+ */
+export async function checkDisplay(page: Page): Promise<void> {
+  const ratio = await page.evaluate(() => window.devicePixelRatio);
+  const interval = await measureFrameInterval(page);
+  const { devicePixelRatio, frameIntervalMs } = PERF_DISPLAY;
+  if (ratio !== devicePixelRatio || Math.abs(interval - frameIntervalMs) > 0.5) {
+    throw new Error(
+      `pnpm perf needs Tondo's window on a ${devicePixelRatio}x display refreshing every ` +
+        `${frameIntervalMs.toFixed(1)} ms, like the built-in Retina the budgets were measured on. ` +
+        `It got ${ratio}x and ${interval.toFixed(1)} ms. Make the built-in display the main one and run again.`,
+    );
+  }
+}
+
 /** What the page saw while pi streamed one reply. */
 export interface StreamRecord {
   /**
@@ -304,8 +328,9 @@ const collectGarbageHere = async () => {
 };
 
 /**
- * Collects garbage in every JavaScript heap: the main process, the host and
- * the page. Main can reach the host's heap only when it has `gc()` itself.
+ * Collects garbage in every JavaScript heap: the main process, the host, the
+ * page and its workers, such as @pierre/diffs's pool. Main can reach the host's
+ * heap only when it has `gc()` itself.
  */
 async function collectGarbage({ app, page }: Tondo): Promise<void> {
   await Promise.all([
@@ -322,6 +347,7 @@ async function collectGarbage({ app, page }: Tondo): Promise<void> {
       return main.tondoCollectHostGarbage();
     }),
     page.evaluate(collectGarbageHere),
+    ...page.workers().map((worker) => worker.evaluate(collectGarbageHere)),
   ]);
 }
 
