@@ -306,6 +306,26 @@ describe("pi 0.87.1's RPC protocol", () => {
     );
   });
 
+  it("reports a failed compaction in compaction_end before it answers compact", async () => {
+    const { pi, next } = await startRealPi({ responses: [fauxAssistantMessage(fauxText("Hi."))] });
+    const settled = next(isSettled);
+    await pi.rpc.request({ type: "prompt", message: "Hello." });
+    await settled;
+    const ended = next((record) => record.type === "compaction_end");
+    let reported = false;
+    void ended.then(() => (reported = true));
+    // pi's message starts with what failed, so Tondo shows it as it is.
+    await expect(pi.rpc.request({ type: "compact" })).rejects.toThrow(
+      "pi couldn't run compact: Nothing to compact (session too small)",
+    );
+    expect(reported).toBe(true);
+    expect(await ended).toMatchObject({
+      reason: "manual",
+      aborted: false,
+      errorMessage: "Compaction failed: Nothing to compact (session too small)",
+    });
+  });
+
   it("reports its state", async () => {
     const { pi } = await startRealPi({ responses: [] });
     expect((await pi.rpc.request({ type: "get_state" })).data).toMatchObject({

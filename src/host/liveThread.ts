@@ -376,7 +376,8 @@ export class LiveThread {
     }
     if (event.type === "agent_settled") this.lastUsed = Date.now();
     if (event.type === "compaction_end" && event.errorMessage && !event.aborted) {
-      this.fail(`Compaction failed: ${event.errorMessage}`);
+      // pi's message says what failed: "Compaction failed: …", "Auto-compaction failed: …".
+      this.fail(event.errorMessage);
     }
     if (CHANGE_AFTER.has(event.type)) this.changed();
     if (
