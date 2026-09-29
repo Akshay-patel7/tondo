@@ -1,7 +1,7 @@
 // A plain textarea until Stage 8 brings TipTap. The send and stop buttons
 // follow T3 Code's apps/web/src/components/chat/ComposerPrimaryActions.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { PiStatus, StreamingBehavior } from "../../shared/protocol";
 import { dequeue, editDraft, prompt, stop, usePi } from "../connection";
 import { useThread } from "../thread/store";
@@ -16,15 +16,24 @@ function placeholder(pi: PiStatus, working: boolean): string {
   return working ? "Steer pi with Enter, or queue a follow-up with Alt+Enter" : "Message pi";
 }
 
-export function Composer() {
+/** `hidden` while an extension's dialog takes the composer's place. */
+export function Composer({ hidden }: { hidden: boolean }) {
   const draft = useDraft((text) => text);
   const pi = usePi();
   const working = useThread((thread) => thread.running || thread.compaction !== null);
   const queued = useThread(
     (thread) => thread.queue.steering.length + thread.queue.followUp.length > 0,
   );
+  const textarea = useRef<HTMLTextAreaElement>(null);
   const text = draft.trim();
   const canSend = pi.state === "ready" && text !== "";
+
+  // The composer takes focus back when a dialog that took its place closes.
+  const wasHidden = useRef(hidden);
+  useEffect(() => {
+    if (wasHidden.current && !hidden) textarea.current?.focus();
+    wasHidden.current = hidden;
+  }, [hidden]);
 
   const send = (streamingBehavior: StreamingBehavior) => {
     if (!canSend) return;
@@ -54,8 +63,12 @@ export function Composer() {
   };
 
   return (
-    <div className="rounded-panel border border-border bg-card shadow-composer focus-within:border-ring">
+    <div
+      hidden={hidden}
+      className="rounded-panel border border-border bg-card shadow-composer focus-within:border-ring"
+    >
       <textarea
+        ref={textarea}
         aria-label="Message"
         value={draft}
         onChange={(event) => editDraft(event.target.value)}

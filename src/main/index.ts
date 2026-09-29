@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, session, type OpenDialogOptions } from "ele
 import path from "node:path";
 import { startHost, type Host } from "./host";
 import { copyConsoleTo, lineWriter, LogFile } from "./logFile";
+import { threadNotifications } from "./notifications";
 import { piOptions, resolveUserDataDir } from "./profile";
 import { reloadWhenRendererDies } from "./rendererRecovery";
 import {
@@ -60,6 +61,22 @@ if (!app.requestSingleInstanceLock()) {
     window.webContents.on("dom-ready", () => host?.connect(window.webContents));
   };
 
+  /** The window, unless it's closed. */
+  const openWindow = () => (mainWindow?.isDestroyed() === false ? mainWindow : undefined);
+  /** Brings the window up, or opens a new one, and puts the thread on screen. */
+  const showThread = (threadId: string) => {
+    const window = openWindow();
+    if (!window) {
+      openMainWindow();
+    } else {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    }
+    host?.openThread(threadId);
+  };
+  const notify = threadNotifications(openWindow, showThread);
+
   app.on("second-instance", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -98,6 +115,7 @@ if (!app.requestSingleInstanceLock()) {
         entry: path.join(__dirname, "host.js"),
         config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs, pool }) },
         chooseFolder,
+        attention: notify,
         onOutput: (stream, text) => {
           hostOutput[stream](text);
           process[stream].write(text);

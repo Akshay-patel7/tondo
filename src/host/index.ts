@@ -77,6 +77,7 @@ function start(): void {
     limits: { ...POOL_LIMITS, ...config.pool },
     send,
     chooseFolder: () => tellMain({ type: "choose-project" }),
+    attention: (attention) => tellMain({ type: "attention", ...attention }),
   });
   process.parentPort.on("message", ({ data, ports }) => {
     const message = data as MainToHostMessage;
@@ -89,6 +90,9 @@ function start(): void {
       }
       case "project-chosen":
         workspace.projectChosen(message.folder);
+        break;
+      case "open-thread":
+        workspace.openThread(message.threadId);
         break;
       case "collect-garbage":
         collectGarbage().then(

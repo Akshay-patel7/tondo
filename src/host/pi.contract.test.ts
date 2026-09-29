@@ -292,6 +292,25 @@ describe("pi 0.87.1's RPC protocol", () => {
     expect(await accepted).toMatchObject({ success: true });
   });
 
+  it("answers a timed-out dialog for the client and tells the client nothing", async () => {
+    const { pi, records, next } = await startRealPi({ responses: [] });
+    const asked = next(
+      (record) => record.type === "extension_ui_request" && record.method === "confirm",
+    );
+    const told = next(
+      (record) => record.type === "extension_ui_request" && record.method === "notify",
+    );
+    const accepted = pi.rpc.request({ type: "prompt", message: "/tondo-wait" });
+    expect(await asked).toMatchObject({ title: "Still there?", timeout: 100 });
+    // Tondo closes a timed dialog itself, since pi writes nothing between the
+    // question and what the command does with pi's own answer.
+    expect(await told).toMatchObject({ message: "confirmed false" });
+    expect(records.slice(records.indexOf(await asked) + 1, records.indexOf(await told))).toEqual(
+      [],
+    );
+    expect(await accepted).toMatchObject({ success: true });
+  });
+
   it("lists extension commands", async () => {
     const { pi } = await startRealPi({ responses: [] });
     const { commands } = (await pi.rpc.request({ type: "get_commands" })).data as {

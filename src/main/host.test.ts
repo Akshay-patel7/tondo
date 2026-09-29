@@ -51,6 +51,7 @@ describe("startHost", () => {
       entry: "host.js",
       config,
       chooseFolder: vi.fn().mockResolvedValue(null),
+      attention: vi.fn(),
       onOutput: vi.fn(),
     };
     electron.fork.mockImplementation(() => {
@@ -198,6 +199,23 @@ describe("startHost", () => {
       "Tondo couldn't show the folder dialog:",
       new Error("No window"),
     );
+  });
+
+  it("raises notifications for the host", () => {
+    startHost(options);
+    latest().ready();
+    const attention = { threadId: "t", visible: false, title: "Parser fix", body: "Allow rm?" };
+    latest().emit("message", { type: "attention", ...attention });
+    expect(options.attention).toHaveBeenCalledWith(attention);
+  });
+
+  it("opens a thread in the host only while it's ready", () => {
+    const host = startHost(options);
+    host.openThread("t");
+    expect(latest().postMessage).not.toHaveBeenCalled();
+    latest().ready();
+    host.openThread("t");
+    expect(latest().postMessage).toHaveBeenLastCalledWith({ type: "open-thread", threadId: "t" });
   });
 
   it("fails a garbage collection the host dies in", async () => {

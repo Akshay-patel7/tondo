@@ -7,6 +7,7 @@ import {
   PORT_MESSAGE,
   PROTOCOL_VERSION,
   type ClientMessage,
+  type DialogAnswer,
   type HostMessage,
   type OpenThread,
   type PiStatus,
@@ -15,8 +16,10 @@ import {
   type ThinkingLevel,
 } from "../shared/protocol";
 import { joinDrafts, setDraft, useDraft } from "./composer/draft";
+import { showExtensionUi } from "./extensionUi/store";
 import { keepUnchanged } from "./sidebar/model";
 import { receiveEvents, showThread } from "./thread/store";
+import { addToast } from "./toasts/store";
 
 type Connection = "connecting" | "connected" | "reconnecting";
 
@@ -70,6 +73,7 @@ function receive(message: HostMessage): void {
     case "snapshot": {
       const shown = shownId();
       showThread(message.state);
+      showExtensionUi(message.ui);
       useHost.setState({ connection: "connected", thread: message.thread });
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) setDraft(message.draft);
@@ -90,6 +94,17 @@ function receive(message: HostMessage): void {
     case "restore":
       if (message.threadId === shownId()) editDraft(joinDrafts(message.text, useDraft.getState()));
       break;
+    case "extension-ui":
+      if (message.threadId === shownId()) showExtensionUi(message.ui);
+      break;
+    case "editor-text":
+      if (message.threadId === shownId()) editDraft(message.text);
+      break;
+    case "toast": {
+      const { level, message: text, thread } = message;
+      addToast({ level, message: text, ...(thread === undefined ? {} : { thread }) });
+      break;
+    }
     case "pong":
       break;
     case "error":
@@ -228,4 +243,9 @@ export function setThinkingLevel(level: ThinkingLevel): void {
 
 export function restartPi(): void {
   send({ v, type: "restart", threadId: requireShownId() });
+}
+
+/** Answers an extension's dialog in the thread on screen. */
+export function answerDialog(dialogId: string, answer: DialogAnswer): void {
+  send({ v, type: "answer", threadId: requireShownId(), dialogId, answer });
 }

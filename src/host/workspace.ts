@@ -7,7 +7,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
+  NO_EXTENSION_UI,
   PROTOCOL_VERSION,
+  type Attention,
   type ClientMessage,
   type HostMessage,
   type OpenThread,
@@ -37,6 +39,9 @@ interface Found {
   readonly summary: SessionSummary;
 }
 
+/** The most a notification's body says of a dialog's title. */
+const NOTIFICATION_CHARS = 200;
+
 export interface WorkspaceOptions {
   readonly store: Store;
   readonly supervisor: Supervisor;
@@ -45,6 +50,8 @@ export interface WorkspaceOptions {
   readonly send: (message: HostMessage) => void;
   /** Asks main to show the folder dialog. Main answers through projectChosen. */
   readonly chooseFolder: () => void;
+  /** Asks main to raise a notification about a thread. */
+  readonly attention: (attention: Attention) => void;
 }
 
 export class Workspace {
@@ -53,6 +60,7 @@ export class Workspace {
   private readonly limits: PoolLimits;
   private readonly send: (message: HostMessage) => void;
   private readonly chooseFolder: () => void;
+  private readonly attention: (attention: Attention) => void;
   private readonly index = new SessionIndex();
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
@@ -76,6 +84,12 @@ export class Workspace {
     this.limits = options.limits;
     this.send = options.send;
     this.chooseFolder = options.chooseFolder;
+    this.attention = options.attention;
+  }
+
+  /** You clicked a notification about the thread. */
+  openThread(threadId: string): void {
+    this.run(() => this.open(threadId));
   }
 
   /** Reopens the thread you had open, then reads every project's sessions. */
@@ -168,6 +182,9 @@ export class Workspace {
         break;
       case "restart":
         this.run(() => this.running(message.threadId).restart());
+        break;
+      case "answer":
+        this.run(() => this.running(message.threadId).answer(message.dialogId, message.answer));
         break;
       case "ping":
         this.send({ v, type: "pong", id: message.id });
@@ -332,6 +349,41 @@ export class Workspace {
         const where = thread.visible ? "" : `${this.titleOf(thread.id)}: `;
         this.send({ v, type: "error", message: `${where}${message}` });
       },
+      uiChanged: (dialogs) => {
+        const thread = current();
+        if (!thread) return;
+        if (thread.visible)
+          this.send({ v, type: "extension-ui", threadId: thread.id, ui: thread.ui });
+        if (!dialogs) return;
+        // A dialog makes the thread wait for you, which the sidebar shows and the pool respects.
+        this.noteActivity(thread);
+        this.scheduleSidebar();
+        this.checkPool();
+      },
+      asked: (dialog) => {
+        const thread = current();
+        if (!thread) return;
+        const body = dialog.title.replaceAll(/\s+/g, " ").trim();
+        this.attention({
+          threadId: thread.id,
+          visible: thread.visible,
+          title: this.titleOf(thread.id),
+          body: body.length > NOTIFICATION_CHARS ? `${body.slice(0, NOTIFICATION_CHARS)}…` : body,
+        });
+      },
+      notified: (level, message) => {
+        const thread = current();
+        if (!thread) return;
+        const from = thread.visible ? {} : { thread: this.titleOf(thread.id) };
+        this.send({ v, type: "toast", level, message, ...from });
+      },
+      editorText: (text) => {
+        const thread = current();
+        if (!thread) return;
+        if (thread.visible) this.send({ v, type: "editor-text", threadId: thread.id, text });
+        // A thread that isn't on screen keeps the text as its draft.
+        else this.setDraft(thread.id, text);
+      },
     };
   }
 
@@ -340,9 +392,7 @@ export class Workspace {
     const activity = activityOf(thread);
     const before = this.activities.get(thread.id);
     this.activities.set(thread.id, activity);
-    if (!thread.visible && before === "working" && activity !== "working") {
-      this.unread.add(thread.id);
-    }
+    if (!thread.visible && isBusy(before) && !isBusy(activity)) this.unread.add(thread.id);
   }
 
   private setDraft(id: string, text: string): void {
@@ -380,7 +430,10 @@ export class Workspace {
     const thread = this.live.get(id);
     if (!row || row.pinned || row.archived || row.draft.trim()) return;
     if (row.sessionFile !== null && existsSync(row.sessionFile)) return;
-    if (thread && (thread.state.messages.length > 0 || thread.state.running)) return;
+    // An extension command can wait on your answer before the thread has a message.
+    if (thread && (thread.state.messages.length > 0 || thread.state.running || thread.waiting)) {
+      return;
+    }
     this.store.removeThread(id);
     if (thread) this.run(() => this.letGo(thread));
   }
@@ -436,8 +489,9 @@ export class Workspace {
             thread: this.describe(thread),
             state: thread.snapshot(),
             draft: this.store.thread(thread.id)?.draft ?? "",
+            ui: thread.ui,
           }
-        : { v, type: "snapshot", thread: null, state: NO_THREAD, draft: "" },
+        : { v, type: "snapshot", thread: null, state: NO_THREAD, draft: "", ui: NO_EXTENSION_UI },
     );
   }
 
@@ -567,11 +621,17 @@ export class Workspace {
   }
 }
 
+/** Whether pi works in the thread, or waits for your answer to go on. */
+function isBusy(activity: ThreadActivity | undefined): boolean {
+  return activity === "working" || activity === "waiting";
+}
+
 function activityOf(thread: LiveThread | undefined): ThreadActivity {
   if (!thread) return "idle";
   const { status, state } = thread;
   if (status.state === "starting") return "starting";
   if (status.state === "exited") return "error";
+  if (thread.waiting) return "waiting";
   if (status.state === "ready" && (state.running || state.compaction || state.retry)) {
     return "working";
   }

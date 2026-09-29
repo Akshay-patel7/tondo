@@ -34,6 +34,10 @@ describe("parseClientMessage", () => {
       { v, type: "set-model", threadId, provider: "anthropic", modelId: "claude-opus-4-5" },
       { v, type: "set-thinking-level", threadId, level: "high" },
       { v, type: "restart", threadId },
+      { v, type: "answer", threadId, dialogId: "d1", answer: { value: "apple" } },
+      { v, type: "answer", threadId, dialogId: "d1", answer: { value: "" } },
+      { v, type: "answer", threadId, dialogId: "d2", answer: { confirmed: false } },
+      { v, type: "answer", threadId, dialogId: "d3", answer: { cancelled: true } },
       { v, type: "ping", id: 0 },
     ]) {
       const result = parseClientMessage(message);
@@ -151,6 +155,29 @@ describe("parseClientMessage", () => {
     expect(rejection({ v, type: "set-thinking-level", threadId: "t", level: 3 })).toBe(
       "set-thinking-level: level must be a string, not 3",
     );
+  });
+
+  it("rejects a dialog answer that isn't exactly one field of the right type", () => {
+    const answer = (value: unknown) =>
+      rejection({ v, type: "answer", threadId: "t", dialogId: "d", answer: value });
+    for (const [value, shown] of [
+      [undefined, "undefined"],
+      ["apple", '"apple"'],
+      [["apple"], "an array"],
+      [{}, "an object"],
+      [{ value: 1 }, "an object"],
+      [{ confirmed: "yes" }, "an object"],
+      [{ cancelled: false }, "an object"],
+      [{ value: "apple", cancelled: true }, "an object"],
+      [{ choice: "apple" }, "an object"],
+    ] as const) {
+      expect(answer(value)).toBe(
+        `answer: answer must hold one value, confirmed or cancelled field, not ${shown}`,
+      );
+    }
+    expect(
+      rejection({ v, type: "answer", threadId: "t", dialogId: "", answer: { cancelled: true } }),
+    ).toBe('answer: dialogId must be a string of 1 to 200 characters, not ""');
   });
 
   it("rejects ping ids that aren't safe integers", () => {

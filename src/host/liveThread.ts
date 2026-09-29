@@ -4,12 +4,17 @@
 // is on screen, the events also go to the page in one batch per frame.
 import path from "node:path";
 import type { RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
-import type {
-  ModelOption,
-  PiSession,
-  PiStatus,
-  StreamingBehavior,
-  ThinkingLevel,
+import {
+  NO_EXTENSION_UI,
+  type DialogAnswer,
+  type ExtensionDialog,
+  type ExtensionUi,
+  type ModelOption,
+  type NotifyLevel,
+  type PiSession,
+  type PiStatus,
+  type StreamingBehavior,
+  type ThinkingLevel,
 } from "../shared/protocol";
 import {
   afterPiExit,
@@ -18,6 +23,7 @@ import {
   type PiEvent,
   type ThreadState,
 } from "../shared/thread";
+import { applyUiRequest, readUiRequest, responseTo, withoutDialog } from "./extensionUi";
 import { PiExitError, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
 import type { Supervisor, ThreadSession } from "./supervisor";
@@ -39,9 +45,6 @@ const CHANGE_AFTER = new Set([
   "compaction_start",
   "compaction_end",
 ]);
-
-/** Extension dialogs that wait for an answer. Stage 7 shows them, and until then the host cancels them. */
-const DIALOGS = new Set(["select", "confirm", "input", "editor"]);
 
 /** The data in pi's answer to a command of type `C`. */
 type AnswerData<C extends RpcCommand["type"]> =
@@ -79,6 +82,14 @@ export interface ThreadListener {
   restore(text: string): void;
   /** Something failed that you should hear about. */
   error(message: string): void;
+  /** What the extensions show changed. `dialogs` is true if a dialog opened or closed. */
+  uiChanged(dialogs: boolean): void;
+  /** An extension opened a dialog. */
+  asked(dialog: ExtensionDialog): void;
+  /** An extension's notify. */
+  notified(level: NotifyLevel, message: string): void;
+  /** An extension set the composer's text. */
+  editorText(text: string): void;
 }
 
 export class LiveThread {
@@ -108,6 +119,14 @@ export class LiveThread {
   private flushTimer: NodeJS.Timeout | undefined;
   private refreshing = false;
   private refreshAgain = false;
+  /** What this pi's extensions show. It starts over with each pi. */
+  private extensionUi: ExtensionUi = NO_EXTENSION_UI;
+  /** pi's own options for each open select, which an answer repeats exactly. */
+  private readonly selectOptions = new Map<string, readonly string[]>();
+  /** Closes each timed dialog when pi answers it for you. */
+  private readonly dialogTimers = new Map<string, NodeJS.Timeout>();
+  /** Sends status, widget and title changes at most once a frame, since extensions can animate them. */
+  private uiTimer: NodeJS.Timeout | undefined;
 
   constructor(
     project: { readonly id: number; readonly path: string },
@@ -155,7 +174,20 @@ export class LiveThread {
     return this.onScreen;
   }
 
-  /** Whether pi is starting or working, or holds messages you queued. The pool never stops a busy thread's pi. */
+  /** What the thread's extensions show. */
+  get ui(): ExtensionUi {
+    return this.extensionUi;
+  }
+
+  /** Whether an extension waits for your answer to a dialog. */
+  get waiting(): boolean {
+    return this.extensionUi.dialogs.length > 0;
+  }
+
+  /**
+   * Whether pi is starting or working, holds messages you queued, or waits
+   * for your answer. The pool never stops a busy thread's pi.
+   */
   get busy(): boolean {
     const { running, compaction, retry, queue } = this.thread;
     return (
@@ -163,7 +195,8 @@ export class LiveThread {
       running ||
       compaction !== null ||
       retry !== null ||
-      queue.steering.length + queue.followUp.length > 0
+      queue.steering.length + queue.followUp.length > 0 ||
+      this.waiting
     );
   }
 
@@ -250,6 +283,15 @@ export class LiveThread {
     this.refresh();
   }
 
+  /** Your answer to an extension's dialog. An answer to a dialog that has closed does nothing. */
+  answer(dialogId: string, answer: DialogAnswer): void {
+    const dialog = this.extensionUi.dialogs.find((open) => open.id === dialogId);
+    // pi answered it for you when it timed out, or it went with its pi.
+    if (!dialog || !this.pi) return;
+    this.pi.rpc.send(responseTo(dialog, answer, this.selectOptions.get(dialogId)));
+    this.closeDialog(dialogId);
+  }
+
   /** Names the session. pi saves the name in the session file, as /name does. */
   async rename(name: string): Promise<void> {
     await this.opening;
@@ -269,6 +311,7 @@ export class LiveThread {
     this.closed = true;
     this.generation++;
     this.dropPending();
+    this.clearUi();
     const pi = this.pi;
     this.pi = undefined;
     await pi?.stop();
@@ -294,6 +337,9 @@ export class LiveThread {
   }
 
   private async start(generation: number): Promise<void> {
+    // The new pi's extensions show what they show from scratch, and they may
+    // start as soon as pi does, before it answers anything.
+    this.clearUi();
     this.setStatus({ state: "starting" });
     try {
       const session: ThreadSession = { id: this.id, file: this.file };
@@ -340,6 +386,8 @@ export class LiveThread {
     this.thread = afterPiExit(this.thread);
     this.piStatus = { state: "exited", error: error.message };
     this.dropPending();
+    // What pi's extensions showed, and the dialogs they waited on, went with it.
+    this.clearUi();
     this.listener.reset();
     // pi's queue went with it, so the messages in it go back into the composer.
     this.restore([...steering, ...followUp]);
@@ -347,9 +395,7 @@ export class LiveThread {
 
   private receive(record: PiRecord): void {
     if (record.type === "extension_ui_request") {
-      if (DIALOGS.has(record.method as string)) {
-        this.pi?.rpc.send({ type: "extension_ui_response", id: record.id, cancelled: true });
-      }
+      this.receiveUi(record);
       return;
     }
     if (record.type === "extension_error") {
@@ -386,6 +432,84 @@ export class LiveThread {
     ) {
       this.refresh();
     }
+  }
+
+  /** An extension asked for a dialog, or to show or set something. */
+  private receiveUi(record: PiRecord): void {
+    const request = readUiRequest(record, Date.now());
+    switch (request.kind) {
+      case "dialog": {
+        const { dialog, options } = request;
+        this.extensionUi = applyUiRequest(this.extensionUi, request);
+        if (options) this.selectOptions.set(dialog.id, options);
+        if (dialog.expiresAt !== null) {
+          const timer = setTimeout(
+            () => this.closeDialog(dialog.id),
+            Math.max(0, dialog.expiresAt - Date.now()),
+          );
+          this.dialogTimers.set(dialog.id, timer);
+        }
+        this.uiChanged(true);
+        if (!this.closed) this.listener.asked(dialog);
+        break;
+      }
+      case "bad-dialog":
+        // Answering it cancelled lets the extension go on instead of waiting for ever.
+        console.error(
+          `Tondo Host: an extension in ${this.project} asked with a dialog Tondo can't show.`,
+        );
+        this.pi?.rpc.send({ type: "extension_ui_response", id: request.id, cancelled: true });
+        break;
+      case "notify":
+        if (this.closed) break;
+        this.flush();
+        this.listener.notified(request.level, request.message);
+        break;
+      case "editor-text":
+        if (!this.closed) this.listener.editorText(request.text);
+        break;
+      case "status":
+      case "widget":
+      case "title": {
+        const next = applyUiRequest(this.extensionUi, request);
+        if (next === this.extensionUi) break;
+        this.extensionUi = next;
+        this.uiTimer ??= setTimeout(() => this.uiChanged(false), FRAME_MS);
+        break;
+      }
+      case "ignored":
+        break;
+    }
+  }
+
+  /** Takes a dialog away: you answered it, or pi answered it for you when it timed out. */
+  private closeDialog(id: string): void {
+    clearTimeout(this.dialogTimers.get(id));
+    this.dialogTimers.delete(id);
+    this.selectOptions.delete(id);
+    const next = withoutDialog(this.extensionUi, id);
+    if (next === this.extensionUi) return;
+    this.extensionUi = next;
+    this.uiChanged(true);
+  }
+
+  /** Forgets what pi's extensions showed, when their pi is gone. */
+  private clearUi(): void {
+    for (const timer of this.dialogTimers.values()) clearTimeout(timer);
+    this.dialogTimers.clear();
+    this.selectOptions.clear();
+    const shown = this.extensionUi !== NO_EXTENSION_UI;
+    this.extensionUi = NO_EXTENSION_UI;
+    if (shown) this.uiChanged(true);
+  }
+
+  /** Tells the workspace what the extensions show now, after the events before it. */
+  private uiChanged(dialogs: boolean): void {
+    clearTimeout(this.uiTimer);
+    this.uiTimer = undefined;
+    if (this.closed) return;
+    this.flush();
+    this.listener.uiChanged(dialogs);
   }
 
   private async takeQueue(pi: PiProcess): Promise<void> {
