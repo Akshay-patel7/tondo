@@ -94,12 +94,17 @@ export function writeSessions(
 }
 
 /**
- * Writes fixtures/transcript-1000.json as a pi session for `project`, with its
- * 1,000 messages repeated `copies` times, and returns the file. Pass a
- * `folder` to write it where pi finds the project's sessions.
+ * Writes a recorded get_messages transcript, fixtures/transcript-1000.json
+ * unless you name another, as a pi session for `project`, with its messages
+ * repeated `copies` times, and returns the file. Pass a `folder` to write it
+ * where pi finds the project's sessions.
  */
-export function seedSession(folder: string, project: string, copies = 1): string {
-  const transcript = path.join(repoRoot, "fixtures/transcript-1000.json");
+export function seedSession(
+  folder: string,
+  project: string,
+  { fixture = "transcript-1000.json", copies = 1 }: { fixture?: string; copies?: number } = {},
+): string {
+  const transcript = path.join(repoRoot, "fixtures", fixture);
   const { messages } = JSON.parse(readFileSync(transcript, "utf8")) as {
     messages: { role: string; timestamp: number }[];
   };
