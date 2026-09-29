@@ -15,7 +15,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 2 | Host process and MessagePort transport | S | Done |
 | 3 | pi supervisor | M | Done |
 | 4 | First usable thread | M | Done |
-| 5 | Projects, threads, sidebar, process pool | M | In review |
+| 5 | Projects, threads, sidebar, process pool | M | Done |
 | 6 | Tool cards and edit diffs | M | Not started |
 | 7 | Extension UI and slash commands | M | Not started |
 | 8 | Composer | L | Not started |
