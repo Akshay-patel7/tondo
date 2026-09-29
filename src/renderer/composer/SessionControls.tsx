@@ -16,11 +16,14 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
 };
 
 function Picker({
+  name,
   label,
   value,
   onChange,
   children,
 }: {
+  /** What /model and /thinking find the picker by. */
+  name: "model" | "thinking";
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -29,6 +32,7 @@ function Picker({
   return (
     <span className="relative inline-flex items-center">
       <select
+        data-picker={name}
         aria-label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -64,7 +68,7 @@ export function ModelPicker({ session }: { session: PiSession }) {
   };
 
   return (
-    <Picker label="Model" value={current} onChange={pick}>
+    <Picker name="model" label="Model" value={current} onChange={pick}>
       {listed ? null : (
         // pi's model isn't one you have credentials for, or pi has none.
         <option value={current} disabled>
@@ -97,7 +101,7 @@ export function ThinkingPicker({ session }: { session: PiSession }) {
   };
 
   return (
-    <Picker label="Thinking level" value={thinkingLevel} onChange={pick}>
+    <Picker name="thinking" label="Thinking level" value={thinkingLevel} onChange={pick}>
       {thinkingLevels.map((level) => (
         <option key={level} value={level}>
           {THINKING_LABELS[level]}

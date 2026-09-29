@@ -1,15 +1,16 @@
 // Starts each pi the host runs: the right pi, with your login shell's
 // environment and the flags Tondo adds, in a process group main knows about.
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import type { HostConfig } from "../shared/protocol";
+import type { HostConfig, SettingsFile, TrustInfo } from "../shared/protocol";
 import { findPi } from "./findPi";
 import { captureLoginEnv } from "./loginEnv";
 import { startPi, type PiLaunch, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
 import { sessionFolder, type SessionFolder } from "./sessionFolder";
 import { readSettings, saveTrustAnswer, type Settings } from "./settings";
-import { canonical, needsTrustDecision, trustArgs } from "./trust";
+import { canonical, needsTrustDecision, piAgentDir, piTrust, trustArgs } from "./trust";
 
 /** A thread's pi session: its id, and the file pi keeps it in once pi has said where. */
 export interface ThreadSession {
@@ -107,6 +108,25 @@ export class Supervisor {
   /** Remembers whether you trust the project in `cwd`, for every pi started there later. */
   saveTrustAnswer(cwd: string, trusted: boolean): void {
     saveTrustAnswer(this.settingsFile, cwd, trusted);
+  }
+
+  /** Who settles whether pi in `cwd` trusts the project, and your answer if it's yours. */
+  async trustInfo(cwd: string): Promise<TrustInfo> {
+    const trust = piTrust(cwd, piEnv(await this.captureLoginEnv(), this.config));
+    if (trust.decidedBy !== "ask") return trust;
+    const answer = readSettings(this.settingsFile).projectTrust[canonical(cwd)];
+    return { decidedBy: "tondo", trusted: answer ?? null };
+  }
+
+  /** The files pi in `cwd` reads its settings from: your global one and the project's. */
+  async settingsFiles(cwd: string): Promise<SettingsFile[]> {
+    const env = piEnv(await this.captureLoginEnv(), this.config);
+    const agentDir = piAgentDir(cwd, env, env.HOME || os.homedir());
+    const files: [scope: string, file: string][] = [
+      ["Global", path.join(agentDir, "settings.json")],
+      ["Project", path.join(cwd, ".pi", "settings.json")],
+    ];
+    return files.map(([scope, file]) => ({ scope, path: file, exists: existsSync(file) }));
   }
 
   private get settingsFile(): string {

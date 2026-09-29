@@ -7,6 +7,8 @@ export interface Toast {
   readonly message: string;
   /** The thread it came from, when that isn't the one on screen. */
   readonly thread?: string;
+  /** A file the toast can show in Finder. */
+  readonly reveal?: string;
 }
 
 /** The toasts on screen, oldest first. */

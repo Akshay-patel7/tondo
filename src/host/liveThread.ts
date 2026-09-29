@@ -2,8 +2,9 @@
 // host keeps for it. pi's events apply to the host's copy as they arrive, so
 // the host can hand the page the whole thread at any moment. While the thread
 // is on screen, the events also go to the page in one batch per frame.
+import { existsSync } from "node:fs";
 import path from "node:path";
-import type { RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
+import type { CompactionResult, RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
 import {
   NO_EXTENSION_UI,
   type DialogAnswer,
@@ -13,9 +14,13 @@ import {
   type NotifyLevel,
   type PiSession,
   type PiStatus,
+  type SessionInfo,
+  type SlashCommand,
   type StreamingBehavior,
   type ThinkingLevel,
+  type TrustInfo,
 } from "../shared/protocol";
+import { builtinIn } from "../shared/slashCommands";
 import {
   afterPiExit,
   applyEvent,
@@ -66,7 +71,7 @@ async function ask<C extends RpcCommand>(
 /**
  * No deadline. pi answers a prompt only after an extension command it names
  * has finished, which can wait on a dialog for as long as you take, and
- * after any compaction it runs first.
+ * after any compaction it runs first. It answers compact once compaction ends.
  */
 const NO_DEADLINE = Number.POSITIVE_INFINITY;
 
@@ -223,13 +228,34 @@ export class LiveThread {
     return this.opening;
   }
 
-  /** Your answer to whether to trust the project. Tondo remembers it and starts pi. */
+  /**
+   * Your answer to whether to trust the project. Tondo remembers it and starts
+   * pi, or, if you changed your answer with /trust, starts pi again with it.
+   */
   async trust(trusted: boolean): Promise<void> {
-    if (!this.waitingForTrust) throw new Error("Tondo isn't asking whether to trust this project.");
+    if (this.waitingForTrust) {
+      this.supervisor.saveTrustAnswer(this.project, trusted);
+      this.waitingForTrust = false;
+      this.opening = this.start(++this.generation);
+      await this.opening;
+      return;
+    }
+    const trust = await this.supervisor.trustInfo(this.project);
+    if (trust.decidedBy !== "tondo") {
+      throw new Error("pi's own settings decide whether it trusts this project, not Tondo.");
+    }
+    if (trust.trusted === trusted) return;
+    if (this.piStatus.state === "ready" && this.busy) {
+      throw new Error("Wait for pi to finish before you change whether it trusts this project.");
+    }
     this.supervisor.saveTrustAnswer(this.project, trusted);
-    this.waitingForTrust = false;
-    this.opening = this.start(++this.generation);
-    await this.opening;
+    // pi reads the answer when it starts. A pi that exited reads it on restart.
+    if (this.piStatus.state === "ready") await this.reload();
+  }
+
+  /** Who settles whether pi trusts the project, for /trust. */
+  trustInfo(): Promise<TrustInfo> {
+    return this.supervisor.trustInfo(this.project);
   }
 
   /** Starts pi again after it exited. It opens the same session. */
@@ -243,6 +269,10 @@ export class LiveThread {
   async prompt(text: string, streamingBehavior: StreamingBehavior): Promise<void> {
     const { pi } = this.ready();
     try {
+      // pi runs its built-in commands only in its terminal UI. Over RPC they'd
+      // reach the model as text, so the page runs its own versions instead.
+      const builtin = builtinIn(text);
+      if (builtin) throw new Error(`Tondo doesn't send pi's /${builtin.name} to pi.`);
       // pi ignores streamingBehavior when it's idle, so the page needn't know
       // whether pi finished just before you pressed Enter.
       await ask(pi, { type: "prompt", message: text, streamingBehavior }, NO_DEADLINE);
@@ -290,6 +320,74 @@ export class LiveThread {
     if (!dialog || !this.pi) return;
     this.pi.rpc.send(responseTo(dialog, answer, this.selectOptions.get(dialogId)));
     this.closeDialog(dialogId);
+  }
+
+  /** /compact: resolves once pi has compacted the context. */
+  compact(instructions: string): Promise<CompactionResult> {
+    const command = instructions ? { customInstructions: instructions } : {};
+    return ask(this.ready().pi, { type: "compact", ...command }, NO_DEADLINE);
+  }
+
+  /** /copy: the text of pi's last reply, or null if pi hasn't replied. */
+  async lastReply(): Promise<string | null> {
+    // pi 0.87.1 leaves the text out, rather than sending null, when there's none.
+    const { text } = await ask(this.ready().pi, { type: "get_last_assistant_text" });
+    return typeof text === "string" && text !== "" ? text : null;
+  }
+
+  /** /export: saves the thread as HTML and resolves with the file. pi names it if `outputPath` is empty. */
+  async exportHtml(outputPath: string): Promise<string> {
+    const command = outputPath ? { outputPath } : {};
+    const { path: written } = await ask(this.ready().pi, { type: "export_html", ...command });
+    // pi writes a relative path relative to its folder, the project.
+    return path.resolve(this.project, written);
+  }
+
+  /** /session: what pi says about the session. */
+  async sessionInfo(): Promise<SessionInfo> {
+    const { pi } = this.ready();
+    const [state, stats] = await Promise.all([
+      ask(pi, { type: "get_state" }),
+      ask(pi, { type: "get_session_stats" }),
+    ]);
+    const { userMessages, assistantMessages, toolCalls, toolResults, totalMessages } = stats;
+    const file = stats.sessionFile && path.resolve(this.project, stats.sessionFile);
+    return {
+      name: state.sessionName?.trim() || null,
+      // pi names the file from the start and writes it with the first reply.
+      file: file && existsSync(file) ? file : null,
+      id: stats.sessionId,
+      stats: {
+        userMessages,
+        assistantMessages,
+        toolCalls,
+        toolResults,
+        totalMessages,
+        tokens: stats.tokens,
+        cost: stats.cost,
+      },
+      context: stats.contextUsage ?? null,
+    };
+  }
+
+  /**
+   * /reload: stops pi and starts it again on the same session, so it loads
+   * your extensions, skills, prompts and context files afresh, as pi's own
+   * /reload does.
+   */
+  async reload(): Promise<void> {
+    if (this.piStatus.state !== "ready")
+      throw new Error("pi isn't running, so it has nothing to reload.");
+    if (this.busy) throw new Error("Wait for pi to finish before reloading.");
+    const generation = ++this.generation;
+    const pi = this.pi;
+    this.pi = undefined;
+    this.dropPending();
+    this.opening = (async () => {
+      await pi?.stop();
+      await this.start(generation);
+    })();
+    await this.opening;
   }
 
   /** Names the session. pi saves the name in the session file, as /name does. */
@@ -354,13 +452,17 @@ export class LiveThread {
       void pi.exited.then((exit) => {
         if (generation === this.generation) this.lost(new PiExitError(exit));
       });
-      const [read, { messages }] = await Promise.all([
+      const [read, { messages }, { commands }] = await Promise.all([
         this.readSession(pi),
         ask(pi, { type: "get_messages" }),
+        ask(pi, { type: "get_commands" }),
       ]);
       if (generation !== this.generation) return;
       this.thread = threadFromMessages(messages);
-      this.piStatus = { state: "ready", session: read.session };
+      this.piStatus = {
+        state: "ready",
+        session: { ...read.session, commands: slashCommands(commands) },
+      };
       this.sessionName = read.name;
       if (read.file) this.file = read.file;
       this.dropPending();
@@ -571,6 +673,8 @@ export class LiveThread {
         thinkingLevel: state.thinkingLevel,
         thinkingLevels: levels,
         context: stats.contextUsage ?? null,
+        // start() reads them once. A refresh keeps what it read.
+        commands: this.piStatus.state === "ready" ? this.piStatus.session.commands : [],
       },
       name: state.sessionName?.trim() || undefined,
       // pi gives the file relative to the project when its session folder setting is relative.
@@ -623,4 +727,13 @@ export class LiveThread {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** pi's get_commands list, as the slash menu needs it. */
+function slashCommands(commands: AnswerData<"get_commands">["commands"]): SlashCommand[] {
+  return commands.map(({ name, description, source }) => ({
+    name,
+    description: description ?? "",
+    source,
+  }));
 }

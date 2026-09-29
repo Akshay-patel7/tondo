@@ -78,6 +78,8 @@ function start(): void {
     send,
     chooseFolder: () => tellMain({ type: "choose-project" }),
     attention: (attention) => tellMain({ type: "attention", ...attention }),
+    copy: (text) => tellMain({ type: "copy", text }),
+    reveal: (file) => tellMain({ type: "reveal", path: file }),
   });
   process.parentPort.on("message", ({ data, ports }) => {
     const message = data as MainToHostMessage;

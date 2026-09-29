@@ -10,3 +10,7 @@ export function togglePalette(): void {
 export function closePalette(): void {
   usePalette.setState(false, true);
 }
+
+export function openPalette(): void {
+  usePalette.setState(true, true);
+}

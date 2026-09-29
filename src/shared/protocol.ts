@@ -2,7 +2,12 @@
 // the host talk over a MessagePort that main hands them on each page load.
 // The page renders content from pi and the web, so the host checks every
 // message the page sends with parseClientMessage before acting on it.
-import type { ContextUsage, RpcSessionState } from "@earendil-works/pi-coding-agent";
+import type {
+  ContextUsage,
+  RpcSessionState,
+  SessionStats,
+  SlashCommandSource,
+} from "@earendil-works/pi-coding-agent";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
@@ -23,6 +28,15 @@ export interface ModelOption {
   readonly name: string;
 }
 
+/** A command from pi's get_commands: an extension's command, a prompt template or a skill. */
+export interface SlashCommand {
+  /** What you type after "/". A skill's starts with "skill:". */
+  readonly name: string;
+  /** Empty if the command has none. */
+  readonly description: string;
+  readonly source: SlashCommandSource;
+}
+
 /** What a running pi last said about its model, thinking level and context. */
 export interface PiSession {
   /** The model get_state reports, or null if pi has none. */
@@ -34,6 +48,8 @@ export interface PiSession {
   readonly thinkingLevels: readonly ThinkingLevel[];
   /** From get_session_stats. Null while the model or its context window is unknown. */
   readonly context: ContextUsage | null;
+  /** What the slash menu offers from pi, read once when pi starts. */
+  readonly commands: readonly SlashCommand[];
 }
 
 export type PiStatus =
@@ -89,6 +105,50 @@ export interface ExtensionUi {
 export const NO_EXTENSION_UI: ExtensionUi = { statuses: [], widgets: [], title: null, dialogs: [] };
 
 export type NotifyLevel = "info" | "warning" | "error";
+
+/** What /session shows, from pi's get_state and get_session_stats. */
+export interface SessionInfo {
+  readonly name: string | null;
+  /** Null until pi has written the session. */
+  readonly file: string | null;
+  readonly id: string;
+  readonly stats: Pick<
+    SessionStats,
+    | "userMessages"
+    | "assistantMessages"
+    | "toolCalls"
+    | "toolResults"
+    | "totalMessages"
+    | "tokens"
+    | "cost"
+  >;
+  readonly context: ContextUsage | null;
+}
+
+/** Who settles whether pi trusts a project, as /trust explains it. */
+export type TrustInfo =
+  /** The project has no .pi settings or resources, so there's nothing to trust. */
+  | { readonly decidedBy: "nothing" }
+  /** pi's trust.json holds a decision for the project or a folder above it. */
+  | { readonly decidedBy: "trust-file"; readonly trusted: boolean; readonly folder: string }
+  /** pi's defaultProjectTrust setting is "always" or "never". */
+  | { readonly decidedBy: "default"; readonly trusted: boolean }
+  /** pi would ask, so your answer in Tondo decides. Null until you give one. */
+  | { readonly decidedBy: "tondo"; readonly trusted: boolean | null };
+
+/** A file pi reads its settings from, which Tondo can show in Finder. */
+export interface SettingsFile {
+  /** "Global" or "Project". */
+  readonly scope: string;
+  readonly path: string;
+  readonly exists: boolean;
+}
+
+/** A panel a slash command opens, with what the host found out for it. */
+export type Sheet =
+  | { readonly kind: "session"; readonly info: SessionInfo }
+  | { readonly kind: "settings"; readonly files: readonly SettingsFile[] }
+  | { readonly kind: "trust"; readonly project: string; readonly trust: TrustInfo };
 
 /** A thread as the sidebar lists it. */
 export interface SidebarThread {
@@ -164,6 +224,22 @@ export type ClientMessage = Versioned<
   | { type: "restart"; threadId: string }
   /** Your answer to an extension's dialog. */
   | { type: "answer"; threadId: string; dialogId: string; answer: DialogAnswer }
+  /** /compact. Empty instructions leave the summary to pi. */
+  | { type: "compact"; threadId: string; instructions: string }
+  /** /copy: put pi's last reply on the clipboard. */
+  | { type: "copy-reply"; threadId: string }
+  /** /export. An empty path lets pi name the file. */
+  | { type: "export"; threadId: string; path: string }
+  /** /session: answered with a session sheet. */
+  | { type: "session-info"; threadId: string }
+  /** /settings: answered with a settings sheet. */
+  | { type: "settings-files"; threadId: string }
+  /** /trust: answered with a trust sheet. */
+  | { type: "trust-status"; threadId: string }
+  /** /reload: stop pi and start it again on the same session. */
+  | { type: "reload"; threadId: string }
+  /** Show a file in Finder. Only a file the host offered, such as an export. */
+  | { type: "reveal"; path: string }
   | { type: "ping"; id: number }
 >;
 
@@ -195,10 +271,13 @@ export type HostMessage = Versioned<
   /** An extension set the composer's text, replacing what's there. */
   | { type: "editor-text"; threadId: string; text: string }
   /**
-   * An extension's notify. `thread` names the thread it came from when that
-   * isn't the one on screen.
+   * A short message: an extension's notify, or how a slash command went.
+   * `thread` names the thread it came from when that isn't the one on screen,
+   * and `reveal` is a file the toast can show in Finder.
    */
-  | { type: "toast"; level: NotifyLevel; message: string; thread?: string }
+  | { type: "toast"; level: NotifyLevel; message: string; thread?: string; reveal?: string }
+  /** A panel a slash command asked for. */
+  | { type: "sheet"; threadId: string; sheet: Sheet }
   | { type: "pong"; id: number }
   | { type: "error"; message: string }
 >;
@@ -249,7 +328,10 @@ export type HostToMainMessage =
    * An extension in the thread waits for your answer. Main raises a
    * notification unless the thread is on screen in the focused window.
    */
-  | ({ type: "attention" } & Attention);
+  | ({ type: "attention" } & Attention)
+  | { type: "copy"; text: string }
+  /** Show the file in Finder. The host sends only files it offered. */
+  | { type: "reveal"; path: string };
 
 export type ParseResult = { ok: true; message: ClientMessage } | { ok: false; error: string };
 
@@ -295,7 +377,12 @@ export function parseClientMessage(data: unknown): ParseResult {
     case "open-thread":
     case "stop":
     case "dequeue":
-    case "restart": {
+    case "restart":
+    case "copy-reply":
+    case "session-info":
+    case "settings-files":
+    case "trust-status":
+    case "reload": {
       const bad = badThreadId(type, threadId);
       if (bad) return invalid(bad);
       return exactly(message, { v, type, threadId: threadId as string });
@@ -424,6 +511,31 @@ export function parseClientMessage(data: unknown): ParseResult {
         dialogId,
         answer: parsed,
       });
+    }
+    case "compact": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { instructions } = message;
+      if (typeof instructions !== "string") {
+        return invalid(`compact: instructions must be a string, not ${describe(instructions)}`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string, instructions });
+    }
+    case "export": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { path } = message;
+      if (typeof path !== "string") {
+        return invalid(`export: path must be a string, not ${describe(path)}`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string, path });
+    }
+    case "reveal": {
+      const { path } = message;
+      if (typeof path !== "string" || path === "") {
+        return invalid(`reveal: path must be a string that isn't empty, not ${describe(path)}`);
+      }
+      return exactly(message, { v, type, path });
     }
     case "ping": {
       const { id } = message;

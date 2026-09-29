@@ -52,6 +52,8 @@ describe("startHost", () => {
       config,
       chooseFolder: vi.fn().mockResolvedValue(null),
       attention: vi.fn(),
+      copy: vi.fn(),
+      reveal: vi.fn(),
       onOutput: vi.fn(),
     };
     electron.fork.mockImplementation(() => {
@@ -201,12 +203,16 @@ describe("startHost", () => {
     );
   });
 
-  it("raises notifications for the host", () => {
+  it("raises notifications, copies and shows files in Finder for the host", () => {
     startHost(options);
     latest().ready();
     const attention = { threadId: "t", visible: false, title: "Parser fix", body: "Allow rm?" };
     latest().emit("message", { type: "attention", ...attention });
+    latest().emit("message", { type: "copy", text: "the reply" });
+    latest().emit("message", { type: "reveal", path: "/project/pi-session.html" });
     expect(options.attention).toHaveBeenCalledWith(attention);
+    expect(options.copy).toHaveBeenCalledWith("the reply");
+    expect(options.reveal).toHaveBeenCalledWith("/project/pi-session.html");
   });
 
   it("opens a thread in the host only while it's ready", () => {

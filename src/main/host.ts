@@ -1,7 +1,7 @@
 // Runs the host utility process, restarts it when it dies, and hands the page
 // a new MessagePort to it after every page load and every host start. It also
-// does what the host can't from a utility process: the folder dialog and
-// notifications.
+// does what the host can't from a utility process: the folder dialog,
+// notifications, the clipboard and Finder.
 // The restart backoff is T3 Code's calculateRestartDelay, and piping the
 // host's output into main follows T3's handling of its backend's output, both
 // in apps/desktop/src/backend/DesktopBackendManager.ts.
@@ -32,6 +32,10 @@ export interface HostOptions {
   chooseFolder: () => Promise<string | null>;
   /** Raises a notification about a thread that needs you. */
   attention: (attention: Attention) => void;
+  /** Puts text on the clipboard. */
+  copy: (text: string) => void;
+  /** Shows a file in Finder. */
+  reveal: (file: string) => void;
   /** Gets everything the host prints, as it prints it. */
   onOutput: (stream: "stdout" | "stderr", text: string) => void;
 }
@@ -106,6 +110,10 @@ export function startHost(options: HostOptions): Host {
       } else if (message.type === "attention") {
         const { type: _type, ...attention } = message;
         options.attention(attention);
+      } else if (message.type === "copy") {
+        options.copy(message.text);
+      } else if (message.type === "reveal") {
+        options.reveal(message.path);
       } else if (message.type === "choose-project") {
         void chooseFolder()
           .catch((error: unknown) => {

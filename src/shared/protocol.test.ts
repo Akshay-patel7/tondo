@@ -38,6 +38,16 @@ describe("parseClientMessage", () => {
       { v, type: "answer", threadId, dialogId: "d1", answer: { value: "" } },
       { v, type: "answer", threadId, dialogId: "d2", answer: { confirmed: false } },
       { v, type: "answer", threadId, dialogId: "d3", answer: { cancelled: true } },
+      { v, type: "compact", threadId, instructions: "" },
+      { v, type: "compact", threadId, instructions: "Keep the plan" },
+      { v, type: "copy-reply", threadId },
+      { v, type: "export", threadId, path: "" },
+      { v, type: "export", threadId, path: "notes/thread.html" },
+      { v, type: "session-info", threadId },
+      { v, type: "settings-files", threadId },
+      { v, type: "trust-status", threadId },
+      { v, type: "reload", threadId },
+      { v, type: "reveal", path: "/tmp/pi-session.html" },
       { v, type: "ping", id: 0 },
     ]) {
       const result = parseClientMessage(message);
@@ -82,7 +92,17 @@ describe("parseClientMessage", () => {
       [7, "7"],
       ["x".repeat(201), `"${"x".repeat(40)}…"`],
     ] as const) {
-      for (const type of ["open-thread", "stop", "dequeue", "restart"]) {
+      for (const type of [
+        "open-thread",
+        "stop",
+        "dequeue",
+        "restart",
+        "copy-reply",
+        "session-info",
+        "settings-files",
+        "trust-status",
+        "reload",
+      ]) {
         expect(rejection({ v, type, threadId })).toBe(
           `${type}: threadId must be a string of 1 to 200 characters, not ${shown}`,
         );
@@ -178,6 +198,18 @@ describe("parseClientMessage", () => {
     expect(
       rejection({ v, type: "answer", threadId: "t", dialogId: "", answer: { cancelled: true } }),
     ).toBe('answer: dialogId must be a string of 1 to 200 characters, not ""');
+  });
+
+  it("rejects slash command details that aren't text", () => {
+    expect(rejection({ v, type: "compact", threadId: "t" })).toBe(
+      "compact: instructions must be a string, not undefined",
+    );
+    expect(rejection({ v, type: "export", threadId: "t", path: 1 })).toBe(
+      "export: path must be a string, not 1",
+    );
+    expect(rejection({ v, type: "reveal", path: "" })).toBe(
+      'reveal: path must be a string that isn\'t empty, not ""',
+    );
   });
 
   it("rejects ping ids that aren't safe integers", () => {

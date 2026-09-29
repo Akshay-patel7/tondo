@@ -1,4 +1,12 @@
-import { app, BrowserWindow, dialog, session, type OpenDialogOptions } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  session,
+  shell,
+  type OpenDialogOptions,
+} from "electron";
 import path from "node:path";
 import { startHost, type Host } from "./host";
 import { copyConsoleTo, lineWriter, LogFile } from "./logFile";
@@ -116,6 +124,9 @@ if (!app.requestSingleInstanceLock()) {
         config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs, pool }) },
         chooseFolder,
         attention: notify,
+        // The page is denied the clipboard, so /copy goes through main.
+        copy: (text) => clipboard.writeText(text),
+        reveal: (file) => shell.showItemInFolder(file),
         onOutput: (stream, text) => {
           hostOutput[stream](text);
           process[stream].write(text);

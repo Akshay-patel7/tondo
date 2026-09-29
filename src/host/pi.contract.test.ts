@@ -325,6 +325,33 @@ describe("pi 0.87.1's RPC protocol", () => {
     );
   });
 
+  it("lists prompt templates and skills given by path, even with --no-skills", async () => {
+    const template = path.join(workDir, "tondo-hello.md");
+    writeFileSync(template, "---\ndescription: Says hello\n---\nSay hello to $1.\n");
+    const skill = path.join(workDir, "tondo-skill");
+    mkdirSync(skill);
+    writeFileSync(
+      path.join(skill, "SKILL.md"),
+      "---\nname: tondo-skill\ndescription: A test skill.\n---\nSay it ran.\n",
+    );
+    const { pi } = await startRealPi({ responses: [] }, [
+      "--no-session",
+      "--prompt-template",
+      template,
+      "--skill",
+      skill,
+    ]);
+    const { commands } = (await pi.rpc.request({ type: "get_commands" })).data as {
+      commands: { name: string; description: string; source: string }[];
+    };
+    expect(commands).toContainEqual(
+      expect.objectContaining({ name: "tondo-hello", description: "Says hello", source: "prompt" }),
+    );
+    expect(commands).toContainEqual(
+      expect.objectContaining({ name: "skill:tondo-skill", source: "skill" }),
+    );
+  });
+
   it("reports a failed compaction in compaction_end before it answers compact", async () => {
     const { pi, next } = await startRealPi({ responses: [fauxAssistantMessage(fauxText("Hi."))] });
     const settled = next(isSettled);

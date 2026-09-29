@@ -16,7 +16,7 @@ import { stepThread, threadOrder } from "./sidebar/model";
 import { startRename } from "./sidebar/store";
 
 /** Starts a thread in the open thread's project, or else the first project, or else adds one. */
-function newThreadHere(): void {
+export function newThreadHere(): void {
   const { thread, projects } = useHost.getState();
   const projectId = thread?.projectId ?? projects[0]?.id;
   if (projectId === undefined) addProject();

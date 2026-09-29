@@ -13,6 +13,7 @@ import { togglePalette, usePalette } from "./palette/store";
 import { isMac } from "./platform";
 import { NoThread } from "./project/NoThread";
 import { TrustPrompt } from "./project/TrustPrompt";
+import { Sheets } from "./sheets/Sheets";
 import { appCommand, shortcutLabel } from "./shortcuts";
 import { Sidebar } from "./sidebar/Sidebar";
 import { useThreadKey } from "./thread/store";
@@ -52,6 +53,7 @@ export function App() {
         <Body />
       </div>
       <Toasts />
+      <Sheets />
       {paletteOpen ? <CommandPalette /> : null}
     </div>
   );

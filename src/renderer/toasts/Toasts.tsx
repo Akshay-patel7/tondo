@@ -1,7 +1,9 @@
-// Toasts in the window's top right corner, for an extension's notify. Info
-// and warnings close after a while, unless the pointer or focus is on them.
-// Errors stay until you close them.
+// Toasts in the window's top right corner: an extension's notify, and how a
+// slash command went. Info and warnings close after a while, unless the
+// pointer or focus is on them. Errors stay until you close them.
 import { useEffect, useState } from "react";
+import { revealFile } from "../connection";
+import { isMac } from "../platform";
 import { CrossIcon } from "../ui/icons";
 import { dismissToast, useToasts, type Toast } from "./store";
 
@@ -28,7 +30,7 @@ export function Toasts() {
 
 function ToastView({ toast }: { toast: Toast }) {
   const [held, setHeld] = useState(false);
-  const { id, level, message, thread } = toast;
+  const { id, level, message, thread, reveal } = toast;
 
   useEffect(() => {
     if (level === "error" || held) return;
@@ -55,6 +57,15 @@ function ToastView({ toast }: { toast: Toast }) {
         >
           {message}
         </p>
+        {reveal === undefined ? null : (
+          <button
+            type="button"
+            onClick={() => revealFile(reveal)}
+            className="mt-1 text-xs font-medium text-primary hover:underline"
+          >
+            {isMac ? "Show in Finder" : "Show in folder"}
+          </button>
+        )}
       </div>
       <button
         type="button"

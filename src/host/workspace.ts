@@ -12,6 +12,7 @@ import {
   type Attention,
   type ClientMessage,
   type HostMessage,
+  type NotifyLevel,
   type OpenThread,
   type SidebarProject,
   type SidebarThread,
@@ -20,6 +21,7 @@ import {
 import { threadFromMessages } from "../shared/thread";
 import { LiveThread, type ThreadListener } from "./liveThread";
 import { PiExitError } from "./piProcess";
+import { PiCommandError } from "./piRpc";
 import { choosePiToStop, type PoolLimits } from "./pool";
 import { messageTitle, SessionIndex, type SessionSummary } from "./sessionIndex";
 import type { Store, StoredProject, StoredThread } from "./store";
@@ -52,6 +54,10 @@ export interface WorkspaceOptions {
   readonly chooseFolder: () => void;
   /** Asks main to raise a notification about a thread. */
   readonly attention: (attention: Attention) => void;
+  /** Asks main to put text on the clipboard. */
+  readonly copy: (text: string) => void;
+  /** Asks main to show a file in Finder. */
+  readonly reveal: (file: string) => void;
 }
 
 export class Workspace {
@@ -61,6 +67,10 @@ export class Workspace {
   private readonly send: (message: HostMessage) => void;
   private readonly chooseFolder: () => void;
   private readonly attention: (attention: Attention) => void;
+  private readonly copy: (text: string) => void;
+  private readonly reveal: (file: string) => void;
+  /** Files the page may ask main to show in Finder: the ones Tondo offered it. */
+  private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
@@ -85,6 +95,8 @@ export class Workspace {
     this.send = options.send;
     this.chooseFolder = options.chooseFolder;
     this.attention = options.attention;
+    this.copy = options.copy;
+    this.reveal = options.reveal;
   }
 
   /** You clicked a notification about the thread. */
@@ -186,6 +198,75 @@ export class Workspace {
       case "answer":
         this.run(() => this.running(message.threadId).answer(message.dialogId, message.answer));
         break;
+      case "compact":
+        this.run(async () => {
+          const thread = this.running(message.threadId);
+          const compacted = await thread.compact(message.instructions).catch((error: unknown) => {
+            // pi reports a failed compaction in its compaction_end event too, and the thread shows that.
+            if (error instanceof PiCommandError) return null;
+            throw error;
+          });
+          if (!compacted) return;
+          const { tokensBefore, estimatedTokensAfter } = compacted;
+          const before = tokensBefore.toLocaleString("en");
+          // An extension that compacts in its own way may leave the estimate out.
+          const after =
+            estimatedTokensAfter === undefined
+              ? ""
+              : ` to about ${estimatedTokensAfter.toLocaleString("en")}`;
+          this.toast("info", `Compacted the context from ${before}${after} tokens.`);
+        });
+        break;
+      case "copy-reply":
+        this.run(async () => {
+          const text = await this.running(message.threadId).lastReply();
+          if (text === null) {
+            this.toast("info", "pi hasn't replied in this thread yet.");
+            return;
+          }
+          this.copy(text);
+          this.toast("info", "Copied pi's last reply.");
+        });
+        break;
+      case "export":
+        this.run(() => this.exportThread(message.threadId, message.path));
+        break;
+      case "session-info":
+        this.run(async () => {
+          const info = await this.running(message.threadId).sessionInfo();
+          if (info.file) this.offered.add(info.file);
+          const sheet = { kind: "session", info } as const;
+          this.send({ v, type: "sheet", threadId: message.threadId, sheet });
+        });
+        break;
+      case "settings-files":
+        this.run(async () => {
+          const { project } = this.running(message.threadId);
+          const files = await this.supervisor.settingsFiles(project);
+          for (const file of files) if (file.exists) this.offered.add(file.path);
+          const sheet = { kind: "settings", files } as const;
+          this.send({ v, type: "sheet", threadId: message.threadId, sheet });
+        });
+        break;
+      case "trust-status":
+        this.run(async () => {
+          const thread = this.running(message.threadId);
+          const trust = await thread.trustInfo();
+          const sheet = { kind: "trust", project: thread.project, trust } as const;
+          this.send({ v, type: "sheet", threadId: message.threadId, sheet });
+        });
+        break;
+      case "reload":
+        this.run(() => this.running(message.threadId).reload());
+        break;
+      case "reveal":
+        this.run(() => {
+          if (!this.offered.has(message.path)) {
+            throw new Error("Tondo shows only files it offered in Finder.");
+          }
+          this.reveal(message.path);
+        });
+        break;
       case "ping":
         this.send({ v, type: "pong", id: message.id });
         break;
@@ -254,6 +335,29 @@ export class Workspace {
     });
     this.found = found;
     this.sendSidebar();
+  }
+
+  /** /export. pi's RPC exports HTML only, so a .jsonl path gets the session file pi already keeps. */
+  private async exportThread(threadId: string, outputPath: string): Promise<void> {
+    const thread = this.running(threadId);
+    if (/\.jsonl$/i.test(outputPath)) {
+      const file = thread.sessionFile;
+      if (file === null || !existsSync(file)) {
+        this.toast("info", "Tondo exports HTML only, and pi hasn't saved this thread yet.");
+        return;
+      }
+      this.offered.add(file);
+      this.toast("info", `Tondo exports HTML only. pi keeps the thread as JSONL in ${file}.`, file);
+      return;
+    }
+    const file = await thread.exportHtml(outputPath);
+    this.offered.add(file);
+    this.toast("info", `Saved the thread to ${file}.`, file);
+  }
+
+  /** Shows a toast about the thread on screen. */
+  private toast(level: NotifyLevel, message: string, reveal?: string): void {
+    this.send({ v, type: "toast", level, message, ...(reveal === undefined ? {} : { reveal }) });
   }
 
   private newThread(projectId: number): void {
