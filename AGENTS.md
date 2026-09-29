@@ -20,8 +20,8 @@ pnpm 12.6.0 comes from `packageManager` in package.json, and Node 24.15.0 from `
 | `pnpm bench` | Runs the Vitest benchmarks, `src/**/*.bench.ts`. |
 | `pnpm smoke` | Builds, launches the app, and fails on startup errors in Electron's log. |
 | `pnpm e2e` | Builds, then drives the app with Playwright. Screenshots go to `test-results/`. |
-| `pnpm perf` | Builds, then measures streaming and the page's port to the host against the budgets in docs/plan.md. It takes about 10 minutes and keeps the window on top, so ask before running it. Results go to `.dev/perf/<time>/`. |
-| `pnpm fixtures` | Re-records `fixtures/` by running the pinned pi offline with the faux provider. |
+| `pnpm perf` | Builds, then measures streaming, big diffs and the page's port to the host against the budgets in docs/plan.md. It takes about 12 minutes and keeps the window on top, so ask before running it. It fails unless the window is on a 2x display refreshing at 120 Hz, like the built-in Retina the budgets were measured on. Results go to `.dev/perf/<time>/`. |
+| `pnpm fixtures` | Re-records `fixtures/` by running the pinned pi offline with the faux provider. `pnpm fixtures tool-cards` re-records one, and it needs ripgrep and fd on PATH. |
 
 CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` on macOS and Ubuntu (.github/workflows/ci.yml). `perf` stays local because its numbers depend on the machine. On Linux, smoke and e2e need a display, so CI wraps them in `xvfb-run`.
 
