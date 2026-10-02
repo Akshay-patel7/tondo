@@ -17,7 +17,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 4 | First usable thread | M | Done |
 | 5 | Projects, threads, sidebar, process pool | M | Done |
 | 6 | Tool cards and edit diffs | M | Done |
-| 7 | Extension UI and slash commands | M | In review |
+| 7 | Extension UI and slash commands | M | Done |
 | 8 | Composer | L | Not started |
 | 9 | Per-turn diff panel | M | Not started |
 | 10 | Integrated terminal | M | Not started |
