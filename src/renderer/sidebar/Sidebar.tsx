@@ -204,7 +204,7 @@ function ProjectGroup({
           items={menuItems}
           note={
             confirming
-              ? "Tondo forgets the project's pins, drafts and archive. pi's session files stay on disk."
+              ? "Tondo forgets the project's pins, drafts, archive and turn checkpoints. pi's session files stay on disk."
               : undefined
           }
           onClose={closeMenu}

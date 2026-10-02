@@ -33,6 +33,7 @@ import { applyUiRequest, readUiRequest, responseTo, withoutDialog } from "./exte
 import { PiExitError, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
 import type { Supervisor, ThreadSession } from "./supervisor";
+import type { TurnCheckpoints } from "./turnCheckpoints";
 
 /** The host has no display to sync to, so it batches on a 60 Hz timer. */
 const FRAME_MS = 1000 / 60;
@@ -100,6 +101,7 @@ export interface ThreadListener {
 
 export class LiveThread {
   readonly id: string;
+  readonly checkpoints: TurnCheckpoints;
   readonly projectId: number;
   /** The project folder, where pi runs. */
   readonly project: string;
@@ -112,6 +114,8 @@ export class LiveThread {
   private lastMessageAt: number | undefined;
   private waitingForTrust = false;
   private imageSendPending = false;
+  private preparingPrompts = 0;
+  private promptGeneration = 0;
   private piStatus: PiStatus = { state: "starting" };
   private thread: ThreadState = threadFromMessages([]);
   private onScreen = false;
@@ -140,6 +144,7 @@ export class LiveThread {
     session: ThreadSession,
     supervisor: Supervisor,
     listener: ThreadListener,
+    checkpoints: TurnCheckpoints,
   ) {
     this.id = session.id;
     this.projectId = project.id;
@@ -147,6 +152,7 @@ export class LiveThread {
     this.file = session.file;
     this.supervisor = supervisor;
     this.listener = listener;
+    this.checkpoints = checkpoints;
   }
 
   /** Where pi keeps the session. pi says at start, and writes it with the first reply. */
@@ -167,6 +173,10 @@ export class LiveThread {
   /** Whether Tondo is waiting to hear if pi may load the project's own settings and extensions. */
   get askingTrust(): boolean {
     return this.waitingForTrust;
+  }
+
+  get preparing(): boolean {
+    return this.preparingPrompts > 0;
   }
 
   get status(): PiStatus {
@@ -200,6 +210,8 @@ export class LiveThread {
     return (
       this.piStatus.state === "starting" ||
       this.imageSendPending ||
+      this.preparing ||
+      this.checkpoints.busy ||
       running ||
       compaction !== null ||
       retry !== null ||
@@ -275,6 +287,7 @@ export class LiveThread {
     images: readonly DraftImage[] = [],
   ): Promise<void> {
     let sendingImages = false;
+    const promptGeneration = this.promptGeneration;
     try {
       const { pi, session } = this.ready();
       if (images.length > 0) {
@@ -309,6 +322,20 @@ export class LiveThread {
               })),
             }
           : { streamingBehavior };
+      this.preparingPrompts++;
+      this.changed();
+      try {
+        await this.checkpoints.prepare();
+        if (promptGeneration !== this.promptGeneration)
+          throw new Error(
+            "Prompt cancelled before pi started. Your message is back in the composer.",
+          );
+        if (this.closed || this.pi !== pi)
+          throw new Error("pi stopped while preparing the turn checkpoint.");
+      } finally {
+        this.preparingPrompts--;
+        this.changed();
+      }
       await ask(pi, { type: "prompt", message: text, ...options }, NO_DEADLINE);
     } catch (error) {
       // pi didn't take the text, so it goes back into the composer.
@@ -324,6 +351,7 @@ export class LiveThread {
 
   /** Escape: takes pi's queue back into the composer, then stops pi. pi's rpc.md asks for this order. */
   async stop(): Promise<void> {
+    this.promptGeneration++;
     const { pi } = this.ready();
     await this.takeQueue(pi);
     await ask(pi, { type: "abort" });
@@ -452,6 +480,9 @@ export class LiveThread {
     const pi = this.pi;
     this.pi = undefined;
     await pi?.stop();
+    await this.checkpoints.drain();
+    this.checkpoints.settled();
+    await this.checkpoints.drain();
   }
 
   private async openOnce(generation: number): Promise<void> {
@@ -523,6 +554,7 @@ export class LiveThread {
   private lost(error: PiExitError): void {
     console.error(`Tondo Host: pi in ${this.project}: ${error.message}`);
     this.pi = undefined;
+    this.checkpoints.settled();
     const { steering, followUp } = this.thread.queue;
     this.thread = afterPiExit(this.thread);
     this.piStatus = { state: "exited", error: error.message };
@@ -544,6 +576,8 @@ export class LiveThread {
       return;
     }
     const event = record as PiEvent;
+    if (event.type === "agent_start") this.checkpoints.started();
+    if (event.type === "agent_settled") this.checkpoints.settled();
     if (event.type === "session_info_changed") {
       this.sessionName = event.name?.trim() || undefined;
       this.changed();

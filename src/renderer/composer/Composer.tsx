@@ -94,9 +94,11 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const [loadingImages, setLoadingImages] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const pi = usePi();
-  const working = useThread(
+  const preparing = useHost((host) => host.thread?.preparing ?? false);
+  const piWorking = useThread(
     (thread) => thread.running || thread.compaction !== null || thread.retry !== null,
   );
+  const working = preparing || piWorking;
   const queued = useThread(
     (thread) => thread.queue.steering.length + thread.queue.followUp.length > 0,
   );

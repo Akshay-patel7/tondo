@@ -1,4 +1,4 @@
-// The host runs in an Electron utility process and owns pi. Git and the
+// The host runs in an Electron utility process and owns pi and Git. The
 // terminals come later. Main hands the host a MessagePort to the page on every
 // page load. The host sends each new port what the page shows, and after that
 // only what changes.
@@ -13,6 +13,7 @@ import {
   type MainToHostMessage,
 } from "../shared/protocol";
 import { POOL_LIMITS } from "./pool";
+import { watchCheckpointGroups } from "./checkpoints";
 import { Store } from "./store";
 import { Supervisor } from "./supervisor";
 import { Workspace } from "./workspace";
@@ -68,8 +69,17 @@ function serve(port: MessagePortMain, workspace: Workspace): void {
 function start(): void {
   const config = readConfig();
   const store = Store.open(path.join(config.userData, "tondo.sqlite"));
+  let piGroups: readonly number[] = [];
+  let gitGroups: readonly number[] = [];
+  const reportGroups = () =>
+    tellMain({ type: "process-groups", pgids: [...piGroups, ...gitGroups] });
+  watchCheckpointGroups((pgids) => {
+    gitGroups = pgids;
+    reportGroups();
+  });
   const supervisor = new Supervisor(config, (pgids) => {
-    tellMain({ type: "process-groups", pgids });
+    piGroups = pgids;
+    reportGroups();
   });
   const workspace = new Workspace({
     store,

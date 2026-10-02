@@ -4,6 +4,7 @@
 // only what changes.
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
+import type { CheckpointDiff, CheckpointTurn } from "../shared/checkpoints";
 import {
   IMAGE_COUNT,
   IMAGE_TOTAL_BYTES,
@@ -54,6 +55,15 @@ export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => 
   index: null,
 }));
 
+export const useCheckpoints = create<{
+  turns: readonly CheckpointTurn[];
+  shared: boolean;
+  unavailable: string | null;
+  id: number;
+  turn: number | null;
+  diff: CheckpointDiff | null;
+}>()(() => ({ turns: [], shared: false, unavailable: null, id: 0, turn: null, diff: null }));
+
 /** Per-thread so switching away during pi's acknowledgement doesn't unlock that draft. */
 export const useImageSends = create<ReadonlySet<string>>(() => new Set());
 
@@ -72,6 +82,16 @@ function fail(message: string): void {
   useHost.setState(({ errors }) =>
     errors.includes(message) ? {} : { errors: [...errors, message] },
   );
+}
+
+export function listCheckpoints(): void {
+  send({ v, type: "list-checkpoints", threadId: requireShownId() });
+}
+
+export function readCheckpoint(turn: number): void {
+  const id = useCheckpoints.getState().id + 1;
+  useCheckpoints.setState({ id, turn, diff: null });
+  send({ v, type: "read-checkpoint", threadId: requireShownId(), turn, id });
 }
 
 export function dismissError(message: string): void {
@@ -98,6 +118,14 @@ function receive(message: HostMessage): void {
         setDraft(message.draft);
         useDraftImages.setState(message.images, true);
         closeSheet();
+        useCheckpoints.setState(({ id }) => ({
+          turns: [],
+          shared: false,
+          unavailable: null,
+          turn: null,
+          diff: null,
+          id: id + 1,
+        }));
       }
       break;
     }
@@ -114,6 +142,18 @@ function receive(message: HostMessage): void {
       if (message.threadId === shownId() && message.id === useFiles.getState().id) {
         useFiles.setState({ index: message.index });
       }
+      break;
+    case "checkpoints":
+      if (message.threadId === shownId())
+        useCheckpoints.setState({
+          turns: message.turns,
+          shared: message.shared,
+          unavailable: message.unavailable,
+        });
+      break;
+    case "checkpoint-diff":
+      if (message.threadId === shownId() && message.id === useCheckpoints.getState().id)
+        useCheckpoints.setState({ turn: message.turn, diff: message.diff });
       break;
     case "image-send-ended": {
       const sending = new Set(useImageSends.getState());
@@ -161,6 +201,14 @@ function receive(message: HostMessage): void {
 }
 
 function accept(next: MessagePort): void {
+  useCheckpoints.setState(({ id }) => ({
+    turns: [],
+    shared: false,
+    unavailable: null,
+    turn: null,
+    diff: null,
+    id: id + 1,
+  }));
   useImageSends.setState(new Set(), true);
   port?.close();
   port = next;
