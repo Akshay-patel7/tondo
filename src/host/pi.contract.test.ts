@@ -150,6 +150,24 @@ describe("pi 0.87.1's RPC protocol", () => {
     ]);
   });
 
+  it("keeps interactive @file completions as literal paths, not CLI file attachments", async () => {
+    writeFileSync(path.join(workDir, "plain.txt"), "THIS IS FILE CONTENT");
+    writeFileSync(path.join(workDir, "space name.txt"), "THIS IS OTHER FILE CONTENT");
+    const { pi, next } = await startRealPi({
+      responses: [fauxAssistantMessage(fauxText("Seen."))],
+    });
+    // pi-tui's CombinedAutocompleteProvider inserts these exact forms. Its
+    // interactive submit trims the trailing space and forwards the text.
+    const message = 'Read @plain.txt and @"space name.txt"';
+    const settled = next(isSettled);
+    await pi.rpc.request({ type: "prompt", message });
+    await settled;
+    expect(await transcript(pi)).toEqual([
+      ["user", message],
+      ["assistant", "Seen."],
+    ]);
+  });
+
   it("aborts mid-stream and settles", async () => {
     // 25,000 tokens at 200 a second would stream for two minutes.
     const reply = "word ".repeat(20_000);

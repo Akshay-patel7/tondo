@@ -19,6 +19,7 @@ import {
   type ThreadActivity,
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
+import { FileIndexes } from "./fileIndex";
 import { LiveThread, type ThreadListener } from "./liveThread";
 import { PiExitError } from "./piProcess";
 import { PiCommandError } from "./piRpc";
@@ -72,6 +73,7 @@ export class Workspace {
   /** Files the page may ask main to show in Finder: the ones Tondo offered it. */
   private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
+  private readonly files = new FileIndexes();
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
   /** The threads whose pi is running, starting, asking about trust or exited. */
@@ -165,6 +167,14 @@ export class Workspace {
         break;
       case "set-draft":
         this.run(() => this.setDraft(message.threadId, message.text));
+        break;
+      case "list-files":
+        this.run(async () => {
+          const row = this.row(message.threadId);
+          const project = this.project(row.projectId);
+          const index = await this.files.read(project.path);
+          this.send({ v, type: "files", threadId: message.threadId, id: message.id, index });
+        });
         break;
       case "set-sidebar-hidden":
         this.run(() => this.store.setUi("sidebarHidden", message.hidden));

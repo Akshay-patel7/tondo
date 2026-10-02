@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -159,6 +160,57 @@ test("Up recalls only this thread's prompts, Down restores the draft, and edits 
   await expectDraft(page, "");
   await threadRows(page).filter({ hasText: "First prompt." }).click();
   await expectDraft(page, "Second prompt. changed");
+});
+
+test("@ completion inserts pi's quoted path, is undoable and never expands file contents", async () => {
+  execFileSync("git", ["init", "-q"], { cwd: project });
+  writeFileSync(path.join(project, "space name.txt"), "CONTENTS MUST NOT BE SENT");
+  writeFileSync(path.join(project, "tracked.txt"), "tracked");
+  writeFileSync(path.join(project, ".gitignore"), "ignored.txt\n");
+  writeFileSync(path.join(project, "ignored.txt"), "not listed");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: project });
+  const page = await start();
+  await composer(page).focus();
+  await page.keyboard.type("Read @");
+  const menu = page.getByRole("listbox", { name: "Files" });
+  await expect(menu.getByRole("option", { name: "tracked.txt", exact: true })).toBeVisible();
+  await expect(menu.getByRole("option", { name: "ignored.txt", exact: true })).toHaveCount(0);
+  await page.keyboard.type("space");
+  await expect(menu.getByRole("option")).toHaveText(["space name.txt"]);
+  await page.screenshot({ path: test.info().outputPath("files.png"), animations: "disabled" });
+  await composer(page).dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
+  await expectDraft(page, "Read @space");
+  await page.keyboard.press("Enter");
+  await expectDraft(page, 'Read @"space name.txt" ');
+  await expect(page.locator("[data-index]")).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expectDraft(page, "Read @space");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expectDraft(page, 'Read @"space name.txt" ');
+  await page.keyboard.type("please.");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("First reply.", { exact: true })).toBeVisible();
+  expect(await page.locator('[data-index="0"]').textContent()).toBe(
+    'Read @"space name.txt" please.',
+  );
+});
+
+test("reopening file completion reads new files, and a non-Git project says why it has no menu items", async () => {
+  const page = await start();
+  await composer(page).fill("@");
+  const menu = page.getByRole("listbox", { name: "Files" });
+  await expect(menu).toContainText("File suggestions need a Git project");
+  await composer(page).press("Escape");
+  await expect(menu).toBeHidden();
+  execFileSync("git", ["init", "-q"], { cwd: project });
+  writeFileSync(path.join(project, "new.txt"), "");
+  await composer(page).fill("");
+  await composer(page).press("Shift+Enter");
+  await page.keyboard.type("@new");
+  await expect(menu.getByRole("option")).toHaveText(["new.txt"]);
+  await menu.getByRole("option").click();
+  await expectDraft(page, "\n@new.txt ");
+  await expect(composer(page)).toBeFocused();
 });
 
 test("a multiline Markdown draft survives quitting and restarting the entire app", async () => {

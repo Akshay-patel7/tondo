@@ -1,18 +1,29 @@
 // The send and stop buttons follow T3 Code's
 // apps/web/src/components/chat/ComposerPrimaryActions.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/protocol";
 import { builtinIn } from "../../shared/slashCommands";
-import { dequeue, editDraft, prompt, stop, usePi } from "../connection";
+import {
+  dequeue,
+  editDraft,
+  listFiles,
+  prompt,
+  stop,
+  useFiles,
+  usePi,
+  useHost,
+} from "../connection";
 import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
 import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
 import { useThread } from "../thread/store";
 import { ContextMeter } from "./ContextMeter";
 import { useDraft } from "./draft";
+import { FileMenu, fileOptionId } from "./FileMenu";
 import { promptHistory, stepHistory, type HistoryPosition } from "./history";
 import { composerAction } from "./keys";
+import { completeFile, fileQuery, matchingFiles } from "./mentions";
 import { PromptEditor, type EditorSnapshot, type PromptEditorHandle } from "./PromptEditor";
 import { ModelPicker, ThinkingPicker } from "./SessionControls";
 
@@ -56,6 +67,7 @@ function complete(text: string, caret: number, item: SlashItem): { text: string;
 /** `hidden` while an extension's dialog takes the composer's place. */
 export function Composer({ hidden }: { hidden: boolean }) {
   const draft = useDraft((text) => text);
+  const connection = useHost((host) => host.connection);
   const pi = usePi();
   const working = useThread((thread) => thread.running || thread.compaction !== null);
   const queued = useThread(
@@ -66,6 +78,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const menuId = useId();
   const [selection, setSelection] = useState({ from: 0, to: 0 });
   const caret = selection.from;
+  const fileIndex = useFiles((state) => state.index);
   const [highlighted, setHighlighted] = useState(0);
   /** The text you closed the menu on with Escape. It stays closed until the text changes. */
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -75,10 +88,21 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const commands = pi.state === "ready" ? pi.session.commands : NO_COMMANDS;
   const menuHidden = hidden || dismissedAt === draft || selection.from !== selection.to;
   const query = menuHidden ? null : slashQuery(draft, caret);
+  const mention = menuHidden ? null : fileQuery(draft, caret);
+  const listingFiles = mention !== null;
+  const paths = mention && fileIndex ? matchingFiles(fileIndex.paths, mention.query) : [];
   const items = query === null ? [] : searchSlash(slashItems(commands), query);
-  const current = Math.min(highlighted, items.length - 1);
+  const current = Math.min(highlighted, (listingFiles ? paths.length : items.length) - 1);
   const picked = items[current];
-  const activeOption = picked ? slashOptionId(menuId, current) : undefined;
+  const pickedFile = paths[current];
+  let activeOption: string | undefined;
+  if (listingFiles && pickedFile) activeOption = fileOptionId(menuId, current);
+  else if (picked) activeOption = slashOptionId(menuId, current);
+
+  // Clear the previous scan before the menu paints, especially after a thread switch.
+  useLayoutEffect(() => {
+    if (listingFiles && connection === "connected") listFiles();
+  }, [listingFiles, connection]);
 
   // The composer takes focus back when a dialog that took its place closes.
   const wasHidden = useRef(hidden);
@@ -100,8 +124,32 @@ export function Composer({ hidden }: { hidden: boolean }) {
     editor.current?.replace(completed.text, completed.caret);
   };
 
+  const pickFile = (path: string) => {
+    if (!mention) return;
+    const completed = completeFile(draft, mention, path);
+    setHighlighted(0);
+    editor.current?.replace(completed.text, completed.caret);
+  };
+
   const onKeyDown = (event: KeyboardEvent, snapshot: EditorSnapshot): boolean => {
     const { key, altKey, ctrlKey, metaKey, shiftKey, isComposing } = event;
+    if (listingFiles && !isComposing && !altKey && !ctrlKey && !metaKey) {
+      if (key === "Escape") {
+        setDismissedAt(draft);
+        return true;
+      }
+      if (pickedFile && !shiftKey && (key === "ArrowDown" || key === "ArrowUp")) {
+        const step = key === "ArrowDown" ? 1 : -1;
+        setHighlighted((current + step + paths.length) % paths.length);
+        return true;
+      }
+      if (pickedFile && !shiftKey && (key === "Tab" || key === "Enter")) {
+        pickFile(pickedFile);
+        return true;
+      }
+      // While the file menu is loading, Enter mustn't send an unfinished mention.
+      if (!shiftKey && key === "Enter" && fileIndex === null) return true;
+    }
     if (query !== null && !isComposing && !altKey && !ctrlKey && !metaKey) {
       // pi's menu keys: the arrows move, Tab completes, Enter completes and
       // sends, and Escape closes the menu before it would stop pi.
@@ -168,9 +216,19 @@ export function Composer({ hidden }: { hidden: boolean }) {
           onPick={(item) => pick(item, true)}
         />
       )}
+      {listingFiles ? (
+        <FileMenu
+          id={menuId}
+          index={fileIndex}
+          paths={paths}
+          highlighted={current}
+          onHighlight={setHighlighted}
+          onPick={pickFile}
+        />
+      ) : null}
       <PromptEditor
         ref={editor}
-        menuId={query !== null ? menuId : undefined}
+        menuId={query !== null || listingFiles ? menuId : undefined}
         activeOption={activeOption}
         value={draft}
         onChange={(next) => {

@@ -3,6 +3,7 @@
 // with the sidebar and a snapshot of the open thread, and after that sends
 // only what changes.
 import { create } from "zustand";
+import type { FileIndex } from "../shared/files";
 import {
   PORT_MESSAGE,
   PROTOCOL_VERSION,
@@ -38,6 +39,11 @@ export const useHost = create<{
   projects: [],
   sidebarHidden: false,
   errors: [],
+}));
+
+export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => ({
+  id: 0,
+  index: null,
 }));
 
 const NO_PI: PiStatus = { state: "stopped" };
@@ -91,6 +97,11 @@ function receive(message: HostMessage): void {
       break;
     case "sidebar":
       useHost.setState(({ projects }) => ({ projects: keepUnchanged(projects, message.projects) }));
+      break;
+    case "files":
+      if (message.threadId === shownId() && message.id === useFiles.getState().id) {
+        useFiles.setState({ index: message.index });
+      }
       break;
     case "ui":
       useHost.setState({ sidebarHidden: message.sidebarHidden });
@@ -231,6 +242,13 @@ export function toggleSidebar(): void {
 
 export function answerTrust(trusted: boolean): void {
   send({ v, type: "trust", threadId: requireShownId(), trusted });
+}
+
+/** Starts a scan for a newly opened file menu. Filtering the returned index happens in the page. */
+export function listFiles(): void {
+  const id = useFiles.getState().id + 1;
+  useFiles.setState({ id, index: null });
+  send({ v, type: "list-files", threadId: requireShownId(), id });
 }
 
 export function prompt(text: string, streamingBehavior: StreamingBehavior): void {

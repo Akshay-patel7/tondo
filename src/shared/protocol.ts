@@ -8,10 +8,11 @@ import type {
   SessionStats,
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
+import type { FileIndex } from "./files";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -207,6 +208,8 @@ export type ClientMessage = Versioned<
   | { type: "archive-thread"; threadId: string; archived: boolean }
   /** What a thread's composer holds, which Tondo keeps across restarts. */
   | { type: "set-draft"; threadId: string; text: string }
+  /** List project files for @ completion, correlated so stale scans can't replace a new menu. */
+  | { type: "list-files"; threadId: string; id: number }
   | { type: "set-sidebar-hidden"; hidden: boolean }
   /** Look for sessions pi wrote outside Tondo, such as in its own interface. */
   | { type: "refresh" }
@@ -262,6 +265,7 @@ export type HostMessage = Versioned<
   /** The title, the trust question or pi's status of the thread on screen changed. */
   | { type: "status"; thread: OpenThread }
   | { type: "sidebar"; projects: SidebarProject[] }
+  | { type: "files"; threadId: string; id: number; index: FileIndex }
   /** The window's state that outlives a restart. The host sends it to each new port. */
   | { type: "ui"; sidebarHidden: boolean }
   /** Text for the thread's composer: messages taken back from pi's queue, or a prompt pi didn't take. */
@@ -424,6 +428,15 @@ export function parseClientMessage(data: unknown): ParseResult {
         return invalid(`set-draft: text must be a string, not ${describe(text)}`);
       }
       return exactly(message, { v, type, threadId: threadId as string, text });
+    }
+    case "list-files": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id } = message;
+      if (!Number.isSafeInteger(id) || (id as number) < 0) {
+        return invalid(`list-files: id must be a nonnegative integer, not ${describe(id)}`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string, id: id as number });
     }
     case "set-sidebar-hidden": {
       const { hidden } = message;
