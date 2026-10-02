@@ -18,7 +18,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 5 | Projects, threads, sidebar, process pool | M | Done |
 | 6 | Tool cards and edit diffs | M | Done |
 | 7 | Extension UI and slash commands | M | Done |
-| 8 | Composer | L | Not started |
+| 8 | Composer | L | In review |
 | 9 | Per-turn diff panel | M | Not started |
 | 10 | Integrated terminal | M | Not started |
 | 11 | Git actions: branches, worktrees, pull requests | L | Not started |
@@ -464,9 +464,71 @@ Gotchas, mostly from T3's composer:
 - Programmatic cursor moves must scroll the caret into view.
 - Enter during IME composition (`event.isComposing`) must not send.
 
+Verified in Stage 8:
+- pi-tui 0.87.1 completes files as `@path ` or `@"path with spaces" `. Interactive submission forwards this text literally. CLI file expansion is separate, and RPC rejects CLI file arguments.
+- pi's `clear_queue` and `queue_update` expose text only. You chose idle-only image sends on 2026-10-02. Text steering and follow-ups stay unchanged. Image RPC prompts omit `streamingBehavior`, so pi rejects a busy-state race rather than queueing attachments that Tondo couldn't recover.
+- Image drafts stay saved until pi acknowledges the send. A separate SQLite table keeps them out of sidebar reads and text saves. Local built-ins and known extension commands leave images in the draft.
+- Image bounds are 4 PNG/JPEG/GIF/WebP files, 5 MiB and 16 million pixels each, 10 MiB total. Previews use blob URLs, with no remote image access. File suggestions cap the index at 10,000 paths and show 20 matches; names with quotes, backslashes or line breaks are omitted.
+- The editor uses T3's plain mode, not rich Markdown. Cursor-only changes and local draft echoes don't replace the document. Programmatic text replacement and clipboard paste get separate undo boundaries.
+
 Done when: e2e covers IME composition not sending, a pasted image reaching pi (the faux provider records it), inserting a mention, a draft surviving a restart, and undo after programmatic edits.
 
 Size: L. T3's composer, draft store and command menu are 11,598 lines.
+
+### Stage 8 report, 2026-10-02
+
+Implemented, uncommitted for review:
+- TipTap 3.31.4 with literal Markdown and undo, per-thread drafts, prompt history, and the existing slash commands and keyboard controls.
+- Host-backed file completion with request correlation, bounded Git scans and visible errors.
+- Image paste, drop and picker, removable thumbnails, preview dialogs and transcript images. A new SQLite migration stores attachments separately. Image-only drafts survive thread switches and app restart. pi rejection restores the text and keeps the images.
+
+Proofs:
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, build and `pnpm smoke` passed. React Compiler compiled 77 functions with no skipped functions.
+- `pnpm test`: 362 tests in 39 files passed, including real-pi contracts for literal file paths, unchanged image bytes and rejection of busy image sends.
+- `pnpm e2e`: all 50 tests passed. A real clipboard paste reached the faux provider as a 2x2 image with RGBA `[180, 80, 50, 255]`. Tests cover persistence, image-only sends, rejection recovery, command behavior and programmatic-edit undo. Editing a recalled prompt ends history browsing even after undoing the edit.
+- `pnpm perf`: all 17 tests passed in 12.1 minutes. The final build ran on the built-in display at 2x and 120 Hz with the window visible. The approved temporary display-placement override was removed afterward; macOS settings stayed unchanged.
+- The full tracked diff, new files and lockfile were reviewed. `git diff --check` passed.
+
+Final performance medians, three runs per scenario:
+
+| Metric | Result | Budget |
+|---|---|---|
+| Streaming frame p95, across both rates and 10 threads | 9.0 to 9.2 ms | 16.7 ms |
+| Streaming frame p99 | 9.3 ms | 33 ms |
+| Long tasks of 100 ms or more, normal speed | None | None |
+| Input to paint p95, single thread / 10 threads | 32 / 24 ms | 32 ms |
+| Switch to a running thread | 90 ms | 100 ms |
+| Cold start | 306 ms | 1,000 ms |
+| Total footprint before streaming, 1,000 / 200 tok/s | 277.5 / 273.5 MiB | 279.4 MiB |
+| Total footprint after 1,000 tok/s | 503.6 MiB | 510.4 MiB |
+| Total footprint after 200 tok/s | 501.3 MiB | 522.5 MiB |
+| Port round trip p95 | 0.10 ms | Under 1 ms |
+
+Memory passes narrowly. At 1,000 tok/s the before readings ranged from 275.0 to 280.6 MiB and the after readings from 503.4 to 519.7 MiB. One run crossed both limits; the plan gates their medians. The earlier pre-image checkpoint had a 514 MiB after median, which missed its limit despite 17 passing tests. The runner records memory but does not assert it, so these comparisons are manual. The lower final median is not evidence of a memory fix. Input latency is at its limit too. Full reports are in `.dev/perf/stage8-final-2026-10-02T16-38-43/`; [stack.md](stack.md#measurements) also records the 4x slowdown results.
+
+Screenshots opened and checked:
+- `test-results/composer.e2e.ts-Markdown-p-7acc7-ines-without-importing-HTML/markdown.png`
+- `test-results/composer.e2e.ts--completio-2be0c-never-expands-file-contents/files.png`
+- `test-results/images.e2e.ts-paste-a-real-c1814-t-and-send-its-pixels-to-pi/attached.png`
+- `test-results/images.e2e.ts-paste-a-real-c1814-t-and-send-its-pixels-to-pi/preview.png`
+- `test-results/images.e2e.ts-paste-a-real-c1814-t-and-send-its-pixels-to-pi/sent.png`
+- `.dev/perf/stage8-final-2026-10-02T16-38-43/mid-stream-1.png` and `mid-stream-2.png`
+
+Changes to the plan: images send only while idle, as approved above. File and slash completions insert literal text, following T3's plain mode. Attachments persist separately from the text draft rather than passing their bytes through each keystroke save.
+
+Limits of verification:
+- IME coverage tests browser composition-key guards, not an OS input-method session. Drop coverage dispatches a DOM drop event, not a native Finder drag. The clipboard paste and picker use real input paths.
+- This verification ran on macOS. Linux CI awaits the approved PR. Maximum-size image attachments are bounded but are not part of the streaming performance scenarios.
+- A host crash after pi accepts a prompt but before Tondo clears its saved images can leave those images in the draft. Inspect the transcript before retrying; this does not provide exactly-once delivery.
+- One early full Electron run timed out on the existing sidebar-hover menu test. It passed 10 isolated repetitions and later full runs without a patch. The cause remains unknown.
+
+Proposed commits after approval:
+1. `feat(composer): add Markdown editing and prompt history`
+2. `feat(composer): complete project file mentions`
+3. `feat(composer): persist and send image attachments`
+4. `docs: record stage 8 verification`
+
+Next: wait for your review. After approval and landing, read T3's checkpoint implementation and verify its Git behavior for Stage 9.
 
 ## Stage 9: Per-turn diff panel
 
