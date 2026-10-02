@@ -1,7 +1,7 @@
 // The composer's keys are pi's (docs/usage.md in pi-coding-agent): Enter
 // sends, and steers while pi works. Alt+Enter queues a follow-up. Alt+Up
 // takes the queue back into the composer. Escape stops pi. Shift+Enter adds
-// a line, which is the textarea's own behavior.
+// a line, which the editor handles.
 
 export type ComposerAction = "send" | "follow-up" | "stop" | "dequeue";
 
@@ -22,7 +22,7 @@ export interface ComposerState {
   readonly queued: boolean;
 }
 
-/** What `press` does in the composer, or null to leave it to the textarea. */
+/** What `press` does in the composer, or null to leave it to the editor. */
 export function composerAction(press: KeyPress, state: ComposerState): ComposerAction | null {
   if (press.isComposing || press.ctrlKey || press.metaKey) return null;
   const { key, altKey, shiftKey } = press;

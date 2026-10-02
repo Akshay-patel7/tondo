@@ -112,6 +112,7 @@ function Body() {
 }
 
 function Thread() {
+  const threadId = useHost((host) => host.thread?.id);
   const threadKey = useThreadKey((key) => key);
   const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
   return (
@@ -126,7 +127,7 @@ function Thread() {
           <Widgets placement="aboveEditor" />
           {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
           <DialogPanel />
-          <Composer hidden={asking} />
+          <Composer key={threadId} hidden={asking} />
           <Widgets placement="belowEditor" />
           <StatusLine />
         </div>

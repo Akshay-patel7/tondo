@@ -1,8 +1,7 @@
-// A plain textarea until Stage 8 brings TipTap. The send and stop buttons
-// follow T3 Code's apps/web/src/components/chat/ComposerPrimaryActions.tsx.
+// The send and stop buttons follow T3 Code's
+// apps/web/src/components/chat/ComposerPrimaryActions.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
-import { flushSync } from "react-dom";
+import { useEffect, useId, useRef, useState } from "react";
 import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/protocol";
 import { builtinIn } from "../../shared/slashCommands";
 import { dequeue, editDraft, prompt, stop, usePi } from "../connection";
@@ -12,7 +11,9 @@ import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
 import { useThread } from "../thread/store";
 import { ContextMeter } from "./ContextMeter";
 import { useDraft } from "./draft";
+import { promptHistory, stepHistory, type HistoryPosition } from "./history";
 import { composerAction } from "./keys";
+import { PromptEditor, type EditorSnapshot, type PromptEditorHandle } from "./PromptEditor";
 import { ModelPicker, ThinkingPicker } from "./SessionControls";
 
 const NO_COMMANDS: readonly SlashCommand[] = [];
@@ -60,9 +61,11 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const queued = useThread(
     (thread) => thread.queue.steering.length + thread.queue.followUp.length > 0,
   );
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const editor = useRef<PromptEditorHandle>(null);
+  const history = useRef<HistoryPosition | null>(null);
   const menuId = useId();
-  const [caret, setCaret] = useState(0);
+  const [selection, setSelection] = useState({ from: 0, to: 0 });
+  const caret = selection.from;
   const [highlighted, setHighlighted] = useState(0);
   /** The text you closed the menu on with Escape. It stays closed until the text changes. */
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -70,15 +73,17 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const text = draft.trim();
   const canSend = text !== "" && (pi.state === "ready" || builtinIn(text) !== null);
   const commands = pi.state === "ready" ? pi.session.commands : NO_COMMANDS;
-  const query = hidden || dismissedAt === draft ? null : slashQuery(draft, caret);
+  const menuHidden = hidden || dismissedAt === draft || selection.from !== selection.to;
+  const query = menuHidden ? null : slashQuery(draft, caret);
   const items = query === null ? [] : searchSlash(slashItems(commands), query);
   const current = Math.min(highlighted, items.length - 1);
   const picked = items[current];
+  const activeOption = picked ? slashOptionId(menuId, current) : undefined;
 
   // The composer takes focus back when a dialog that took its place closes.
   const wasHidden = useRef(hidden);
   useEffect(() => {
-    if (wasHidden.current && !hidden) textarea.current?.focus();
+    if (wasHidden.current && !hidden) editor.current?.focus();
     wasHidden.current = hidden;
   }, [hidden]);
 
@@ -92,47 +97,61 @@ export function Composer({ hidden }: { hidden: boolean }) {
       return;
     }
     setHighlighted(0);
-    // The textarea has to show the new text before the caret can go after the command.
-    flushSync(() => editDraft(completed.text));
-    textarea.current?.setSelectionRange(completed.caret, completed.caret);
-    setCaret(completed.caret);
+    editor.current?.replace(completed.text, completed.caret);
   };
 
-  const trackCaret = (event: SyntheticEvent<HTMLTextAreaElement>) => {
-    setCaret(event.currentTarget.selectionStart);
-  };
-
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    const { key, altKey, ctrlKey, metaKey, shiftKey } = event;
-    const isComposing = event.nativeEvent.isComposing;
+  const onKeyDown = (event: KeyboardEvent, snapshot: EditorSnapshot): boolean => {
+    const { key, altKey, ctrlKey, metaKey, shiftKey, isComposing } = event;
     if (query !== null && !isComposing && !altKey && !ctrlKey && !metaKey) {
       // pi's menu keys: the arrows move, Tab completes, Enter completes and
       // sends, and Escape closes the menu before it would stop pi.
       if (key === "Escape") {
         event.preventDefault();
         setDismissedAt(draft);
-        return;
+        return true;
       }
       if (picked && !shiftKey && (key === "ArrowDown" || key === "ArrowUp")) {
         event.preventDefault();
         const step = key === "ArrowDown" ? 1 : -1;
         setHighlighted((current + step + items.length) % items.length);
-        return;
+        return true;
       }
       if (picked && !shiftKey && (key === "Tab" || key === "Enter")) {
         event.preventDefault();
         pick(picked, key === "Enter");
-        return;
+        return true;
+      }
+    }
+    if (
+      !isComposing &&
+      !altKey &&
+      !ctrlKey &&
+      !metaKey &&
+      !shiftKey &&
+      snapshot.from === snapshot.to &&
+      (key === "ArrowUp" || key === "ArrowDown")
+    ) {
+      const step = stepHistory(
+        promptHistory(useThread.getState().messages),
+        history.current,
+        snapshot.text,
+        key === "ArrowUp" ? "backward" : "forward",
+      );
+      if (step) {
+        history.current = step.position;
+        editor.current?.replace(step.text, step.text.length);
+        return true;
       }
     }
     const press = { key, altKey, ctrlKey, metaKey, shiftKey, isComposing };
     const action = composerAction(press, { working, queued });
-    if (action === null) return;
+    if (action === null) return false;
     event.preventDefault();
     if (action === "send") send("steer");
     else if (action === "follow-up") send("followUp");
     else if (action === "stop") stop();
     else dequeue();
+    return true;
   };
 
   return (
@@ -149,22 +168,19 @@ export function Composer({ hidden }: { hidden: boolean }) {
           onPick={(item) => pick(item, true)}
         />
       )}
-      <textarea
-        ref={textarea}
-        aria-label="Message"
-        aria-controls={query === null ? undefined : menuId}
-        aria-activedescendant={picked ? slashOptionId(menuId, current) : undefined}
+      <PromptEditor
+        ref={editor}
+        menuId={query !== null ? menuId : undefined}
+        activeOption={activeOption}
         value={draft}
-        onChange={(event) => {
+        onChange={(next) => {
+          if (history.current?.text !== next) history.current = null;
           setHighlighted(0);
-          trackCaret(event);
-          editDraft(event.target.value);
+          editDraft(next);
         }}
-        onSelect={trackCaret}
+        onSelection={({ from, to }) => setSelection({ from, to })}
         onKeyDown={onKeyDown}
-        rows={3}
         placeholder={placeholder(pi, working)}
-        className="block max-h-60 w-full resize-none bg-transparent px-4 pt-3 pb-1 outline-none placeholder:text-muted-foreground"
       />
       <div className="flex items-center gap-1 px-2 pb-2">
         {pi.state === "ready" ? (

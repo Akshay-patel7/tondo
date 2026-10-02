@@ -17,6 +17,7 @@ import { bringToFront, type Tondo } from "./launch";
 import {
   addProject,
   composer,
+  expectDraft,
   launchWithPi,
   PI_START_TIMEOUT_MS,
   reply,
@@ -93,7 +94,7 @@ test("the slash menu lists an extension's command, a prompt template and a skill
   await expect(options.first()).toContainText("/tondo-hello");
   await expect(options.first()).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Tab");
-  await expect(composer(page)).toHaveValue("/tondo-hello ");
+  await expectDraft(page, "/tondo-hello ");
   await expect(menu(page)).toBeHidden();
   await page.keyboard.type("world");
   await page.keyboard.press("Enter");
@@ -106,7 +107,7 @@ test("the slash menu lists an extension's command, a prompt template and a skill
   await expect(options.first()).toContainText("/skill:tondo-skill");
   await page.keyboard.press("Escape");
   await expect(menu(page)).toBeHidden();
-  await expect(composer(page)).toHaveValue("/ski");
+  await expectDraft(page, "/ski");
 });
 
 test("pi's built-in commands run in Tondo and never reach pi as text", async () => {
@@ -125,7 +126,7 @@ test("pi's built-in commands run in Tondo and never reach pi as text", async () 
   await send(page, "/copy");
   await expect(toast(page, "Copied pi's last reply.")).toBeVisible();
   expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("First reply.");
-  await expect(composer(page)).toHaveValue("");
+  await expectDraft(page, "");
 
   await send(page, "/session");
   const session = page.getByRole("dialog", { name: "Session" });
@@ -196,7 +197,7 @@ test("pi's built-in commands run in Tondo and never reach pi as text", async () 
   // /reload starts pi again on the session, which holds only what went to the
   // model: no built-in reached pi as a prompt.
   await send(page, "/reload");
-  await expect(composer(page)).toHaveAttribute("placeholder", "Starting pi…");
+  await expect(composer(page)).toHaveAttribute("aria-placeholder", "Starting pi…");
   await waitForPi(page);
   await expect(page.getByLabel("Model")).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
   await expect(page.locator("[data-index]")).toHaveCount(2);
@@ -231,7 +232,7 @@ test("/trust changes your answer, and pi starts again with it", async () => {
   await expect(sheet).toContainText("You told Tondo to trust this project.");
   await sheet.getByRole("button", { name: "Don't trust" }).click();
   await expect(sheet).toBeHidden();
-  await expect(composer(page)).toHaveAttribute("placeholder", "Starting pi…");
+  await expect(composer(page)).toHaveAttribute("aria-placeholder", "Starting pi…");
   await waitForPi(page);
   // The new pi skipped the project's settings, so it's back at pi's default.
   await expect(thinking).toHaveValue("medium");

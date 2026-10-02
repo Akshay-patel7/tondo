@@ -83,6 +83,28 @@
   }
 }
 
+/* Markdown stays literal. Each paragraph is one line, including empty lines. */
+.composer-editor {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer-editor p {
+  margin: 0;
+}
+
+.composer-editor:has(> p:only-child > br:only-child)::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+.composer-editor.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
 /* The title bar is hidden, so the header is where the window gets dragged. */
 @utility app-drag {
   -webkit-app-region: drag;

@@ -99,6 +99,17 @@ export function composer(page: Page) {
   return page.getByRole("textbox", { name: "Message" });
 }
 
+/** The Markdown source in TipTap's paragraphs, including empty lines and trailing spaces. */
+export async function composerText(page: Page): Promise<string | null> {
+  const lines = await composer(page).locator("p").allTextContents();
+  // An unmounted editor isn't an empty draft.
+  return lines.length === 0 ? null : lines.join("\n");
+}
+
+export async function expectDraft(page: Page, text: string): Promise<void> {
+  await expect.poll(() => composerText(page)).toBe(text);
+}
+
 /** The sidebar. */
 export function threads(page: Page) {
   return page.getByRole("navigation", { name: "Threads" });
