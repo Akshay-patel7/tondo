@@ -10,6 +10,7 @@ import {
   addProject,
   bashCall,
   composer,
+  expectDraft,
   failure,
   launchWithPi,
   PI_START_TIMEOUT_MS,
@@ -63,7 +64,7 @@ test("pi's reply streams in as pi writes it", async () => {
   const lengths = await recordReplyLengths(page);
 
   await send(page, "Say something long.");
-  await expect(composer(page)).toHaveValue("");
+  await expectDraft(page, "");
   await expect(row(page, 0)).toHaveText("Say something long.");
   await waitForIdle(page);
 
@@ -140,7 +141,7 @@ test("Alt+Up and Escape take queued messages back into the composer", async () =
   await expect(queue).toContainText("Follow-up: First.");
   await input.fill("A draft.");
   await input.press("Alt+ArrowUp");
-  await expect(input).toHaveValue("First.\n\nA draft.");
+  await expectDraft(page, "First.\n\nA draft.");
   await expect(queue).not.toBeAttached();
   // pi still works.
   await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
@@ -150,7 +151,7 @@ test("Alt+Up and Escape take queued messages back into the composer", async () =
   await expect(queue).toContainText("Follow-up: Second.");
   await input.press("Escape");
   await waitForIdle(page);
-  await expect(input).toHaveValue("Second.");
+  await expectDraft(page, "Second.");
   await expect(queue).not.toBeAttached();
 });
 

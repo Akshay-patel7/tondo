@@ -10,6 +10,7 @@ import { bringToFront, hostPid, type Tondo } from "./launch";
 import {
   addProject,
   composer,
+  expectDraft,
   launchWithPi,
   recordStatuses,
   reply,
@@ -212,7 +213,7 @@ test("drafts stay with their threads, and Tondo's store keeps them through a hos
 
   await page.keyboard.press("ControlOrMeta+n");
   await expect(heading(page)).toHaveText("New thread");
-  await expect(composer(page)).toHaveValue("");
+  await expectDraft(page, "");
   const first = threadRow(page, "Remember this.");
   await expect(first.getByRole("img", { name: "Unsent draft" })).toBeVisible();
   await composer(page).fill("Another thought");
@@ -231,7 +232,7 @@ test("drafts stay with their threads, and Tondo's store keeps them through a hos
   await expect(heading(page)).toHaveText("New thread");
   await first.click();
   await expect(heading(page)).toHaveText("Remember this.");
-  await expect(composer(page)).toHaveValue("Half a thought");
+  await expectDraft(page, "Half a thought");
   await expect(message(page, 1)).toHaveText("Noted.");
   // The new host's sidebar reached the page before this thread did, so the
   // pin and the other draft come from the store too.

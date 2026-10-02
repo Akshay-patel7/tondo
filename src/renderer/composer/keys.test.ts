@@ -25,7 +25,7 @@ describe("composerAction", () => {
     }
   });
 
-  test("leaves Shift+Enter to the textarea, which adds a line", () => {
+  test("leaves Shift+Enter to the editor, which adds a line", () => {
     expect(composerAction(press("Enter", { shiftKey: true }), working)).toBeNull();
     expect(composerAction(press("Enter", { altKey: true, shiftKey: true }), working)).toBeNull();
   });

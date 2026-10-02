@@ -10,6 +10,7 @@ import { bringToFront, type Tondo } from "./launch";
 import {
   addProject,
   composer,
+  expectDraft,
   launchWithPi,
   reply,
   send,
@@ -115,7 +116,7 @@ test("an extension's dialogs, toasts, status, widgets, title and composer text",
   await expect(page.getByLabel("Extension status")).toBeHidden();
   await expect(page.getByLabel("Extension widgets below")).toBeVisible();
   // The composer came back with the text the extension set, and the keyboard.
-  await expect(composer(page)).toHaveValue("Text from the extension");
+  await expectDraft(page, "Text from the extension");
   await expect(composer(page)).toBeFocused();
   await page.screenshot({ path: test.info().outputPath("after.png"), animations: "disabled" });
 

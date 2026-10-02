@@ -87,7 +87,7 @@ test("a pi that fails to start shows why, and offers a restart", async () => {
   await banner.getByText("Details").click();
   await expect(banner).toContainText("pi fails on purpose");
   await expect(banner.getByRole("button", { name: "Restart pi" })).toBeVisible();
-  await expect(composer(page)).toHaveAttribute("placeholder", "pi isn't running");
+  await expect(composer(page)).toHaveAttribute("aria-placeholder", "pi isn't running");
   expect(readLog("host.log")).toContain("pi fails on purpose");
 });
 

@@ -22,6 +22,7 @@ import { signalGroup } from "./processGroup";
 import { sessionFolder } from "./sessionFolder";
 import { SessionIndex } from "./sessionIndex";
 import { needsTrustDecision, trustArgs } from "./trust";
+import { IMAGE_FIXTURE } from "../shared/imageFixture";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const piCli = path.join(
@@ -148,6 +149,67 @@ describe("pi 0.87.1's RPC protocol", () => {
       ["user", "Say hello."],
       ["assistant", "Hello from faux."],
     ]);
+  });
+
+  it("keeps interactive @file completions as literal paths, not CLI file attachments", async () => {
+    writeFileSync(path.join(workDir, "plain.txt"), "THIS IS FILE CONTENT");
+    writeFileSync(path.join(workDir, "space name.txt"), "THIS IS OTHER FILE CONTENT");
+    const { pi, next } = await startRealPi({
+      responses: [fauxAssistantMessage(fauxText("Seen."))],
+    });
+    // pi-tui's CombinedAutocompleteProvider inserts these exact forms. Its
+    // interactive submit trims the trailing space and forwards the text.
+    const message = 'Read @plain.txt and @"space name.txt"';
+    const settled = next(isSettled);
+    await pi.rpc.request({ type: "prompt", message });
+    await settled;
+    expect(await transcript(pi)).toEqual([
+      ["user", message],
+      ["assistant", "Seen."],
+    ]);
+  });
+
+  it("accepts an image-only prompt with unchanged raster bytes", async () => {
+    const { pi, next } = await startRealPi({ responses: [fauxAssistantMessage("An image.")] });
+    const { data, mimeType } = IMAGE_FIXTURE;
+    const image = { type: "image" as const, data, mimeType };
+    const settled = next(isSettled);
+    await pi.rpc.request({ type: "prompt", message: "", images: [image] });
+    await settled;
+    const response = await pi.rpc.request({ type: "get_messages" });
+    const { messages } = response.data as { messages: PiMessage[] };
+    expect(messages.find((message) => message.role === "user")).toMatchObject({
+      content: [{ type: "text", text: "" }, image],
+    });
+    expect(await transcript(pi)).toEqual([
+      ["user", ""],
+      ["assistant", "An image."],
+    ]);
+  });
+
+  it("rejects images in a busy-state race when streamingBehavior is omitted", async () => {
+    const { pi, next } = await startRealPi({
+      tokensPerSecond: 200,
+      responses: [fauxAssistantMessage("word ".repeat(20_000))],
+    });
+    const started = next((record) => record.type === "message_update");
+    await pi.rpc.request({ type: "prompt", message: "Work." });
+    await started;
+    const { data, mimeType } = IMAGE_FIXTURE;
+    await expect(
+      pi.rpc.request({
+        type: "prompt",
+        message: "Look.",
+        images: [{ type: "image", data, mimeType }],
+      }),
+    ).rejects.toThrow("streamingBehavior");
+    expect((await pi.rpc.request({ type: "clear_queue" })).data).toEqual({
+      steering: [],
+      followUp: [],
+    });
+    const settled = next(isSettled);
+    await pi.rpc.request({ type: "abort" });
+    await settled;
   });
 
   it("aborts mid-stream and settles", async () => {

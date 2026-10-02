@@ -19,6 +19,8 @@ import {
   type ThreadActivity,
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
+import { FileIndexes } from "./fileIndex";
+import type { DraftImage } from "../shared/images";
 import { LiveThread, type ThreadListener } from "./liveThread";
 import { PiExitError } from "./piProcess";
 import { PiCommandError } from "./piRpc";
@@ -72,6 +74,7 @@ export class Workspace {
   /** Files the page may ask main to show in Finder: the ones Tondo offered it. */
   private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
+  private readonly files = new FileIndexes();
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
   /** The threads whose pi is running, starting, asking about trust or exited. */
@@ -166,6 +169,21 @@ export class Workspace {
       case "set-draft":
         this.run(() => this.setDraft(message.threadId, message.text));
         break;
+      case "set-draft-images":
+        this.run(() => {
+          this.row(message.threadId);
+          this.store.setDraftImages(message.threadId, message.images);
+          this.scheduleSidebar();
+        });
+        break;
+      case "list-files":
+        this.run(async () => {
+          const row = this.row(message.threadId);
+          const project = this.project(row.projectId);
+          const index = await this.files.read(project.path);
+          this.send({ v, type: "files", threadId: message.threadId, id: message.id, index });
+        });
+        break;
       case "set-sidebar-hidden":
         this.run(() => this.store.setUi("sidebarHidden", message.hidden));
         break;
@@ -176,9 +194,7 @@ export class Workspace {
         this.run(() => this.running(message.threadId).trust(message.trusted));
         break;
       case "prompt":
-        this.run(() =>
-          this.running(message.threadId).prompt(message.text, message.streamingBehavior),
-        );
+        this.run(() => this.prompt(message));
         break;
       case "stop":
         this.run(() => this.running(message.threadId).stop());
@@ -439,13 +455,7 @@ export class Workspace {
       restore: (text) => {
         const thread = current();
         if (!thread) return;
-        if (thread.visible) {
-          this.send({ v, type: "restore", threadId: thread.id, text });
-          return;
-        }
-        // The thread isn't on screen, so the text goes into its saved draft.
-        const { draft } = this.row(thread.id);
-        this.setDraft(thread.id, [text, draft].filter(Boolean).join("\n\n"));
+        this.restoreDraft(thread.id, text);
       },
       error: (message) => {
         const thread = current();
@@ -499,6 +509,48 @@ export class Workspace {
     if (!thread.visible && isBusy(before) && !isBusy(activity)) this.unread.add(thread.id);
   }
 
+  private restoreDraft(id: string, text: string): void {
+    if (id === this.visibleId) {
+      this.send({ v, type: "restore", threadId: id, text });
+    } else {
+      const row = this.store.thread(id);
+      if (row) this.setDraft(id, [text, row.draft].filter(Boolean).join("\n\n"));
+    }
+  }
+
+  /** Keep image drafts until pi acknowledges the prompt, including across a host crash. */
+  private async prompt(message: Extract<ClientMessage, { type: "prompt" }>): Promise<void> {
+    const { threadId, text, streamingBehavior, imageIds = [] } = message;
+    let sent = false;
+    try {
+      let thread: LiveThread;
+      let images: DraftImage[];
+      try {
+        thread = this.running(threadId);
+        images =
+          imageIds.length === 0
+            ? []
+            : this.store.draftImages(threadId).filter((image) => imageIds.includes(image.id));
+        if (images.length !== imageIds.length)
+          throw new Error("Some attached images are no longer in this draft. Attach them again.");
+      } catch (error) {
+        this.restoreDraft(threadId, text);
+        throw error;
+      }
+      await thread.prompt(text, streamingBehavior, images);
+      if (imageIds.length > 0) {
+        this.store.setDraftImages(
+          threadId,
+          this.store.draftImages(threadId).filter((image) => !imageIds.includes(image.id)),
+        );
+        this.scheduleSidebar();
+      }
+      sent = true;
+    } finally {
+      if (imageIds.length > 0) this.send({ v, type: "image-send-ended", threadId, imageIds, sent });
+    }
+  }
+
   private setDraft(id: string, text: string): void {
     const had = this.row(id).draft.trim() !== "";
     this.store.setDraft(id, text);
@@ -532,7 +584,7 @@ export class Workspace {
   private forgetIfUnused(id: string): void {
     const row = this.store.thread(id);
     const thread = this.live.get(id);
-    if (!row || row.pinned || row.archived || row.draft.trim()) return;
+    if (!row || row.pinned || row.archived || row.draft.trim() || row.hasImages) return;
     if (row.sessionFile !== null && existsSync(row.sessionFile)) return;
     // An extension command can wait on your answer before the thread has a message.
     if (thread && (thread.state.messages.length > 0 || thread.state.running || thread.waiting)) {
@@ -593,9 +645,18 @@ export class Workspace {
             thread: this.describe(thread),
             state: thread.snapshot(),
             draft: this.store.thread(thread.id)?.draft ?? "",
+            images: this.store.draftImages(thread.id),
             ui: thread.ui,
           }
-        : { v, type: "snapshot", thread: null, state: NO_THREAD, draft: "", ui: NO_EXTENSION_UI },
+        : {
+            v,
+            type: "snapshot",
+            thread: null,
+            state: NO_THREAD,
+            draft: "",
+            images: [],
+            ui: NO_EXTENSION_UI,
+          },
     );
   }
 
@@ -651,7 +712,7 @@ export class Workspace {
       archived: row?.archived ?? false,
       activity: activityOf(thread),
       unread: this.unread.has(id),
-      hasDraft: (row?.draft.trim() ?? "") !== "",
+      hasDraft: (row?.draft.trim() ?? "") !== "" || (row?.hasImages ?? false),
       // pi saves a name in the session file, which it writes with the first reply.
       canRename:
         summary !== undefined ||

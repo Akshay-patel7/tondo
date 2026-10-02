@@ -16,11 +16,13 @@ export interface Tondo {
   launchedAt: number;
   /** The app data folder, which holds settings.json and the logs. */
   profileDir: string;
-  /** Quits the app and deletes its profile. Calling it again does nothing. */
+  /** Quits the app and deletes a profile it created. Caller-owned profiles stay. Calling it again does nothing. */
   close(): Promise<void>;
 }
 
 export interface LaunchOptions {
+  /** A caller-owned profile, kept across close() for restart tests. Otherwise each launch gets a temporary one. */
+  profileDir?: string;
   /** Gives every JavaScript heap in the app V8's `gc()`, so a test can collect garbage. */
   exposeGc?: boolean;
   /** Extra environment variables for the app, such as TONDO_PI_ARGS. */
@@ -37,8 +39,9 @@ export async function launchTondo({
   exposeGc = false,
   env: extraEnv = {},
   settings,
+  profileDir: savedProfile,
 }: LaunchOptions = {}): Promise<Tondo> {
-  const profileDir = await mkdtemp(path.join(tmpdir(), "tondo-e2e-"));
+  const profileDir = savedProfile ?? (await mkdtemp(path.join(tmpdir(), "tondo-e2e-")));
   if (settings) await writeFile(path.join(profileDir, "settings.json"), JSON.stringify(settings));
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
@@ -62,7 +65,7 @@ export async function launchTondo({
     close() {
       closing ??= (async () => {
         await app.close();
-        await rm(profileDir, { recursive: true, force: true });
+        if (savedProfile === undefined) await rm(profileDir, { recursive: true, force: true });
       })();
       return closing;
     },

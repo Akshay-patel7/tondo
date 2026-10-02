@@ -21,6 +21,7 @@ import {
   type TrustInfo,
 } from "../shared/protocol";
 import { builtinIn } from "../shared/slashCommands";
+import type { DraftImage } from "../shared/images";
 import {
   afterPiExit,
   applyEvent,
@@ -110,6 +111,7 @@ export class LiveThread {
   private sessionName: string | undefined;
   private lastMessageAt: number | undefined;
   private waitingForTrust = false;
+  private imageSendPending = false;
   private piStatus: PiStatus = { state: "starting" };
   private thread: ThreadState = threadFromMessages([]);
   private onScreen = false;
@@ -197,6 +199,7 @@ export class LiveThread {
     const { running, compaction, retry, queue } = this.thread;
     return (
       this.piStatus.state === "starting" ||
+      this.imageSendPending ||
       running ||
       compaction !== null ||
       retry !== null ||
@@ -265,21 +268,57 @@ export class LiveThread {
     await this.open();
   }
 
-  /** Sends `text` to pi. While pi works, it joins the queue the way `streamingBehavior` says. */
-  async prompt(text: string, streamingBehavior: StreamingBehavior): Promise<void> {
-    const { pi } = this.ready();
+  /** Sends to pi. Text may join its queue; images require an idle pi and never queue. */
+  async prompt(
+    text: string,
+    streamingBehavior: StreamingBehavior,
+    images: readonly DraftImage[] = [],
+  ): Promise<void> {
+    let sendingImages = false;
     try {
+      const { pi, session } = this.ready();
+      if (images.length > 0) {
+        const commandName = text.startsWith("/") ? text.slice(1).split(/\s/, 1)[0] : undefined;
+        if (
+          session.commands.some(
+            (command) => command.source === "extension" && command.name === commandName,
+          )
+        )
+          throw new Error(
+            "Extension commands don't receive images. Run the command without attachments.",
+          );
+        if (this.busy) throw new Error("Wait for pi to finish before sending images.");
+        this.imageSendPending = true;
+        sendingImages = true;
+      }
       // pi runs its built-in commands only in its terminal UI. Over RPC they'd
       // reach the model as text, so the page runs its own versions instead.
       const builtin = builtinIn(text);
       if (builtin) throw new Error(`Tondo doesn't send pi's /${builtin.name} to pi.`);
       // pi ignores streamingBehavior when it's idle, so the page needn't know
       // whether pi finished just before you pressed Enter.
-      await ask(pi, { type: "prompt", message: text, streamingBehavior }, NO_DEADLINE);
+      // pi's queue APIs return text only. Omitting streamingBehavior makes pi
+      // reject images if it starts working between our check and this request.
+      const options =
+        images.length > 0
+          ? {
+              images: images.map(({ data, mimeType }) => ({
+                type: "image" as const,
+                data,
+                mimeType,
+              })),
+            }
+          : { streamingBehavior };
+      await ask(pi, { type: "prompt", message: text, ...options }, NO_DEADLINE);
     } catch (error) {
       // pi didn't take the text, so it goes back into the composer.
       this.restore([text]);
       throw error;
+    } finally {
+      if (sendingImages) {
+        this.imageSendPending = false;
+        this.changed();
+      }
     }
   }
 

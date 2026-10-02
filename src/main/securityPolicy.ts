@@ -11,16 +11,16 @@ export const APP_URL = `${APP_SCHEME}://${APP_HOST}/`;
  * Sent with every tondo:// response. The built renderer is one HTML file plus
  * hashed scripts, stylesheets and workers, so nothing needs inline scripts or
  * other origins. @pierre/diffs colors code with style attributes and themes
- * each diff with a <style> element, so styles may be inline. Images, fonts and
- * connections stay inside the app, so a style can't load anything from
- * outside it or send anything out.
+ * each diff with a <style> element, so styles may be inline. Image previews
+ * use page-owned blob URLs. Fonts and connections stay inside the app, so
+ * a style can't load anything from outside it or send anything out.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "worker-src 'self'",
-  "img-src 'self'",
+  "img-src 'self' blob:",
   "font-src 'self'",
   "connect-src 'self'",
   "base-uri 'none'",

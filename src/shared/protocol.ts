@@ -8,10 +8,12 @@ import type {
   SessionStats,
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
+import type { FileIndex } from "./files";
+import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -207,13 +209,22 @@ export type ClientMessage = Versioned<
   | { type: "archive-thread"; threadId: string; archived: boolean }
   /** What a thread's composer holds, which Tondo keeps across restarts. */
   | { type: "set-draft"; threadId: string; text: string }
+  | { type: "set-draft-images"; threadId: string; images: readonly DraftImage[] }
+  /** List project files for @ completion, correlated so stale scans can't replace a new menu. */
+  | { type: "list-files"; threadId: string; id: number }
   | { type: "set-sidebar-hidden"; hidden: boolean }
   /** Look for sessions pi wrote outside Tondo, such as in its own interface. */
   | { type: "refresh" }
   /** Your answer to whether to trust the thread's project. */
   | { type: "trust"; threadId: string; trusted: boolean }
-  /** Send `text` to pi. While pi works it joins the queue the way `streamingBehavior` says. */
-  | { type: "prompt"; threadId: string; text: string; streamingBehavior: StreamingBehavior }
+  /** Send to pi. Text may queue; imageIds select this thread's saved images for an idle-only send. */
+  | {
+      type: "prompt";
+      threadId: string;
+      text: string;
+      streamingBehavior: StreamingBehavior;
+      imageIds?: readonly string[];
+    }
   /** Escape: take pi's queue back into the composer, then stop pi. */
   | { type: "stop"; threadId: string }
   /** Alt+Up: take pi's queue back into the composer. */
@@ -255,6 +266,7 @@ export type HostMessage = Versioned<
       thread: OpenThread | null;
       state: ThreadState;
       draft: string;
+      images: readonly DraftImage[];
       ui: ExtensionUi;
     }
   /** Events that came due since the last batch, already applied to the host's copy of the thread. */
@@ -262,6 +274,9 @@ export type HostMessage = Versioned<
   /** The title, the trust question or pi's status of the thread on screen changed. */
   | { type: "status"; thread: OpenThread }
   | { type: "sidebar"; projects: SidebarProject[] }
+  | { type: "files"; threadId: string; id: number; index: FileIndex }
+  /** Images stay saved until pi accepts them. A failed send leaves them in the draft. */
+  | { type: "image-send-ended"; threadId: string; imageIds: readonly string[]; sent: boolean }
   /** The window's state that outlives a restart. The host sends it to each new port. */
   | { type: "ui"; sidebarHidden: boolean }
   /** Text for the thread's composer: messages taken back from pi's queue, or a prompt pi didn't take. */
@@ -425,6 +440,27 @@ export function parseClientMessage(data: unknown): ParseResult {
       }
       return exactly(message, { v, type, threadId: threadId as string, text });
     }
+    case "set-draft-images": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const error = imagesError(message.images);
+      if (error) return invalid(error);
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        images: message.images as DraftImage[],
+      });
+    }
+    case "list-files": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id } = message;
+      if (!Number.isSafeInteger(id) || (id as number) < 0) {
+        return invalid(`list-files: id must be a nonnegative integer, not ${describe(id)}`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string, id: id as number });
+    }
     case "set-sidebar-hidden": {
       const { hidden } = message;
       if (typeof hidden !== "boolean") {
@@ -446,8 +482,20 @@ export function parseClientMessage(data: unknown): ParseResult {
     case "prompt": {
       const bad = badThreadId(type, threadId);
       if (bad) return invalid(bad);
-      const { text, streamingBehavior } = message;
-      if (typeof text !== "string" || !text.trim()) {
+      const { text, streamingBehavior, imageIds } = message;
+      if (
+        imageIds !== undefined &&
+        (!Array.isArray(imageIds) ||
+          imageIds.length > IMAGE_COUNT ||
+          imageIds.some((id) => typeof id !== "string" || !/^[\w-]{1,100}$/.test(id)) ||
+          new Set(imageIds).size !== imageIds.length)
+      ) {
+        return invalid("prompt: invalid image ids");
+      }
+      if (
+        typeof text !== "string" ||
+        (!text.trim() && !(Array.isArray(imageIds) && imageIds.length > 0))
+      ) {
         return invalid(`prompt: text must be a string that isn't blank, not ${describe(text)}`);
       }
       if (streamingBehavior !== "steer" && streamingBehavior !== "followUp") {
@@ -461,6 +509,7 @@ export function parseClientMessage(data: unknown): ParseResult {
         threadId: threadId as string,
         text,
         streamingBehavior,
+        ...(imageIds === undefined ? {} : { imageIds: imageIds as string[] }),
       });
     }
     case "set-model": {
