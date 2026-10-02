@@ -254,6 +254,24 @@ The runner asserts timing budgets but only records memory. Against Stage 1 plus 
 
 At 4x slowdown, which does not gate, frame p95 was 33 and 24 ms, p99 34 and 33 ms, and input p95 48 and 40 ms. The longest time behind the end was 109 and 43 ms, and the switch took 370 ms. The colored diff had one 219 ms task. These scenarios type text into the new composer but do not measure maximum-size image attachments.
 
+Stage 9 added turn checkpoints and the diff panel. Its controlled run on 2026-10-02 passed all 17 automated tests but failed the manually checked memory budget. The window stayed on the built-in display at 2x and 120 Hz, with no display-placement override. Reports are in `.dev/perf/stage9-controlled-2026-10-02T21-58-26/`. Medians of three runs:
+
+| Metric | 1,000 tok/s | 200 tok/s | 10 streaming threads |
+|---|---|---|---|
+| Frame p95 / p99 | 9.2 / 9.3 ms | 9.2 / 9.3 ms | 9.2 / 9.3 ms |
+| Input to paint p95 | 32 ms | 24 ms | 24 ms |
+| Longest time behind the end | 24 ms | 16.6 ms | 27.9 ms |
+| Total footprint before / after | 281.77 / 510.44 MiB | 276.68 / 497.98 MiB | 376.52 / 504.02 MiB |
+| Renderer footprint before / after | 67.69 / 176.81 MiB | 66.50 / 181.06 MiB | 91.39 / 154.13 MiB |
+
+At 1,000 tok/s, the total before readings were 281.83, 274.30 and 281.77 MiB; after readings were 518.10, 510.44 and 507.19 MiB. The medians exceed the fixed 279.4 and 510.4 MiB limits. Stage 9 remains blocked. The before median at 200 tok/s passes, although its runs included one 281.38 MiB reading. No controlled memory comparison against main has attributed the misses to Stage 9.
+
+No normal-speed streaming task took over 50 ms. Switching to a running thread took 90.5 ms, cold start 235 ms and opening a project 256 ms. The port round trip p95 was 0.10 ms; snapshots of 1,000 and 5,000 messages took 1.5 and 6.8 ms. The 5,000-line colored diff showed rows in 332 ms and colors in 2.732 s; the 10,000-line uncolored diff showed rows in 339 ms. Neither had a task of 100 ms or more at normal speed.
+
+At 4x slowdown, which does not gate, frame p95 was 26.0 and 24.8 ms, p99 34.4 and 33.3 ms, and input p95 48 and 40 ms at 1,000 and 200 tok/s. The longest time behind the end was 84.2 and 42.8 ms, and switching took 404.8 ms. The colored diff had one 205 ms task.
+
+The earlier run in `.dev/perf/stage9-2026-10-02T21-16-02/` passed its memory medians but had an 87.5-second follow-scroll outlier. The user confirmed interacting with the app during that run. It is retained, but not used as the controlled acceptance result. Eleven traced comparisons, five on main and six on Stage 9, kept following with maximum lag of 20.5 ms. The controlled full run also kept its lag within budget without a scroll-code change. Interaction is not a proven cause because the original run did not log input events. The temporary diagnostic instrumentation was removed before the controlled full run.
+
 **Utility process layout.** See [Where pi runs](#where-pi-runs).
 
 ## Open questions
