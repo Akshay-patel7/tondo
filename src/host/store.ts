@@ -5,6 +5,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { DraftImage } from "../shared/images";
 
 /**
  * Migration n takes the store from version n to n + 1. A store's version is
@@ -31,6 +32,10 @@ export const MIGRATIONS: readonly string[] = [
    CREATE TABLE ui (
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL
+   ) STRICT;`,
+  `CREATE TABLE draft_images (
+     thread_id TEXT PRIMARY KEY REFERENCES threads (id) ON DELETE CASCADE,
+     images TEXT NOT NULL
    ) STRICT;`,
 ];
 
@@ -82,6 +87,7 @@ export interface StoredThread {
   readonly archived: boolean;
   /** What you were writing in the composer. */
   readonly draft: string;
+  readonly hasImages: boolean;
 }
 
 /** The window's state that outlives a restart. */
@@ -108,6 +114,7 @@ interface ThreadRow {
   pinned: number;
   archived: number;
   draft: string;
+  has_images: number;
 }
 
 function toProject(row: ProjectRow): StoredProject {
@@ -128,6 +135,7 @@ function toThread(row: ThreadRow): StoredThread {
     pinned: row.pinned === 1,
     archived: row.archived === 1,
     draft: row.draft,
+    hasImages: row.has_images === 1,
   };
 }
 
@@ -186,13 +194,19 @@ export class Store {
 
   threads(): StoredThread[] {
     const rows = this.db
-      .prepare("SELECT * FROM threads ORDER BY created_at, id")
+      .prepare(
+        "SELECT threads.*, EXISTS(SELECT 1 FROM draft_images WHERE thread_id = threads.id) AS has_images FROM threads ORDER BY created_at, id",
+      )
       .all() as unknown[];
     return (rows as ThreadRow[]).map(toThread);
   }
 
   thread(id: string): StoredThread | undefined {
-    const row = this.db.prepare("SELECT * FROM threads WHERE id = ?").get(id);
+    const row = this.db
+      .prepare(
+        "SELECT threads.*, EXISTS(SELECT 1 FROM draft_images WHERE thread_id = threads.id) AS has_images FROM threads WHERE id = ?",
+      )
+      .get(id);
     return row ? toThread(row as unknown as ThreadRow) : undefined;
   }
 
@@ -225,6 +239,26 @@ export class Store {
 
   setDraft(threadId: string, draft: string): void {
     this.update(threadId, "draft", draft);
+  }
+
+  /** Image bytes are read only for an open draft or a send, never for the sidebar. */
+  draftImages(threadId: string): DraftImage[] {
+    const row = this.db
+      .prepare("SELECT images FROM draft_images WHERE thread_id = ?")
+      .get(threadId) as { images: string } | undefined;
+    return row ? (JSON.parse(row.images) as DraftImage[]) : [];
+  }
+
+  setDraftImages(threadId: string, images: readonly DraftImage[]): void {
+    if (images.length === 0) {
+      this.db.prepare("DELETE FROM draft_images WHERE thread_id = ?").run(threadId);
+    } else {
+      this.db
+        .prepare(
+          "INSERT INTO draft_images (thread_id, images) VALUES (?, ?) ON CONFLICT (thread_id) DO UPDATE SET images = excluded.images",
+        )
+        .run(threadId, JSON.stringify(images));
+    }
   }
 
   ui(): StoredUi {

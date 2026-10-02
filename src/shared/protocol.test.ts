@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseClientMessage, PROTOCOL_VERSION } from "./protocol";
+import { IMAGE_FIXTURE } from "./imageFixture";
 
 const v = PROTOCOL_VERSION;
 
@@ -24,6 +25,16 @@ describe("parseClientMessage", () => {
       { v, type: "set-draft", threadId, text: "" },
       { v, type: "set-draft", threadId, text: "half a thought" },
       { v, type: "list-files", threadId, id: 1 },
+      { v, type: "set-draft-images", threadId, images: [IMAGE_FIXTURE] },
+      { v, type: "set-draft-images", threadId, images: [] },
+      {
+        v,
+        type: "prompt",
+        threadId,
+        text: "",
+        streamingBehavior: "steer",
+        imageIds: [IMAGE_FIXTURE.id],
+      },
       { v, type: "set-sidebar-hidden", hidden: true },
       { v, type: "refresh" },
       { v, type: "trust", threadId, trusted: true },
@@ -157,6 +168,40 @@ describe("parseClientMessage", () => {
     expect(
       rejection({ v, type: "list-files", threadId: "t", id: 1, project: "/outside" }),
     ).toContain("unexpected field");
+  });
+
+  it("rejects invalid attachment edits and image references", () => {
+    for (const images of [
+      null,
+      [{ ...IMAGE_FIXTURE, mimeType: "image/svg+xml" }],
+      [{ ...IMAGE_FIXTURE, data: "file:///etc/passwd" }],
+    ]) {
+      expect(parseClientMessage({ v, type: "set-draft-images", threadId: "t", images }).ok).toBe(
+        false,
+      );
+    }
+    for (const imageIds of [null, [1], [""], ["x", "x"], ["../x"], ["a", "b", "c", "d", "e"]]) {
+      expect(
+        rejection({
+          v,
+          type: "prompt",
+          threadId: "t",
+          text: "hi",
+          streamingBehavior: "steer",
+          imageIds,
+        }),
+      ).toContain("invalid image ids");
+    }
+    expect(
+      parseClientMessage({
+        v,
+        type: "prompt",
+        threadId: "t",
+        text: "",
+        streamingBehavior: "steer",
+        imageIds: [],
+      }).ok,
+    ).toBe(false);
   });
 
   it("rejects a prompt without text", () => {

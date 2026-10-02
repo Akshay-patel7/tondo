@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrate, MIGRATIONS, Store } from "./store";
+import { IMAGE_FIXTURE } from "../shared/imageFixture";
 
 let dir: string;
 beforeEach(() => {
@@ -27,7 +28,7 @@ describe("migrate", () => {
     const db = new DatabaseSync(":memory:");
     migrate(db);
     expect(version(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(["projects", "threads", "ui"]);
+    expect(tables(db)).toEqual(["draft_images", "projects", "threads", "ui"]);
   });
 
   it("does nothing to a store that's up to date", () => {
@@ -51,6 +52,20 @@ describe("migrate", () => {
       text: "kept",
       pinned: 0,
     });
+  });
+
+  it("migrates Stage 7 drafts without changing their text", () => {
+    const file = path.join(dir, "old.sqlite");
+    const db = new DatabaseSync(file);
+    migrate(db, MIGRATIONS.slice(0, 1));
+    db.exec(
+      "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, created_at, draft) VALUES ('t', 1, 2, 'kept');",
+    );
+    db.close();
+    const store = Store.open(file);
+    expect(store.thread("t")).toMatchObject({ draft: "kept", hasImages: false });
+    expect(store.draftImages("t")).toEqual([]);
+    store.close();
   });
 
   it("rolls a failed migration back whole and stays at the version before it", () => {
@@ -109,9 +124,30 @@ describe("Store", () => {
         pinned: true,
         archived: true,
         draft: "half a thought",
+        hasImages: false,
       },
     ]);
     expect(reopened.ui()).toEqual({ sidebarHidden: true, openThread: "t1" });
+    reopened.close();
+  });
+
+  it("keeps image bytes separate from sidebar rows and text saves, and removes them with the thread", () => {
+    const file = path.join(dir, "images.sqlite");
+    const store = Store.open(file);
+    const { id: projectId } = store.addProject("/work/a", 1);
+    store.addThread({ id: "t", projectId, sessionFile: null, createdAt: 2 });
+    store.setDraftImages("t", [IMAGE_FIXTURE]);
+    store.setDraft("t", "a new thought");
+    expect(store.thread("t")).toMatchObject({ hasImages: true, draft: "a new thought" });
+    expect(JSON.stringify(store.threads())).not.toContain(IMAGE_FIXTURE.data);
+    store.close();
+    const reopened = Store.open(file);
+    expect(reopened.draftImages("t")).toEqual([IMAGE_FIXTURE]);
+    reopened.setDraftImages("t", []);
+    expect(reopened.thread("t")?.hasImages).toBe(false);
+    reopened.setDraftImages("t", [IMAGE_FIXTURE]);
+    reopened.removeThread("t");
+    expect(reopened.draftImages("t")).toEqual([]);
     reopened.close();
   });
 

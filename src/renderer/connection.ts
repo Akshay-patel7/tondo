@@ -5,6 +5,14 @@
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
 import {
+  IMAGE_COUNT,
+  IMAGE_TOTAL_BYTES,
+  imageBytes,
+  imagesError,
+  type DraftImage,
+} from "../shared/images";
+import { readImages } from "./composer/images";
+import {
   PORT_MESSAGE,
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -16,7 +24,7 @@ import {
   type StreamingBehavior,
   type ThinkingLevel,
 } from "../shared/protocol";
-import { joinDrafts, setDraft, useDraft } from "./composer/draft";
+import { joinDrafts, setDraft, useDraft, useDraftImages } from "./composer/draft";
 import { showExtensionUi } from "./extensionUi/store";
 import { closeSheet, openSheet } from "./sheets/store";
 import { keepUnchanged } from "./sidebar/model";
@@ -45,6 +53,9 @@ export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => 
   id: 0,
   index: null,
 }));
+
+/** Per-thread so switching away during pi's acknowledgement doesn't unlock that draft. */
+export const useImageSends = create<ReadonlySet<string>>(() => new Set());
 
 const NO_PI: PiStatus = { state: "stopped" };
 
@@ -85,6 +96,7 @@ function receive(message: HostMessage): void {
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) {
         setDraft(message.draft);
+        useDraftImages.setState(message.images, true);
         closeSheet();
       }
       break;
@@ -103,6 +115,18 @@ function receive(message: HostMessage): void {
         useFiles.setState({ index: message.index });
       }
       break;
+    case "image-send-ended": {
+      const sending = new Set(useImageSends.getState());
+      sending.delete(message.threadId);
+      useImageSends.setState(sending, true);
+      if (message.sent && message.threadId === shownId()) {
+        useDraftImages.setState(
+          useDraftImages.getState().filter((image) => !message.imageIds.includes(image.id)),
+          true,
+        );
+      }
+      break;
+    }
     case "ui":
       useHost.setState({ sidebarHidden: message.sidebarHidden });
       break;
@@ -137,6 +161,7 @@ function receive(message: HostMessage): void {
 }
 
 function accept(next: MessagePort): void {
+  useImageSends.setState(new Set(), true);
   port?.close();
   port = next;
   next.addEventListener("message", (event: MessageEvent<HostMessage>) => receive(event.data));
@@ -251,8 +276,56 @@ export function listFiles(): void {
   send({ v, type: "list-files", threadId: requireShownId(), id });
 }
 
-export function prompt(text: string, streamingBehavior: StreamingBehavior): void {
-  send({ v, type: "prompt", threadId: requireShownId(), text, streamingBehavior });
+/** Attach to the thread that began the read, never to one opened while decoding. */
+export async function attachImages(
+  threadId: string | undefined,
+  files: readonly File[],
+): Promise<void> {
+  if (threadId === undefined || useImageSends.getState().has(threadId))
+    throw new Error("Wait for pi to accept these images before changing attachments.");
+  const attached = useDraftImages.getState();
+  if (files.length + attached.length > IMAGE_COUNT)
+    throw new Error(`Attach at most ${IMAGE_COUNT} images.`);
+  if (
+    files.reduce((sum, file) => sum + file.size, 0) +
+      attached.reduce((sum, image) => sum + imageBytes(image.data), 0) >
+    IMAGE_TOTAL_BYTES
+  )
+    throw new Error("Images must total 10 MiB or less.");
+  const added = await readImages(files);
+  if (shownId() !== threadId)
+    throw new Error(
+      "Images weren't attached because you switched threads. Paste or drop them again.",
+    );
+  if (useImageSends.getState().has(threadId))
+    throw new Error("Wait for pi to accept these images before changing attachments.");
+  const next = [...useDraftImages.getState(), ...added];
+  const error = imagesError(next);
+  if (error) throw new Error(error);
+  editImages(next);
+}
+
+export function editImages(images: readonly DraftImage[]): void {
+  useDraftImages.setState(images, true);
+  send({ v, type: "set-draft-images", threadId: requireShownId(), images });
+}
+
+export function prompt(
+  text: string,
+  streamingBehavior: StreamingBehavior,
+  images: readonly DraftImage[] = [],
+): void {
+  const threadId = requireShownId();
+  if (images.length > 0)
+    useImageSends.setState(new Set([...useImageSends.getState(), threadId]), true);
+  send({
+    v,
+    type: "prompt",
+    threadId,
+    text,
+    streamingBehavior,
+    ...(images.length > 0 ? { imageIds: images.map((image) => image.id) } : {}),
+  });
 }
 
 export function stop(): void {

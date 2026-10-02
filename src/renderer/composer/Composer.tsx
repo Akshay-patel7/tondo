@@ -5,21 +5,27 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/protocol";
 import { builtinIn } from "../../shared/slashCommands";
 import {
+  attachImages,
   dequeue,
   editDraft,
+  editImages,
   listFiles,
   prompt,
   stop,
   useFiles,
   usePi,
   useHost,
+  useImageSends,
 } from "../connection";
+import { IMAGE_COUNT, type DraftImage } from "../../shared/images";
+import { addToast } from "../toasts/store";
+import { ImagePreview } from "./ImagePreview";
 import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
 import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
 import { useThread } from "../thread/store";
 import { ContextMeter } from "./ContextMeter";
-import { useDraft } from "./draft";
+import { useDraft, useDraftImages } from "./draft";
 import { FileMenu, fileOptionId } from "./FileMenu";
 import { promptHistory, stepHistory, type HistoryPosition } from "./history";
 import { composerAction } from "./keys";
@@ -37,13 +43,26 @@ function placeholder(pi: PiStatus, working: boolean): string {
     : "Message pi, or type / for commands";
 }
 
+function extensionCommand(text: string, pi: PiStatus): boolean {
+  if (pi.state !== "ready" || !text.startsWith("/")) return false;
+  const name = text.slice(1).split(/\s/, 1)[0];
+  return pi.session.commands.some(
+    (command) => command.source === "extension" && command.name === name,
+  );
+}
+
 /**
  * Runs what you wrote: one of pi's built-in commands, which Tondo runs itself,
  * or a message for pi, if pi is there to take it.
  */
-function submit(text: string, streamingBehavior: StreamingBehavior, pi: PiStatus): void {
+function submit(
+  text: string,
+  streamingBehavior: StreamingBehavior,
+  pi: PiStatus,
+  images: readonly DraftImage[],
+): void {
   const message = text.trim();
-  if (message === "") return;
+  if (message === "" && images.length === 0) return;
   const builtin = builtinIn(message);
   if (!builtin && pi.state !== "ready") return;
   // Clearing first saves the empty draft ahead of the prompt, so the host
@@ -51,7 +70,8 @@ function submit(text: string, streamingBehavior: StreamingBehavior, pi: PiStatus
   // clears the composer too, as in pi's terminal UI.
   editDraft("");
   if (builtin) runBuiltin(builtin.name, builtin.args);
-  else prompt(message, streamingBehavior);
+  // pi's extension commands receive arguments, not attached images.
+  else prompt(message, streamingBehavior, extensionCommand(message, pi) ? [] : images);
 }
 
 /** `text` with the command it starts with replaced by `item`'s, and where the caret goes. */
@@ -67,9 +87,16 @@ function complete(text: string, caret: number, item: SlashItem): { text: string;
 /** `hidden` while an extension's dialog takes the composer's place. */
 export function Composer({ hidden }: { hidden: boolean }) {
   const draft = useDraft((text) => text);
+  const images = useDraftImages((items) => items);
+  const threadId = useHost((host) => host.thread?.id);
   const connection = useHost((host) => host.connection);
+  const sendingImages = useImageSends((sending) => threadId !== undefined && sending.has(threadId));
+  const [loadingImages, setLoadingImages] = useState(0);
+  const fileInput = useRef<HTMLInputElement>(null);
   const pi = usePi();
-  const working = useThread((thread) => thread.running || thread.compaction !== null);
+  const working = useThread(
+    (thread) => thread.running || thread.compaction !== null || thread.retry !== null,
+  );
   const queued = useThread(
     (thread) => thread.queue.steering.length + thread.queue.followUp.length > 0,
   );
@@ -84,7 +111,15 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
 
   const text = draft.trim();
-  const canSend = text !== "" && (pi.state === "ready" || builtinIn(text) !== null);
+  const locked = loadingImages > 0 || sendingImages;
+  const canSend =
+    !locked &&
+    (text !== "" || images.length > 0) &&
+    (pi.state === "ready" || builtinIn(text) !== null) &&
+    (images.length === 0 ||
+      !(working || queued) ||
+      builtinIn(text) !== null ||
+      extensionCommand(text, pi));
   const commands = pi.state === "ready" ? pi.session.commands : NO_COMMANDS;
   const menuHidden = hidden || dismissedAt === draft || selection.from !== selection.to;
   const query = menuHidden ? null : slashQuery(draft, caret);
@@ -111,13 +146,37 @@ export function Composer({ hidden }: { hidden: boolean }) {
     wasHidden.current = hidden;
   }, [hidden]);
 
-  const send = (streamingBehavior: StreamingBehavior) => submit(draft, streamingBehavior, pi);
+  const submitText = (source: string, behavior: StreamingBehavior) => {
+    if (
+      locked ||
+      (images.length > 0 &&
+        (working || queued) &&
+        !builtinIn(source.trim()) &&
+        !extensionCommand(source.trim(), pi))
+    )
+      return;
+    submit(source, behavior, pi, images);
+  };
+  const send = (streamingBehavior: StreamingBehavior) => submitText(draft, streamingBehavior);
+
+  const attach = (files: readonly File[]) => {
+    if (files.length === 0) return;
+    setLoadingImages((count) => count + 1);
+    void attachImages(threadId, files)
+      .catch((error: unknown) =>
+        addToast({
+          level: "error",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
+      .finally(() => setLoadingImages((count) => count - 1));
+  };
 
   /** Puts the picked command in the composer. With `run`, sends it too, as Enter does in pi's menu. */
   const pick = (item: SlashItem, run: boolean) => {
     const completed = complete(draft, caret, item);
     if (run) {
-      submit(completed.text, "steer", pi);
+      submitText(completed.text, "steer");
       return;
     }
     setHighlighted(0);
@@ -205,6 +264,21 @@ export function Composer({ hidden }: { hidden: boolean }) {
   return (
     <div
       hidden={hidden}
+      onPasteCapture={(event) => {
+        if (event.clipboardData.files.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void attach([...event.clipboardData.files]);
+      }}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDropCapture={(event) => {
+        if (event.dataTransfer.files.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void attach([...event.dataTransfer.files]);
+      }}
       className="rounded-panel border border-border bg-card shadow-composer focus-within:border-ring"
     >
       {query === null ? null : (
@@ -226,6 +300,34 @@ export function Composer({ hidden }: { hidden: boolean }) {
           onPick={pickFile}
         />
       ) : null}
+      {images.length > 0 ? (
+        <div aria-label="Attached images" className="flex flex-wrap gap-3 px-4 pt-3">
+          {images.map((image) => (
+            <div key={image.id} className="flex flex-col gap-1">
+              <ImagePreview data={image.data} mimeType={image.mimeType} name={image.name} />
+              <button
+                type="button"
+                aria-label={`Remove ${image.name}`}
+                disabled={sendingImages}
+                onClick={() => editImages(images.filter((item) => item.id !== image.id))}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {loadingImages > 0 ? (
+        <p role="status" className="px-4 pt-2 text-xs text-muted-foreground">
+          Reading images…
+        </p>
+      ) : null}
+      {images.length > 0 && (working || queued) ? (
+        <p role="status" className="px-4 pt-2 text-xs text-muted-foreground">
+          Images stay in your draft until pi finishes. Only text can be queued.
+        </p>
+      ) : null}
       <PromptEditor
         ref={editor}
         menuId={query !== null || listingFiles ? menuId : undefined}
@@ -241,6 +343,28 @@ export function Composer({ hidden }: { hidden: boolean }) {
         placeholder={placeholder(pi, working)}
       />
       <div className="flex items-center gap-1 px-2 pb-2">
+        <input
+          ref={fileInput}
+          type="file"
+          aria-label="Choose images"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          hidden
+          onChange={(event) => {
+            void attach([...(event.currentTarget.files ?? [])]);
+            event.currentTarget.value = "";
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Attach images"
+          title="Attach PNG, JPEG, GIF or WebP images"
+          disabled={locked || images.length >= IMAGE_COUNT}
+          onClick={() => fileInput.current?.click()}
+          className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted disabled:opacity-30"
+        >
+          +
+        </button>
         {pi.state === "ready" ? (
           <>
             <ModelPicker session={pi.session} />
@@ -264,7 +388,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
               </svg>
             </button>
           ) : null}
-          {working && text === "" ? null : (
+          {working && text === "" && images.length === 0 ? null : (
             <button
               type="button"
               aria-label="Send message"

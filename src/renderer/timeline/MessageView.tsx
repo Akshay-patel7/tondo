@@ -4,6 +4,7 @@ import type { AssistantMessage, PiMessage, ToolResultMessage } from "../../share
 import { outputText } from "../tools/model";
 import { OutputView } from "../tools/OutputView";
 import { ToolCard } from "../tools/ToolCard";
+import { ImagePreview } from "../composer/ImagePreview";
 
 /** Code blocks are highlighted by Shiki with its JavaScript regex engine, so no WASM. */
 const MARKDOWN_PLUGINS = { code };
@@ -13,7 +14,10 @@ type ContentBlock = AssistantMessage["content"][number];
 
 function plainText(content: UserContent): string {
   if (typeof content === "string") return content;
-  return content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n");
+  return content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 
 /** `streaming` is true while pi is still writing the message. */
@@ -22,9 +26,26 @@ export function MessageView({ message, streaming }: { message: PiMessage; stream
     case "user":
       return (
         <div className="flex justify-end py-3">
-          <p className="max-w-[80%] rounded-panel bg-message px-4 py-2 whitespace-pre-wrap text-message-foreground">
-            {plainText(message.content)}
-          </p>
+          <div className="max-w-[80%] rounded-panel bg-message px-4 py-2 whitespace-pre-wrap text-message-foreground">
+            <p>{plainText(message.content)}</p>
+            {typeof message.content !== "string" &&
+            message.content.some((part) => part.type === "image") ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {message.content
+                  .filter((part) => part.type === "image")
+                  .map((image, index) => (
+                    // pi's content blocks keep their positions in a finished message.
+                    <ImagePreview
+                      // oxlint-disable-next-line react/no-array-index-key
+                      key={index}
+                      data={image.data}
+                      mimeType={image.mimeType}
+                      name={`Image ${index + 1}`}
+                    />
+                  ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       );
     case "assistant":
