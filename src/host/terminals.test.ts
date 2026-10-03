@@ -108,6 +108,31 @@ describe("terminal sessions", () => {
     expect(groups).toHaveBeenLastCalledWith([]);
   });
 
+  it("keeps a naturally exited terminal until explicitly closed", async () => {
+    const { terminals, messages, open } = setup();
+    const session = await open();
+    fake.exit({ exitCode: 0 });
+    expect(messages.at(-1)).toMatchObject({ terminal: { status: "exited", exitCode: 0 } });
+    expect(terminals.has(session.threadId)).toBe(true);
+    await terminals.close(session.threadId);
+    expect(messages.at(-1)).toMatchObject({ terminal: null });
+  });
+
+  it.each(["closed", "replaced"])("ignores late exits from %s sessions", async (state) => {
+    const { terminals, messages, open } = setup();
+    const session = await open();
+    const exit = fake.exit;
+    await terminals.close(session.threadId);
+    if (state === "replaced") await open();
+    const count = messages.length;
+
+    // The process group can disappear before node-pty delivers its exit callback.
+    exit({ exitCode: 0 });
+    expect(messages).toHaveLength(count);
+    expect(terminals.has(session.threadId)).toBe(state === "replaced");
+    await terminals.close(session.threadId);
+  });
+
   it("cancels a pending launch when closed before environment capture finishes", async () => {
     const gate = Promise.withResolvers<typeof launch>();
     const { terminals, messages } = setup(() => gate.promise);

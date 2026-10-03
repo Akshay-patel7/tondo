@@ -849,7 +849,9 @@ The final macOS checks passed typecheck, lint, formatting, 456 unit tests in 49 
 
 Fresh-clone verification then caught a queue test using the Stop button as proof that pi was running. Stop also appears during checkpoint preparation. The steering and queue-recall tests now wait for the tool's running state before sending queued prompts; sixty focused repetitions passed. This changes tests only, not the measured application. The first clone's 65-pass/1-fail E2E log is retained in `.dev/stage11-fix/landing/tip-e2e.log`.
 
-The full performance run passed 18 checks in 13.0 minutes, including the new memory assertions. It used the built-in 2x/120 Hz display, the original measurement helper and no placement override. Artifacts are in `.dev/perf/stage11-ci-memory-2026-10-03T07-00-41-978Z/`.
+The first PR #17 CI run passed all 66 E2E tests on Ubuntu but left a closed provider-sign-in terminal visible on macOS. The PTY's exit event can arrive after process-group cleanup and session removal; publishing that late event reopened the drawer with `Exited (0)`. New unit tests force that ordering for both removed and replaced sessions and failed before the fix. Terminal state now publishes only while the same session is still registered. A naturally exited terminal still retains its output until explicitly closed.
+
+The initial full performance run passed 18 checks in 13.0 minutes, including the new memory assertions. It used the built-in 2x/120 Hz display, the original measurement helper and no placement override. Artifacts are in `.dev/perf/stage11-ci-memory-2026-10-03T07-00-41-978Z/`.
 
 | Metric | Unchanged limit | Final median |
 |---|---|---|
