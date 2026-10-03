@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { IMAGE_FIXTURE } from "../src/shared/imageFixture";
 import { bringToFront, hostPid, type Tondo } from "./launch";
 import {
   addProject,
@@ -197,8 +198,10 @@ test("queued work shares one checkpoint turn and an aborted turn keeps its edits
 });
 
 /** A real clean filter, held by a file-system event rather than a sleep. */
-function pauseCapture(): { marker: string; release: string } {
+function pauseCapture(): { marker: string; release: string; arm: string } {
   git("init", "-q");
+  const arm = path.join(workDir, "pause-filter");
+  writeFileSync(arm, "");
   const marker = path.join(workDir, "filter-started.json");
   const release = path.join(workDir, "release");
   const script = path.join(workDir, "filter.cjs");
@@ -210,6 +213,7 @@ let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
+  if (!fs.existsSync(${JSON.stringify(arm)}) || fs.existsSync(release)) { process.stdout.write(input); return; }
   const watcher = fs.watch(${JSON.stringify(workDir)}, () => { if (fs.existsSync(release)) { watcher.close(); process.stdout.write(input); } });
   fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ git: process.ppid, filter: process.pid, index: process.env.GIT_INDEX_FILE }));
 });\n`,
@@ -218,8 +222,58 @@ process.stdin.on('end', () => {
   git("config", "filter.pause.required", "true");
   writeFileSync(path.join(project, ".gitattributes"), "file.txt filter=pause\n");
   writeFileSync(path.join(project, "file.txt"), "before\n");
-  return { marker, release };
+  return { marker, release, arm };
 }
+
+test("an image prompt waits for a stopped turn's completion checkpoint", async () => {
+  const { marker, release, arm } = pauseCapture();
+  rmSync(arm);
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      tokensPerSecond: 200,
+      responses: [reply("word ".repeat(20_000)), reply("Saw the image after the checkpoint.")],
+    },
+  });
+  const { page } = tondo;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Start a turn.");
+  await expect(page.locator("[data-streaming]")).toContainText("word");
+  // The baseline passed. Hold only the completion capture, after Stop.
+  writeFileSync(path.join(project, "file.txt"), "after\n");
+  writeFileSync(arm, "");
+  await composer(page).press("Escape");
+  try {
+    await expect.poll(() => existsSync(marker)).toBe(true);
+    await waitForIdle(page);
+    await page.getByLabel("Choose images").setInputFiles({
+      name: IMAGE_FIXTURE.name,
+      mimeType: IMAGE_FIXTURE.mimeType,
+      buffer: Buffer.from(IMAGE_FIXTURE.data, "base64"),
+    });
+    await expect(page.getByLabel("Attached images", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    // Host-side prompt preparation holds the image until the old capture ends.
+    await expect(page.getByRole("button", { name: "Stop pi", exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Saw the image after the checkpoint.", { exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    writeFileSync(release, "");
+  }
+  await expect(
+    page.getByText("Saw the image after the checkpoint.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Attached images", { exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Preview Image 1", exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
 
 test("Escape during baseline capture cancels the pending prompt before it reaches pi", async () => {
   const { marker, release } = pauseCapture();
