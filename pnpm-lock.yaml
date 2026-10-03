@@ -165,6 +165,9 @@ settings:
 overrides:
   '@pierre/diffs>@shikijs/transformers': 3.23.0
 
+patchedDependencies:
+  '@streamdown/code@1.1.1': 94009d35027b5e41c8d42977755a366aa74163f06882e1288eb84114fb4e4095
+
 importers:
 
   .:
@@ -186,7 +189,7 @@ importers:
         version: 1.63.0
       '@streamdown/code':
         specifier: 1.1.1
-        version: 1.1.1(react@19.3.0)
+        version: 1.1.1(patch_hash=94009d35027b5e41c8d42977755a366aa74163f06882e1288eb84114fb4e4095)(react@19.3.0)
       '@tailwindcss/vite':
         specifier: 4.3.3
         version: 4.3.3(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0))
@@ -3778,7 +3781,7 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@streamdown/code@1.1.1(react@19.3.0)':
+  '@streamdown/code@1.1.1(patch_hash=94009d35027b5e41c8d42977755a366aa74163f06882e1288eb84114fb4e4095)(react@19.3.0)':
     dependencies:
       react: 19.3.0
       shiki: 3.23.0
