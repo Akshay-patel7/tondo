@@ -4,6 +4,7 @@
 // only what changes.
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
+import type { GitAction, GitStatus } from "../shared/git";
 import type { CheckpointDiff, CheckpointTurn } from "../shared/checkpoints";
 import {
   IMAGE_COUNT,
@@ -65,6 +66,46 @@ export const useCheckpoints = create<{
   turn: number | null;
   diff: CheckpointDiff | null;
 }>()(() => ({ turns: [], shared: false, unavailable: null, id: 0, turn: null, diff: null }));
+
+export const useGit = create<{ status: GitStatus | null; error: string | null; busy: boolean }>()(
+  () => ({ status: null, error: null, busy: false }),
+);
+let gitRequest = 0;
+const gitRequests = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
+
+export function refreshGit(): void {
+  send({ v, type: "git-refresh", threadId: requireShownId() });
+}
+
+export function performGit(action: GitAction, expectedBranch: string | null): Promise<void> {
+  if (useHost.getState().connection !== "connected")
+    return Promise.reject(
+      new Error("The host is reconnecting. Review Git state after it returns."),
+    );
+  const id = ++gitRequest;
+  useGit.setState({ busy: true });
+  return new Promise((resolve, reject) => {
+    gitRequests.set(id, { resolve, reject });
+    try {
+      send({ v, type: "git-action", threadId: requireShownId(), id, expectedBranch, action });
+    } catch (error) {
+      gitRequests.delete(id);
+      useGit.setState({ busy: gitRequests.size > 0 });
+      reject(error);
+    }
+  });
+}
+
+function disconnectGit(): void {
+  for (const pending of gitRequests.values())
+    pending.reject(
+      new Error(
+        "The host disconnected. Review Git state before retrying; the action may have completed.",
+      ),
+    );
+  gitRequests.clear();
+  useGit.setState({ status: null, error: null, busy: false });
+}
 
 /** Per-thread so switching away during pi's acknowledgement doesn't unlock that draft. */
 export const useImageSends = create<ReadonlySet<string>>(() => new Set());
@@ -132,6 +173,18 @@ function receive(message: HostMessage): void {
     return;
   }
   switch (message.type) {
+    case "git-status":
+      if (message.threadId === shownId())
+        useGit.setState({ status: message.status, error: message.error });
+      break;
+    case "git-result": {
+      const pending = gitRequests.get(message.id);
+      gitRequests.delete(message.id);
+      useGit.setState({ busy: gitRequests.size > 0 });
+      if (message.error) pending?.reject(new Error(message.error));
+      else pending?.resolve();
+      break;
+    }
     case "terminal-state":
     case "terminal-output":
       receiveTerminal(message);
@@ -143,6 +196,7 @@ function receive(message: HostMessage): void {
       useHost.setState({ connection: "connected", thread: message.thread });
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) {
+        useGit.setState({ status: null, error: null });
         setDraft(message.draft);
         useDraftImages.setState(message.images, true);
         closeSheet();
@@ -239,12 +293,16 @@ function accept(next: MessagePort): void {
     id: id + 1,
   }));
   useImageSends.setState(new Set(), true);
+  disconnectGit();
   port?.close();
   port = next;
   next.addEventListener("message", (event: MessageEvent<HostMessage>) => receive(event.data));
   // Electron closes the port when the host dies. Main restarts it and sends a new port.
   next.addEventListener("close", () => {
-    if (port === next) useHost.setState({ connection: "reconnecting" });
+    if (port === next) {
+      useHost.setState({ connection: "reconnecting" });
+      disconnectGit();
+    }
   });
   next.start();
   saveDraft();

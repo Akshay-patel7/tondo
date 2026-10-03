@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from "react";
 import { Banners } from "./banners/Banners";
+import { BranchToolbar } from "./git/BranchToolbar";
 import { runAppCommand } from "./commands";
 import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
@@ -168,6 +169,7 @@ function Thread() {
             <Composer key={threadId} hidden={asking} />
             <Widgets placement="belowEditor" />
             <StatusLine />
+            <BranchToolbar key={`git:${threadId}`} />
           </div>
         </footer>
         {threadId && terminal ? (

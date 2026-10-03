@@ -6,6 +6,10 @@
 // ones you left.
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import path from "node:path";
+import { Git } from "./git";
+import { GitCommands } from "./gitCommand";
+import { inside, Worktrees } from "./worktrees";
 import {
   NO_EXTENSION_UI,
   PROTOCOL_VERSION,
@@ -48,8 +52,17 @@ interface Found {
 
 /** The most a notification's body says of a dialog's title. */
 const NOTIFICATION_CHARS = 200;
+const GIT_SUCCEEDED = {
+  switch: "Changed branch.",
+  "create-branch": "Changed branch.",
+  commit: "Committed changes.",
+  push: "Pushed branch.",
+  "create-pr": "Created pull request.",
+};
 
 export interface WorkspaceOptions {
+  readonly userData: string;
+  readonly gitGroups: (pgids: number[]) => void;
   readonly store: Store;
   readonly supervisor: Supervisor;
   readonly limits: PoolLimits;
@@ -80,6 +93,14 @@ export class Workspace {
   private readonly index = new SessionIndex();
   private readonly files = new FileIndexes();
   private readonly terminals: Terminals;
+  private readonly git: Git;
+  private readonly worktrees: Worktrees;
+  private gitTimer: NodeJS.Timeout | undefined;
+  private gitGeneration = 0;
+  private gitConnected = false;
+  private gitMutation = false;
+  private gitReading: Promise<void> = Promise.resolve();
+  private lastGit = "";
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
   /** The threads whose pi is running, starting, asking about trust or exited. */
@@ -107,13 +128,16 @@ export class Workspace {
     this.attention = options.attention;
     this.copy = options.copy;
     this.reveal = options.reveal;
+    this.git = new Git(new GitCommands(() => this.supervisor.captureLoginEnv(), options.gitGroups));
+    this.worktrees = new Worktrees(path.join(options.userData, "worktrees"), this.store, this.git);
     this.terminals = new Terminals(
       async (threadId, kind) => {
         const row = this.row(threadId);
-        const project = this.project(row.projectId);
-        if (await this.supervisor.needsTrustAnswer(project.path))
+        const cwd = this.checkout(row);
+        if (this.gitMutation) throw new Error("Wait for the Git action before opening a terminal.");
+        if (await this.supervisor.needsTrustAnswer(cwd))
           throw new Error("Answer the project's trust question before opening its terminal.");
-        return this.supervisor.terminalLaunch(project.path, kind);
+        return this.supervisor.terminalLaunch(cwd, kind);
       },
       this.send,
       options.terminalGroups,
@@ -121,6 +145,9 @@ export class Workspace {
   }
 
   disconnected(): void {
+    this.gitConnected = false;
+    this.gitGeneration++;
+    clearTimeout(this.gitTimer);
     this.terminals.detachAll();
   }
 
@@ -130,14 +157,17 @@ export class Workspace {
 
   /** You clicked a notification about the thread. */
   openThread(threadId: string): void {
+    if (this.gitMutation) return;
     this.run(() => this.open(threadId));
   }
 
   /** Reopens the thread you had open, then reads every project's sessions. */
-  start(): Promise<void> {
+  async start(): Promise<void> {
+    await this.worktrees.cleanup((message) => this.toast("warning", message));
     const { openThread } = this.store.ui();
     if (openThread !== null && this.store.thread(openThread)) this.run(() => this.open(openThread));
-    return this.refresh().then(() => this.run(() => this.forgetUnused()));
+    await this.refresh();
+    this.run(() => this.forgetUnused());
   }
 
   /** Sends a new page everything it shows. */
@@ -147,10 +177,35 @@ export class Workspace {
     this.lastSidebar = "";
     this.sendSidebar();
     this.terminals.greet();
+    this.gitConnected = true;
+    this.refreshGit();
   }
 
   handle(message: ClientMessage): void {
+    // No new pi or extension work may race checkout changes. Existing turns are checked below.
+    if (
+      this.gitMutation &&
+      [
+        "new-thread",
+        "open-thread",
+        "restart",
+        "trust",
+        "rename-thread",
+        "compact",
+        "reload",
+        "remove-project",
+      ].includes(message.type)
+    ) {
+      this.toast("warning", "Wait for the Git action to finish.");
+      return;
+    }
     switch (message.type) {
+      case "git-refresh":
+        if (message.threadId === this.visibleId) this.refreshGit(true);
+        break;
+      case "git-action":
+        void this.gitAction(message);
+        break;
       case "terminal-open":
       case "terminal-close":
       case "terminal-attach":
@@ -231,8 +286,7 @@ export class Workspace {
       case "list-files":
         this.run(async () => {
           const row = this.row(message.threadId);
-          const project = this.project(row.projectId);
-          const index = await this.files.read(project.path);
+          const index = await this.files.read(this.checkout(row));
           this.send({ v, type: "files", threadId: message.threadId, id: message.id, index });
         });
         break;
@@ -345,6 +399,10 @@ export class Workspace {
   projectChosen(folder: string | null): void {
     this.choosing = false;
     if (folder === null) return;
+    if (this.gitMutation) {
+      this.toast("warning", "Wait for the Git action, then add the project again.");
+      return;
+    }
     this.run(async () => {
       const project = this.store.addProject(canonical(folder), Date.now());
       this.newThread(project.id);
@@ -374,8 +432,26 @@ export class Workspace {
   private async indexProjects(projects: readonly StoredProject[]): Promise<void> {
     const results = await Promise.allSettled(
       projects.map(async (project) => {
-        const folder = await this.supervisor.sessionFolder(project.path);
-        return this.index.list(project.path, folder);
+        const paths = new Set([
+          project.path,
+          ...this.store
+            .threads()
+            .filter((row) => row.projectId === project.id)
+            .map((row) => this.checkout(row)),
+        ]);
+        const sessions = await Promise.all(
+          [...paths].map(async (cwd) => {
+            const folder = await this.supervisor.sessionFolder(cwd);
+            const summaries = await this.index.list(cwd, folder);
+            if (cwd === project.path) return summaries;
+            // A managed checkout belongs to one thread. Do not reopen unrelated
+            // sessions found there in the project's local checkout.
+            return summaries.filter(
+              (session) => this.worktrees.forThread(session.id)?.path === cwd,
+            );
+          }),
+        );
+        return sessions.flat();
       }),
     );
     const found = new Map(this.found);
@@ -454,6 +530,7 @@ export class Workspace {
     thread.lastUsed = Date.now();
     this.store.setUi("openThread", id);
     this.sendSnapshot();
+    this.refreshGit();
     if (previous) this.run(() => this.forgetIfUnused(previous.id));
     this.sendSidebar();
     this.checkPool();
@@ -463,12 +540,13 @@ export class Workspace {
   private startThread(id: string): LiveThread {
     const row = this.row(id);
     const project = this.project(row.projectId);
+    const cwd = this.checkout(row);
     const thread: LiveThread = new LiveThread(
-      project,
+      { id: project.id, path: cwd },
       { id, file: row.sessionFile },
       this.supervisor,
       this.listen(() => thread),
-      new TurnCheckpoints(this.store, id, project.path, () => {
+      new TurnCheckpoints(this.store, id, cwd, () => {
         const current = this.live.get(id);
         if (current?.visible) this.run(() => this.sendCheckpoints(current));
         this.checkPool();
@@ -606,6 +684,7 @@ export class Workspace {
       let images: DraftImage[];
       try {
         thread = this.running(threadId);
+        if (this.gitMutation) throw new Error("Wait for the Git action before sending a prompt.");
         images =
           imageIds.length === 0
             ? []
@@ -636,8 +715,152 @@ export class Workspace {
     if (had !== (text.trim() !== "")) this.scheduleSidebar();
   }
 
+  /** Every tool for a worktree thread uses its checkout, not the sidebar project's folder. */
+  private checkout(row: StoredThread): string {
+    return this.worktrees.forThread(row.id)?.path ?? this.project(row.projectId).path;
+  }
+
+  private refreshGit(fresh = false): void {
+    clearTimeout(this.gitTimer);
+    const generation = ++this.gitGeneration;
+    this.lastGit = "";
+    if (!this.gitConnected || this.gitMutation || this.visibleId === null) return;
+    const id = this.visibleId;
+    this.gitReading = this.gitReading.then(() => this.pollGit(id, generation, fresh));
+  }
+
+  private async pollGit(id: string, generation: number, fresh: boolean): Promise<void> {
+    if (generation !== this.gitGeneration || this.gitMutation) return;
+    let status = null;
+    let error = null;
+    try {
+      status = await this.git.status(this.checkout(this.row(id)), true, fresh);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (generation !== this.gitGeneration || this.visibleId !== id || !this.gitConnected) return;
+    const json = JSON.stringify({ status, error });
+    if (json !== this.lastGit) {
+      this.lastGit = json;
+      this.send({ v, type: "git-status", threadId: id, status, error });
+    }
+    this.gitTimer = setTimeout(() => {
+      this.gitReading = this.gitReading.then(() => this.pollGit(id, generation, false));
+    }, 2_000);
+  }
+
+  private async gitAction(message: Extract<ClientMessage, { type: "git-action" }>): Promise<void> {
+    const { threadId, id, action, expectedBranch } = message;
+    let error: string | null = null;
+    let locked = false;
+    try {
+      if (threadId !== this.visibleId)
+        throw new Error("Open the thread before changing its checkout.");
+      if (this.gitMutation) throw new Error("Another Git action is still running.");
+      this.gitMutation = locked = true;
+      this.gitGeneration++;
+      clearTimeout(this.gitTimer);
+      // A pre-action gh poll must not cache a stale PR after create completes.
+      await this.gitReading;
+      const row = this.row(threadId);
+      const cwd = this.checkout(row);
+      const status = await this.git.status(cwd, false);
+      if (!status.root) throw new Error("This folder is not a Git checkout.");
+      if (status.branch !== expectedBranch)
+        throw new Error("The branch changed. Review it and try again.");
+      const members = [...this.live.values()];
+      const roots = await Promise.all(members.map((thread) => checkpointRoot(thread.project)));
+      if (members.some((thread, index) => thread.busy && roots[index] === status.root))
+        throw new Error(
+          "pi is starting or working in this checkout. Wait for every turn and queued prompt to finish before changing Git state.",
+        );
+      if (["switch", "create-branch", "remove-worktree"].includes(action.kind)) {
+        // The pool may have stopped a background thread's pi while its shell lives on.
+        const terminalRows = this.store.threads().filter((stored) => this.terminals.has(stored.id));
+        const terminalRoots = await Promise.all(
+          terminalRows.map((stored) => checkpointRoot(this.checkout(stored))),
+        );
+        if (terminalRoots.includes(status.root))
+          throw new Error(
+            "Close terminals in this checkout before changing its branch or removing it.",
+          );
+      }
+      if (action.kind === "new-worktree") {
+        const newId = randomUUID();
+        await this.worktrees.create(status.root, newId, action.branch, action.base);
+        this.store.addThread({
+          id: newId,
+          projectId: row.projectId,
+          sessionFile: null,
+          createdAt: Date.now(),
+        });
+        this.open(newId);
+      } else if (action.kind === "remove-worktree") {
+        const worktree = this.worktrees.forThread(threadId);
+        if (!worktree)
+          throw new Error("This thread uses the local checkout, not a managed worktree.");
+        if (row.sessionFile && inside(worktree.path, row.sessionFile))
+          throw new Error(
+            "This thread stores its pi session inside the worktree. Move the session outside it before removing the worktree.",
+          );
+        // Refused removals must not interrupt pi or lose its extension state.
+        await this.worktrees.checkRemoval(worktree, action.force);
+        // Stop pi before touching its folder. Removal checks the files again afterward.
+        const thread = this.live.get(threadId);
+        await this.terminals.close(threadId);
+        if (thread) await this.letGo(thread);
+        try {
+          await this.worktrees.remove(worktree, action.force);
+        } catch (cause) {
+          this.startThread(threadId).show();
+          this.sendSnapshot();
+          throw cause;
+        }
+        // Checkpoint refs are shared by linked worktrees. Use the surviving
+        // repository after removal, and never delete diffs on a refused removal.
+        try {
+          await deleteCheckpoints(worktree.repository, threadId);
+        } catch (cause) {
+          this.toast(
+            "warning",
+            `Worktree removed, but checkpoint cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          );
+        }
+        this.store.removeThread(threadId);
+        this.found.delete(threadId);
+        this.visibleId = null;
+        this.store.setUi("openThread", null);
+        this.sendSnapshot();
+        this.sendSidebar();
+        this.toast(
+          "info",
+          "Removed the worktree and forgot its thread. Its branch and external pi session file were kept.",
+        );
+      } else {
+        await this.git.act(cwd, action, expectedBranch);
+        this.toast("info", GIT_SUCCEEDED[action.kind]);
+      }
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (locked) {
+        this.gitMutation = false;
+        this.refreshGit(true);
+      }
+      this.send({ v, type: "git-result", threadId, id, error });
+    }
+  }
+
   private async removeProject(projectId: number): Promise<void> {
     const project = this.project(projectId);
+    if (
+      this.store
+        .threads()
+        .some((row) => row.projectId === projectId && this.worktrees.forThread(row.id))
+    )
+      throw new Error(
+        "Remove this project's managed worktrees before removing the project. Their files have been kept.",
+      );
     this.removingProjects.add(projectId);
     try {
       const closing = this.store
@@ -681,6 +904,8 @@ export class Workspace {
       row.archived ||
       row.draft.trim() ||
       row.hasImages ||
+      this.worktrees.forThread(id) ||
+      this.gitMutation ||
       this.terminals.has(id) ||
       this.forgettingThreads.has(id) ||
       this.removingProjects.has(row.projectId)
@@ -854,6 +1079,7 @@ export class Workspace {
       title: this.titleOf(thread.id),
       askingTrust: thread.askingTrust,
       preparing: thread.preparing,
+      worktree: this.worktrees.forThread(thread.id) !== undefined,
       pi: thread.status,
     };
   }

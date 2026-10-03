@@ -43,6 +43,7 @@ const open: OpenThread = {
   title: "Thread a",
   askingTrust: false,
   preparing: false,
+  worktree: false,
   pi: { state: "stopped" },
 };
 

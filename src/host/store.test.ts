@@ -28,7 +28,14 @@ describe("migrate", () => {
     const db = new DatabaseSync(":memory:");
     migrate(db);
     expect(version(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(["checkpoint_turns", "draft_images", "projects", "threads", "ui"]);
+    expect(tables(db)).toEqual([
+      "checkpoint_turns",
+      "draft_images",
+      "projects",
+      "threads",
+      "ui",
+      "worktrees",
+    ]);
   });
 
   it("does nothing to a store that's up to date", () => {

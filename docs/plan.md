@@ -20,8 +20,8 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 7 | Extension UI and slash commands | M | Done |
 | 8 | Composer | L | Done |
 | 9 | Per-turn diff panel | M | Done |
-| 10 | Integrated terminal | M | Awaiting review |
-| 11 | Git actions: branches, worktrees, pull requests | L | Not started |
+| 10 | Integrated terminal | M | Done |
+| 11 | Git actions: branches, worktrees, pull requests | L | Blocked: memory budget |
 | 12 | Visual design, onboarding, polish | L | Not started |
 | 13 | Packaging, signing, updates | M | Not started |
 
@@ -750,6 +750,93 @@ Done when:
 - E2E: a worktree thread's bash tool prints the worktree path, and a pull request gets created through the stub.
 
 Size: L. T3's branch and git UI is 4,793 lines, `GitVcsDriverCore.ts` is 3,710, and `pullRequest/` alone is 19,752. From that last part, Tondo v1 needs create, view and status.
+
+### Stage 11 report (2026-10-03)
+
+**Blocked on memory.** The features and functional checks are implemented, but the final build exceeds the fixed after-stream memory limit. The user requested a draft review PR after this report. That does not waive the memory gate or mark the stage complete.
+
+#### Implemented
+
+- A Git toolbar with local branch selection, branch creation, per-thread worktrees, stage-all-and-commit, push, and PR create/status/browser links. Each write needs an explicit action. PR creation requires an already-pushed branch and never pushes implicitly.
+- Host-only Git and `gh` commands through the login-shell environment, without a shell command string. Requests carry thread IDs and bounded action fields, never repository paths. Commands have a 60-second deadline and 4 MiB output cap. Main tracks their process groups, including hooks and helpers.
+- Visible-checkout status polling every two seconds with `GIT_OPTIONAL_LOCKS=0` and filesystem-monitor hooks disabled for status. Unchanged results are not resent. GitHub status is cached for 30 seconds; refresh and writes invalidate it. Reads finish before writes so an older PR poll cannot overwrite a newly created PR.
+- A SQLite ownership ledger and worktrees under `<userData>/worktrees/<thread-id>`. A new worktree starts a new thread rather than moving an existing session. pi, terminals, file completion, session discovery and turn checkpoints all use that checkout.
+- Branch writes are blocked during active turns in the same checkout, including background threads. Open terminals block branch changes even after the pool stops their pi. New prompts during a Git action are restored to the draft with an error instead of racing the operation.
+- Removal preserves branches and external pi session files. Dirty or ignored files require explicit force confirmation. A session inside the worktree blocks removal. Failed removal preserves checkpoints and does not stop pi when preflight already finds the problem. Startup cleanup inspects only recorded worktrees whose owning thread is gone, and preserves changed branches, dirty/ignored files, symlinks and folders used by projects.
+
+#### Proofs
+
+Commands ran on macOS. Logs are in `.dev/stage11/`.
+
+| Check | Observed result |
+|---|---|
+| `pnpm typecheck` | Exit 0 |
+| `pnpm lint` | Exit 0, warnings forbidden |
+| `pnpm format:check` | All 209 matched files passed |
+| `pnpm test` | 49 files, 456 tests passed |
+| `pnpm build` | Exit 0; React Compiler compiled 87 functions |
+| `pnpm smoke` | Passed; renderer ready in 271 ms |
+| `pnpm exec playwright test` | 64 passed in 3.0 minutes |
+| Git e2e, repeated three times | 12 passed in 49.8 seconds |
+| Final `pnpm perf` | 18 automated checks passed in 13.0 minutes; manual memory check failed |
+
+Generated repositories and bare remotes prove non-forced branch switching, literal commit messages, staged/untracked changes, push, stale-branch rejection, unchanged index bytes during status, detached HEAD, non-repositories and worktree cleanup. A recording `gh` stub proves the Enterprise hostname, explicit repository/head/base/title arguments, PR body on stdin, missing CLI and logged-out behavior. A subprocess test exceeds the output cap with a child helper and verifies the group is gone.
+
+The whole-app test runs real pi offline. Its bash tool prints the worktree path, and its session header records that path in a separate session folder. The test checks worktree-only file completion, turn diffs, terminal cwd, separate commits, explicit push, PR creation through the stub, browser URL, page reload and cold restart. Refused removal keeps ignored files and checkpoint refs. Confirmed removal keeps the branch and external session. The pooled-terminal regression failed against the earlier build and passed after the guard checked stored threads rather than only live pi processes.
+
+#### Screenshots
+
+Both were opened and inspected after the final functional run:
+
+- `test-results/git-worktree-pr.png`: the worktree branch, explicit action results and PR link.
+- `test-results/git-safe-removal.png`: the removal dialog, separate destructive checkbox and refusal for ignored files.
+
+#### Perf vs budgets
+
+Final artifacts: `.dev/perf/stage11-final-2026-10-03T04-16-58/`. The visible window passed the unchanged built-in 2x/120 Hz display guard. No placement override or timing wait was added. Values are medians of three runs unless noted.
+
+| Metric | Budget | Final result |
+|---|---|---|
+| Frame p95 / p99, 1,000 tok/s | 16.7 / 33 ms | 10.1 / 10.3 ms |
+| Frame p95 / p99, 200 tok/s and 10 streaming threads | 16.7 / 33 ms | 10.0 / 10.3 ms |
+| Input-to-paint p95 | 32 ms | 32 ms in all three scenarios |
+| Long tasks at normal speed | None at least 100 ms | None in streaming, diffs or terminal output |
+| Switch to running thread | 100 ms | 89.4 ms |
+| Cold start | 1 second | 250.6 ms |
+| Total before streaming, 1,000 / 200 tok/s | 279.4 MiB | 269.912 / 273.037 MiB |
+| Total after 1,000 tok/s | 510.4 MiB | **511.506 MiB, fail** |
+| Total after 200 tok/s | 522.5 MiB | 497.600 MiB |
+| Terminal output | No task at least 100 ms | 50 MiB in 1.893 seconds, no long tasks |
+| Port round trip p95 | Under 1 ms | 0.10 ms |
+
+The three after-1,000-tok/s readings were 521.584, 510.803 and 511.506 MiB. All exceed 510.4 MiB; the median exceeds it by 1.106 MiB. The automated runner records memory but does not assert its budget. Its green result is not an all-budget pass.
+
+The earlier run, `.dev/perf/stage11-2026-10-03T03-45-37/`, passed with 272.459 MiB before and 508.038 MiB after at 1,000 tok/s. It preceded the final cleanup and terminal-guard fixes, so it does not replace the final result. There is no controlled A/B against main yet and no evidence attributing the excess to those fixes. The stage stops here without lowering a limit or rerunning until a favorable number appears. Further measurements need approval.
+
+#### Changes to the plan
+
+- Worktree mode is chosen by creating a new thread. Existing sessions are not silently moved.
+- "Abandoned" means a recorded worktree without a stored owner. Archiving or leaving a thread empty is not consent to delete its checkout.
+- PR creation, push and commit remain separate confirmations. Selective staging, fetch, pull, merge and force-push UI are not included.
+- No dependencies or performance budgets changed.
+
+#### Not verified
+
+- Linux execution and GitHub CI were not checked before this report. The draft PR's checks are reported separately.
+- Live GitHub or Enterprise writes, real credentials, signing prompts, and arbitrary third-party hooks. Git/PR writes in tests stayed in generated repositories or the stub.
+- Large-repository checkout durations, unusual fork/multi-URL remote setups, and protection against concurrent writes by external editors or shells.
+- The cause of the memory miss. A controlled comparison with main is the next step, not an assumed Git-specific fix.
+
+#### Draft review commit split
+
+1. `docs: mark stage 10 done`
+2. `feat(git): add checked git actions and pull request status`
+3. `feat(worktrees): isolate thread checkouts and preserve owned files`
+4. `feat(git): add branch toolbar and action confirmations`
+5. `test(git): verify isolated checkouts and explicit publishing`
+6. `docs: record stage 11 results`
+
+Next: investigate the memory miss with an approved controlled A/B against main. Stage 12 remains unstarted.
 
 ## Stage 12: Visual design and polish
 
