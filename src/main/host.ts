@@ -181,10 +181,32 @@ export function startHost(options: HostOptions): Host {
         clearTimeout(restartTimer);
         const current = child;
         if (current) {
-          // Not events.once, which would reject on the host's error event.
-          const exited = new Promise((resolve) => current.once("exit", resolve));
-          current.kill();
-          await exited;
+          // Capture and stop terminal job groups before the host's PTY handles
+          // close. A dead shell can no longer tell us which jobs it parented.
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              clearTimeout(deadline);
+              current.off("message", onMessage);
+              current.off("exit", done);
+              resolve();
+            };
+            const onMessage = (message: HostToMainMessage) => {
+              if (message.type === "terminals-stopped") done();
+            };
+            const deadline = setTimeout(() => {
+              console.error("Tondo Host didn't stop its terminals within 10 seconds.");
+              done();
+            }, 10_000);
+            current.on("message", onMessage);
+            current.once("exit", done);
+            current.postMessage({ type: "stop-terminals" } satisfies MainToHostMessage);
+          });
+          if (child === current) {
+            // Not events.once, which would reject on the host's error event.
+            const exited = new Promise((resolve) => current.once("exit", resolve));
+            current.kill();
+            await exited;
+          }
         }
         // fork()'s exit listener ran before ours, so this includes the groups
         // of the host just stopped.

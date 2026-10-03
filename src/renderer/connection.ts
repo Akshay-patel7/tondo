@@ -31,6 +31,8 @@ import { closeSheet, openSheet } from "./sheets/store";
 import { keepUnchanged } from "./sidebar/model";
 import { receiveEvents, showThread } from "./thread/store";
 import { addToast } from "./toasts/store";
+import type { TerminalCommand, TerminalKind } from "../shared/terminal";
+import { receiveTerminal, resetTerminals, useTerminals } from "./terminal/store";
 
 type Connection = "connecting" | "connected" | "reconnecting";
 
@@ -84,6 +86,28 @@ function fail(message: string): void {
   );
 }
 
+export function terminalCommand(message: TerminalCommand): void {
+  send({ v, ...message });
+}
+
+export function openTerminal(kind: TerminalKind = "shell"): void {
+  const thread = useHost.getState().thread;
+  if (!thread || thread.askingTrust) return;
+  const existing = useTerminals.getState().get(thread.id);
+  if (existing && existing.kind !== kind) {
+    addToast({
+      level: "info",
+      message: "Close this thread's terminal before opening a different one.",
+    });
+    return;
+  }
+  if (existing) {
+    document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+    return;
+  }
+  terminalCommand({ type: "terminal-open", threadId: thread.id, kind });
+}
+
 export function listCheckpoints(): void {
   send({ v, type: "list-checkpoints", threadId: requireShownId() });
 }
@@ -108,6 +132,10 @@ function receive(message: HostMessage): void {
     return;
   }
   switch (message.type) {
+    case "terminal-state":
+    case "terminal-output":
+      receiveTerminal(message);
+      break;
     case "snapshot": {
       const shown = shownId();
       showThread(message.state);
@@ -201,6 +229,7 @@ function receive(message: HostMessage): void {
 }
 
 function accept(next: MessagePort): void {
+  resetTerminals();
   useCheckpoints.setState(({ id }) => ({
     turns: [],
     shared: false,

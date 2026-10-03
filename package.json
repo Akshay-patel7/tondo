@@ -6,6 +6,7 @@
   "license": "MIT",
   "main": "out/main/index.js",
   "scripts": {
+    "postinstall": "node scripts/prepare-pty.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json && tsc -p src/shared && tsc -p src/main && tsc -p src/preload && tsc -p src/host && tsc -p src/renderer && tsc -p e2e",
@@ -18,6 +19,9 @@
     "perf": "electron-vite build && playwright test --config playwright.perf.config.ts",
     "smoke": "electron-vite build && node scripts/smoke.mts",
     "fixtures": "node scripts/record-fixtures.mts"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.87.1",
@@ -38,6 +42,9 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "5.2.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-webgl": "0.19.0",
+    "@xterm/xterm": "6.0.0",
     "babel-plugin-react-compiler": "1.0.0",
     "electron": "44.4.5",
     "electron-vite": "5.0.0",

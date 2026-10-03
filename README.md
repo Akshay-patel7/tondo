@@ -4,7 +4,7 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The TipTap composer keeps Markdown literal, completes `@` file paths, recalls prompts with Up, and accepts images by paste, drop or the attachment button. Text and image drafts stay with their thread across restarts. The Changes panel shows per-turn Git checkpoints with a file filter and highlighted diffs. Stage 9 awaits review. Its memory fix passes the unchanged performance budgets; [docs/plan.md](docs/plan.md#stage-9-memory-follow-up-2026-10-02) records the measurements. [AGENTS.md](AGENTS.md) lists the commands.
+**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The TipTap composer keeps Markdown literal, completes `@` file paths, recalls prompts with Up, and accepts images by paste, drop or the attachment button. Text and image drafts stay with their thread across restarts. The Changes panel shows per-turn Git checkpoints with a file filter and highlighted diffs. Each thread also has a resizable terminal drawer. "Sign in to a provider" opens pi's interactive UI for `/login` and `/logout`, with an explicit model refresh afterward. Stage 10 awaits review. Its [report](docs/plan.md#stage-10-report-2026-10-03) records the tests, performance results and known limitations. [AGENTS.md](AGENTS.md) lists the commands.
 
 ## Goals
 
@@ -38,12 +38,14 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 
 - Extension UI built from terminal components (`ctx.ui.custom()`, custom headers, footers and editors) does not render.
 - Custom tool renderers are terminal components, so Tondo draws its own tool cards.
-- pi's built-in commands, such as `/model` and `/session`, run only in its terminal UI. Tondo runs its own versions of most of them. The rest, such as `/login`, `/tree` and `/share`, say they aren't in Tondo yet.
+- pi's built-in commands, such as `/model` and `/session`, run only in its terminal UI. Tondo runs its own versions of most of them. `/login` and `/logout` open an interactive pi in the terminal drawer. The rest, such as `/tree` and `/share`, say they aren't in Tondo yet.
 - pi doesn't tell a client when an extension withdraws a dialog with an abort signal, so the dialog stays open in Tondo, and answering it does nothing. Dialogs that time out close on time.
 
 Images send only when pi is idle. pi 0.87.1's queue APIs return text without attachments, so Tondo keeps images in the draft while pi works instead of risking their loss on Escape or Alt+Up. Local built-ins and known extension commands leave images in the draft. Attach up to 4 PNG, JPEG, GIF or WebP images, at most 5 MiB and 16 million pixels each, with a 10 MiB total. File completion lists at most 10,000 tracked and nonignored untracked paths in a Git project; it inserts literal paths, never file contents.
 
 pi doesn't lock session files. If the same session is open in terminal pi and in Tondo at once, both append to it and their entries interleave.
+
+A terminal stays alive when you switch threads. Close stops its shell and the jobs still descended from it; quitting the app closes its terminals first. Terminal history stays in memory, not on disk. There is one terminal per thread, so close its shell before opening provider sign-in there. The sign-in terminal uses `--no-session` and the same pi profile as the chat processes. After changing credentials, use Refresh models in that drawer, or `/reload` in each other open thread, while pi is idle. Development runs sign in only to the scratch profile under `.dev/userData/pi-agent`, not your real pi profile.
 
 ## Stack
 
@@ -57,7 +59,7 @@ A tondo is a circular painting or relief, a form that became popular in 15th-cen
 
 Built on [pi](https://github.com/earendil-works/pi) by Earendil Works. Performance ideas borrowed from [T3 Code](https://github.com/pingdotgg/t3code). Tondo is not affiliated with either project.
 
-Some of Tondo's code is adapted from T3 Code, which is MIT licensed, Copyright (c) 2026 T3 Tools Inc. Each adapted file says which T3 file it came from in its header comment. The composer's plain Markdown editor, prompt-history behavior, image thumbnails and enlarged preview follow T3's composer. Hidden-ref checkpoints and sparse-index handling follow T3's GitVcsDriver.
+Some of Tondo's code is adapted from T3 Code, which is MIT licensed, Copyright (c) 2026 T3 Tools Inc. Each adapted file says which T3 file it came from in its header comment. The composer's plain Markdown editor, prompt-history behavior, image thumbnails and enlarged preview follow T3's composer. Hidden-ref checkpoints and sparse-index handling follow T3's GitVcsDriver. Terminal history query filtering and drawer resizing follow T3's terminal manager and drawer.
 
 Tondo carries a [patch](patches/@streamdown__code@1.1.1.patch) to [@streamdown/code](https://github.com/vercel/streamdown), which is Apache-2.0 licensed. It shares themed highlighters and bounds the cache of highlighted results.
 

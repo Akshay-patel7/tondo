@@ -169,8 +169,8 @@ test("pi's built-in commands run in Tondo and never reach pi as text", async () 
     .toEqual([file]);
 
   // Commands Tondo can't run say why.
-  await send(page, "/login");
-  await expect(toast(page, "Tondo can't sign in to providers yet.")).toBeVisible();
+  await send(page, "/tree");
+  await expect(toast(page, "The session tree comes after Tondo v1.")).toBeVisible();
   // pi fails to compact so short a thread, and the thread says so once.
   await send(page, "/compact");
   await expect(page.getByRole("alert")).toContainText(

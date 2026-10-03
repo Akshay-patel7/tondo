@@ -118,7 +118,7 @@ The others:
 - **TipTap 3** for the composer. Stage 8 pins 3.31.4 and follows T3's plain mode: one paragraph per literal newline, with Document, Paragraph, Text and UndoRedo only. File and slash completion insert text rather than hiding it in rich-text chips. Images live outside the editor document, and a separate SQLite table keeps their bytes out of text-draft saves and sidebar reads.
 - **Base UI 1.8, shadcn 4.21 and Tailwind CSS 4.3** for components and styling. T3 Code uses Base UI and Tailwind, and shadcn can generate its components on Base UI. Install `@base-ui/react`. `@base-ui-components/react` is the deprecated old name.
 - **zustand 5** for state. T3 Code uses it. Its stores also work outside React, so the MessagePort handler can write to them directly. Streamed text should be buffered and committed once per animation frame.
-- **@xterm/xterm 6 and node-pty 1.1** for a terminal, later. T3 Code's server uses node-pty. node-pty is built on Node-API, so the same binary works in Node and in Electron. Its prebuilt macOS binary ran `/bin/echo` from Electron 44.4.5's main process and from a utility process with no rebuild. There are no prebuilt Linux binaries, so it compiles with node-gyp there. The 1.1.0 package ships its macOS `spawn-helper` without the execute bit, so every spawn fails with `posix_spawnp failed` until a postinstall step runs `chmod +x` on it ([node-pty#850](https://github.com/microsoft/node-pty/issues/850)). 1.2.0-beta.15 packs it correctly, but `latest` on npm is still 1.1.0.
+- **@xterm/xterm 6.0.0 and node-pty 1.1.0** for the integrated terminal. Stage 10 uses Fit 0.11.0 and WebGL 0.19.0; both ran under Tondo's unchanged CSP. WebGL falls back to xterm's DOM renderer if it is unavailable or loses its context. The host loads node-pty only when a terminal opens, and the renderer loads xterm only for an open drawer. node-pty uses Node-API. Its macOS prebuild spawned and resized a shell inside Electron 44.4.5's utility process without a rebuild. Linux builds it with node-gyp. The 1.1.0 package ships its macOS `spawn-helper` without the execute bit ([node-pty#850](https://github.com/microsoft/node-pty/issues/850)); Tondo's `scripts/prepare-pty.mjs` fixes it at install time. node-pty is a runtime dependency so electron-vite leaves its native binary external to the host bundle.
 - **Avoid @virtuoso.dev/message-list.** Its license is commercial. react-virtuoso itself is MIT.
 
 ## Tooling
@@ -324,6 +324,14 @@ No normal-speed streaming or diff task exceeded 50 ms. Switching took 89.6 ms, c
 At informational 4x slowdown, frame p95 was 31.7/24.7 ms and p99 39.8/32.2 ms at 1,000/200 tok/s. Input p95 was 48/40 ms and lag 51.0/48.4 ms. Switching took 427.1 ms; the colored diff had one 203 ms task.
 
 **Utility process layout.** See [Where pi runs](#where-pi-runs).
+
+### Stage 10 terminal measurements
+
+The full run in `.dev/perf/2026-10-03T01-56-03/` passed all 18 checks in 13.0 minutes, with no budget change. Streaming frame p95 stayed at 10.0–10.1 ms and p99 at 10.3 ms. Single-thread total footprint before/after was 267/507 MiB at 1,000 tok/s and 270/490 MiB at 200 tok/s. Both memory medians pass; the faster stream still has little headroom. Input p95 remains at its 32 ms limit. Cold start was 240 ms, switching 91 ms and port round-trip p95 0.10 ms.
+
+After fixing terminal padding that clipped the final row, the repeated terminal gate in `.dev/perf/2026-10-03T02-16-20/` sent 50 MiB in 1.910, 1.886 and 1.893 seconds. None of the three native runs produced a long task, nor did the informational 4× run, which took 8.141 seconds. The PTY pauses against a 64 KiB acknowledgement window, and xterm parses 4,096-character chunks without routing output through React.
+
+The native-process and provider-auth probes, the Linux build requirements, and verification limits are in the [Stage 10 report](plan.md#stage-10-report-2026-10-03).
 
 ## Open questions
 

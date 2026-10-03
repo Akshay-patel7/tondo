@@ -158,6 +158,10 @@ describe("startHost", () => {
 
     let stopped = false;
     const stopping = host.stop().then(() => (stopped = true));
+    expect(latest().postMessage).toHaveBeenCalledWith({ type: "stop-terminals" });
+    expect(latest().kill).not.toHaveBeenCalled();
+    latest().emit("message", { type: "terminals-stopped" });
+    await Promise.resolve();
     expect(latest().kill).toHaveBeenCalled();
     latest().emit("exit", 0);
     expect(stopProcessGroups).toHaveBeenLastCalledWith([4242]);
@@ -169,6 +173,29 @@ describe("startHost", () => {
     groupsGone();
     await stopping;
     expect(stopped).toBe(true);
+  });
+
+  it("bounds a stuck terminal shutdown and still stops the reported groups", async () => {
+    const host = startHost(options);
+    latest().emit("message", { type: "process-groups", pgids: [4242] });
+    const stopping = host.stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(latest().kill).toHaveBeenCalledOnce();
+    expect(console.error).toHaveBeenCalledWith(
+      "Tondo Host didn't stop its terminals within 10 seconds.",
+    );
+    latest().emit("exit", 0);
+    await stopping;
+    expect(stopProcessGroups).toHaveBeenLastCalledWith([4242]);
+  });
+
+  it("settles shutdown if the host dies before its terminal acknowledgement", async () => {
+    const host = startHost(options);
+    const stopping = host.stop();
+    latest().emit("exit", 1);
+    await stopping;
+    expect(latest().kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("doesn't restart a host that died just before it was stopped", async () => {

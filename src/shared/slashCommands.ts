@@ -5,6 +5,8 @@
 
 /** pi's built-ins that Tondo runs its own way. */
 export type RunName =
+  | "login"
+  | "logout"
   | "model"
   | "scoped-models"
   | "thinking"
@@ -22,8 +24,6 @@ export type RunName =
 
 /** pi's built-ins that Tondo can't run yet. */
 export type LaterName =
-  | "login"
-  | "logout"
   | "tree"
   | "fork"
   | "clone"
@@ -61,21 +61,13 @@ const RUNS: Readonly<Record<RunName, BuiltinCommand & { unavailable?: never }>> 
   settings: { description: "Show where pi's settings are" },
   hotkeys: { description: "Show keyboard shortcuts" },
   trust: { description: "Change whether pi trusts this project" },
+  login: { description: "Open pi's terminal to sign in to a provider", argument: "[provider]" },
+  logout: { description: "Open pi's terminal to sign out of a provider" },
 };
 
 const TERMINAL = "pi's terminal UI can.";
 
 const LATER: Readonly<Record<LaterName, BuiltinCommand & { unavailable: string }>> = {
-  login: {
-    description: "Sign in to a provider",
-    argument: "[provider]",
-    unavailable:
-      "Tondo can't sign in to providers yet. Run /login in pi's terminal UI, then /reload here.",
-  },
-  logout: {
-    description: "Sign out of a provider",
-    unavailable: "Tondo can't sign out of providers yet. Run /logout in pi's terminal UI.",
-  },
   tree: {
     description: "Navigate the session tree",
     unavailable: "The session tree comes after Tondo v1.",
