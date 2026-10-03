@@ -138,7 +138,8 @@ test("Enter steers pi and Alt+Enter queues a follow-up, and pi takes both in tur
   });
   // pi's bash command holds the turn open until the test creates the release file.
   await send(page, "Start.");
-  await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
+  // Stop also shows during checkpoint preparation, before pi can be steered.
+  await expect(page.locator("[data-tool-call]")).toHaveAttribute("data-status", "running");
 
   await send(page, "Steer this.");
   await send(page, "Then this.", "Alt+Enter");
@@ -166,7 +167,7 @@ test("Alt+Up and Escape take queued messages back into the composer", async () =
   const input = composer(page);
   const queue = page.getByRole("region", { name: "Queued messages" });
   await send(page, "Start.");
-  await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
+  await expect(page.locator("[data-tool-call]")).toHaveAttribute("data-status", "running");
 
   // Alt+Up puts the queue ahead of what you're writing.
   await send(page, "First.", "Alt+Enter");

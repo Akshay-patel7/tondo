@@ -847,6 +847,8 @@ The follow-up fixes two CI test races, the image-send-after-Stop race found duri
 
 The final macOS checks passed typecheck, lint, formatting, 456 unit tests in 49 files, build and smoke. Smoke reported 285 ms to renderer readiness. Full E2E passed 66 tests in 3.2 minutes after the image fix; the earlier full run's image failure is retained in `.dev/stage11-fix/root-e2e.log`. Code-control screenshots in both themes were opened and inspected, and the test clicks Copy and checks its exact text without changing the user's clipboard.
 
+Fresh-clone verification then caught a queue test using the Stop button as proof that pi was running. Stop also appears during checkpoint preparation. The steering and queue-recall tests now wait for the tool's running state before sending queued prompts; sixty focused repetitions passed. This changes tests only, not the measured application. The first clone's 65-pass/1-fail E2E log is retained in `.dev/stage11-fix/landing/tip-e2e.log`.
+
 The full performance run passed 18 checks in 13.0 minutes, including the new memory assertions. It used the built-in 2x/120 Hz display, the original measurement helper and no placement override. Artifacts are in `.dev/perf/stage11-ci-memory-2026-10-03T07-00-41-978Z/`.
 
 | Metric | Unchanged limit | Final median |
