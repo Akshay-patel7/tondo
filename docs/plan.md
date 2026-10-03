@@ -20,7 +20,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 7 | Extension UI and slash commands | M | Done |
 | 8 | Composer | L | Done |
 | 9 | Per-turn diff panel | M | Done |
-| 10 | Integrated terminal | M | Awaiting review |
+| 10 | Integrated terminal | M | Done |
 | 11 | Git actions: branches, worktrees, pull requests | L | Not started |
 | 12 | Visual design, onboarding, polish | L | Not started |
 | 13 | Packaging, signing, updates | M | Not started |
