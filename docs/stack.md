@@ -112,7 +112,7 @@ The others:
 ## Libraries
 
 - **@legendapp/list 3.4** for the transcript. T3 Code uses it, and it has props for chat (`maintainScrollAtEnd`, `maintainVisibleContentPosition`, `alignItemsAtEnd`, `onStartReached`; see the [chat example](https://legendapp.com/open-source/list/v3/react/examples/chat/)). Web support arrived in 3.0 (the changelog says "Feat: Web support", entry point `@legendapp/list/react`), but its README still describes it as React Native only. That mismatch is why @tanstack/react-virtual stays as the fallback. It has a [chat guide](https://tanstack.com/virtual/latest/docs/chat) that covers keeping the view anchored to the end. T3 Code patches three web problems in Legend List 3.3.5 (end spacing when the tail size is unknown, row reordering and scroll-adjust padding). 3.4.0 fixes all three, so Tondo uses it unpatched.
-- **streamdown 2.6** for markdown. It replaces react-markdown, which T3 Code uses, and is built for streaming. It splits text into blocks and [memoizes](https://streamdown.ai/docs/memoization) each one, so only the growing block re-renders. It also completes unterminated syntax while text is still arriving. Code highlighting comes from the separate @streamdown/code package. Model output is untrusted, and streamdown 2.6.0 sanitizes it with rehype-sanitize and GitHub's schema. That drops `script`, `style` and `iframe` elements, `on*` attributes, and `javascript:` and `data:` URLs. Links open only after a confirmation dialog, which is on by default. Tondo's CSP (`img-src 'self' blob:`) blocks remote images; Stage 8 permits blob URLs for local raster previews.
+- **streamdown 2.6** for markdown. It replaces react-markdown, which T3 Code uses, and is built for streaming. It splits text into blocks and [memoizes](https://streamdown.ai/docs/memoization) each one, so only the growing block re-renders. It also completes unterminated syntax while text is still arriving. Code highlighting comes from the separate @streamdown/code package. Tondo patches version 1.1.1 to share one highlighter per theme pair and cap its cache at 128 results. Older results are recomputed when needed. The unpatched package keeps intermediate streaming results for the page's lifetime. Model output is untrusted, and streamdown 2.6.0 sanitizes it with rehype-sanitize and GitHub's schema. That drops `script`, `style` and `iframe` elements, `on*` attributes, and `javascript:` and `data:` URLs. Links open only after a confirmation dialog, which is on by default. Tondo's CSP (`img-src 'self' blob:`) blocks remote images; Stage 8 permits blob URLs for local raster previews.
 - **Shiki 3.23** for code, because @streamdown/code 1.1.1 depends on `shiki ^3.19.0`. Shiki 4.4.3 is the latest. @pierre/diffs is built on Shiki too and accepts 3 or 4 (`^3.0.0 || ^4.0.0` in 1.4.3 and 1.5.1), so code blocks and diffs can share one copy and highlight the same way. Shiki ships a JavaScript regex engine as well as the default Oniguruma WebAssembly engine. @streamdown/code uses the JavaScript one, so Tondo's CSP needs no `'wasm-unsafe-eval'`. In the built app, code highlighted with no WebAssembly requests and no CSP errors (checked 2026-09-25).
 - **@pierre/diffs 1.5** for diffs. T3 Code uses it. Its worker pool (`@pierre/diffs/worker`) runs syntax highlighting for diffs and files in web workers, off the UI thread. Tondo runs 1.5.1, published 2026-09-25, with a pool of 2 workers on Shiki's JavaScript regex engine, the pool's default. The page loads @pierre/diffs and starts the pool only when a tool card first shows a diff or a file, and the pool stops 30 s after the last one closes. 1.5.1 accepts `@shikijs/transformers` 3 or 4, and 4.4.3 brought a second copy of Shiki's core, so an override in `pnpm-workspace.yaml` pins it to 3.23.0. It builds each diff's rows as HTML with style attributes for token colors and puts its theme in a `<style>` element in the diff's shadow root. Tondo's CSP blocked both until Stage 6 allowed inline styles (`style-src 'self' 'unsafe-inline'`), and the workers need `worker-src 'self'`.
 - **TipTap 3** for the composer. Stage 8 pins 3.31.4 and follows T3's plain mode: one paragraph per literal newline, with Document, Paragraph, Text and UndoRedo only. File and slash completion insert text rather than hiding it in rich-text chips. Images live outside the editor document, and a separate SQLite table keeps their bytes out of text-draft saves and sidebar reads.
@@ -264,13 +264,64 @@ Stage 9 added turn checkpoints and the diff panel. Its controlled run on 2026-10
 | Total footprint before / after | 281.77 / 510.44 MiB | 276.68 / 497.98 MiB | 376.52 / 504.02 MiB |
 | Renderer footprint before / after | 67.69 / 176.81 MiB | 66.50 / 181.06 MiB | 91.39 / 154.13 MiB |
 
-At 1,000 tok/s, the total before readings were 281.83, 274.30 and 281.77 MiB; after readings were 518.10, 510.44 and 507.19 MiB. The medians exceed the fixed 279.4 and 510.4 MiB limits. Stage 9 remains blocked. The before median at 200 tok/s passes, although its runs included one 281.38 MiB reading. No controlled memory comparison against main has attributed the misses to Stage 9.
+At 1,000 tok/s, the total before readings were 281.83, 274.30 and 281.77 MiB; after readings were 518.10, 510.44 and 507.19 MiB. The medians exceeded the fixed 279.4 and 510.4 MiB limits and blocked Stage 9. The before median at 200 tok/s passed, although its runs included one 281.38 MiB reading. No controlled memory comparison against main had yet attributed the misses to Stage 9. The follow-up below records the fix.
 
 No normal-speed streaming task took over 50 ms. Switching to a running thread took 90.5 ms, cold start 235 ms and opening a project 256 ms. The port round trip p95 was 0.10 ms; snapshots of 1,000 and 5,000 messages took 1.5 and 6.8 ms. The 5,000-line colored diff showed rows in 332 ms and colors in 2.732 s; the 10,000-line uncolored diff showed rows in 339 ms. Neither had a task of 100 ms or more at normal speed.
 
 At 4x slowdown, which does not gate, frame p95 was 26.0 and 24.8 ms, p99 34.4 and 33.3 ms, and input p95 48 and 40 ms at 1,000 and 200 tok/s. The longest time behind the end was 84.2 and 42.8 ms, and switching took 404.8 ms. The colored diff had one 205 ms task.
 
 The earlier run in `.dev/perf/stage9-2026-10-02T21-16-02/` passed its memory medians but had an 87.5-second follow-scroll outlier. The user confirmed interacting with the app during that run. It is retained, but not used as the controlled acceptance result. Eleven traced comparisons, five on main and six on Stage 9, kept following with maximum lag of 20.5 ms. The controlled full run also kept its lag within budget without a scroll-code change. Interaction is not a proven cause because the original run did not log input events. The temporary diagnostic instrumentation was removed before the controlled full run.
+
+### Stage 9 memory follow-up
+
+On 2026-10-02, an approved three-run comparison of main and PR #14 found before-stream medians of 279.97 and 282.30 MiB. Main missed the limit too. This did not establish a checkpoint-specific regression.
+
+The fix gives the empty-state prompt/button and composer separate compositor layers. DevTools showed 599×48 and 225×64 layers for the empty-state elements, and a 1652×392 layer around the composer rather than the wider footer. These are physical pixels at 2x. `vmmap` showed three 2432×416 raster tiles in the original empty window and none in the fixed window. Those tiles were still present immediately after opening the transcript in the original build. No waits were added to the performance harness.
+
+The installed `@streamdown/code` 1.1.1 also retained every intermediate highlighted result. A diagnostic reply left 452 results with 40,522 tokens in its cache; clearing that cache released about 4.8 MiB of renderer footprint. The pnpm patch caps results at 128 and shares one highlighter per theme pair. Recomputed blocks keep their source and theme; no language support was removed.
+
+A/B results compare the unchanged PR head, `096502e`, with the combined fix. Each build ran twelve times, in alternating blocks of three with the order reversed every other round. Both used the same category-capture instrumentation, visible windows on the built-in 2x/120 Hz display and no placement override. Values below are MiB, with ranges in parentheses:
+
+| Reading | Original PR | Fix |
+|---|---|---|
+| Total before | 276.44 (272.97 to 282.12) | 266.92 (265.54 to 270.87) |
+| Total after | 506.92 (497.26 to 513.55) | 504.57 (495.26 to 509.26) |
+| Renderer after | 176.45 (174.56 to 180.27) | 172.89 (168.94 to 177.70) |
+
+Before streaming, GPU footprint fell by 8.96 MiB, including a 5.39 MiB fall in IOSurface allocations. After streaming, renderer V8 pages fell by 3.13 MiB while GPU footprint was essentially unchanged. Exact two-sided permutation tests on the median differences, over all 2,704,156 partitions, gave p=0.00019 for total before and p=0.0061 for renderer after. The total-after difference gave p=0.083, so it is not a confident whole-app reduction. All twelve fixed-build memory readings passed both limits. No normal-speed task exceeded 50 ms; input p95 never exceeded 32 ms.
+
+Per-run total footprint, in chronological order within each build:
+
+| Run | Original before | Fix before | Original after | Fix after |
+|---|---|---|---|---|
+| 1 | 277.99 | 267.15 | 509.12 | 505.55 |
+| 2 | 278.94 | 265.65 | 497.26 | 499.10 |
+| 3 | 274.57 | 266.01 | 506.24 | 507.16 |
+| 4 | 273.43 | 269.87 | 503.62 | 495.26 |
+| 5 | 281.13 | 265.54 | 507.79 | 504.54 |
+| 6 | 272.97 | 267.12 | 507.60 | 504.94 |
+| 7 | 281.15 | 266.47 | 506.22 | 505.26 |
+| 8 | 282.12 | 266.26 | 513.55 | 502.29 |
+| 9 | 274.68 | 266.72 | 511.16 | 504.60 |
+| 10 | 274.49 | 269.04 | 504.66 | 509.26 |
+| 11 | 276.15 | 269.58 | 499.24 | 503.68 |
+| 12 | 276.72 | 270.87 | 507.60 | 497.23 |
+
+Artifacts are in `.dev/stage9-memory/attribute/`, `ab/` and `layers/`. The full acceptance run followed removal of the diagnostic instrumentation and passed 17 tests in 12.5 minutes. Reports are in `.dev/perf/stage9-memory-2026-10-02T23-37-51-876Z/`. Medians of three runs:
+
+| Metric | 1,000 tok/s | 200 tok/s | 10 streaming threads |
+|---|---|---|---|
+| Frame p95 / p99 | 10.1 / 10.3 ms | 10.0 / 10.3 ms | 10.0 / 10.2 ms |
+| Input to paint p95 | 32 ms | 32 ms | 32 ms |
+| Longest time behind the end | 19.5 ms | 16.2 ms | 19.4 ms |
+| Total footprint before / after | 266.24 / 505.63 MiB | 266.65 / 485.65 MiB | 350.57 / 505.48 MiB |
+| Renderer footprint before / after | 66.75 / 173.86 MiB | 67.16 / 164.94 MiB | 89.89 / 151.81 MiB |
+
+The unrounded single-thread medians pass the unchanged limits. At 1,000 tok/s the before samples were 266.24, 266.07 and 268.44 MiB; after samples were 496.37, 505.63 and 507.21 MiB. At 200 tok/s they were 266.65, 266.33 and 268.47 before, and 484.12, 485.65 and 492.58 after. Every individual reading passed too. The after-1,000-tok/s median leaves 4.77 MiB of headroom; input latency remains at its limit.
+
+No normal-speed streaming or diff task exceeded 50 ms. Switching took 89.6 ms, cold start 241 ms and project open 264 ms. Port round-trip p95 was 0.10 ms; the 1,000-/5,000-message snapshots took 1.6/6.6 ms. The colored 5,000-line diff showed rows in 340 ms and colors in 2.715 s. The uncolored 10,000-line diff showed rows in 338 ms.
+
+At informational 4x slowdown, frame p95 was 31.7/24.7 ms and p99 39.8/32.2 ms at 1,000/200 tok/s. Input p95 was 48/40 ms and lag 51.0/48.4 ms. Switching took 427.1 ms; the colored diff had one 203 ms task.
 
 **Utility process layout.** See [Where pi runs](#where-pi-runs).
 

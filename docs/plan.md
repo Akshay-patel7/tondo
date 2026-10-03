@@ -19,7 +19,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 6 | Tool cards and edit diffs | M | Done |
 | 7 | Extension UI and slash commands | M | Done |
 | 8 | Composer | L | Done |
-| 9 | Per-turn diff panel | M | Blocked on memory budget |
+| 9 | Per-turn diff panel | M | Awaiting review |
 | 10 | Integrated terminal | M | Not started |
 | 11 | Git actions: branches, worktrees, pull requests | L | Not started |
 | 12 | Visual design, onboarding, polish | L | Not started |
@@ -560,7 +560,7 @@ Size: M. T3's `GitVcsDriver.ts`, `CheckpointReactor.ts` and `checkpointing/` tot
 
 ### Stage 9 report, 2026-10-02
 
-Implemented for review in a draft PR, as requested after the report. The functional checks pass, but the memory budget still blocks this stage. Opening the PR does not waive that budget.
+Implemented in draft [PR #14](https://github.com/Akshay-patel7/tondo/pull/14). The initial report below records the memory failure. The [memory follow-up](#stage-9-memory-follow-up-2026-10-02) passes the unchanged budgets. Stage 9 awaits review.
 
 Implemented:
 - A baseline before the prompt RPC and a completion after `agent_settled`. Steering, retries and queued follow-ups share one turn. Escape can cancel a prompt while its baseline is being captured.
@@ -576,7 +576,7 @@ Proofs:
 - `pnpm bench` passed. The reducer processed 24.0 million events/s on the 1,000-message transcript. Listing 500 unchanged sessions took 2.2 ms; the first read took 15.4 ms.
 - `pnpm perf`: 17 automated tests passed in 12.0 minutes on the built-in display at 2x and 120 Hz. This is not an all-budget pass: the runner records memory without asserting its limit.
 
-Controlled performance medians, three runs per scenario:
+Initial controlled performance medians, three runs per scenario:
 
 | Metric | Result | Budget | Outcome |
 |---|---|---|---|
@@ -591,7 +591,7 @@ Controlled performance medians, three runs per scenario:
 | Total footprint before / after 200 tok/s | 276.68 / 497.98 MiB | 279.4 / 522.5 MiB | Pass |
 | Port round trip p95 | 0.10 ms | Under 1 ms | Pass |
 
-The 1,000 tok/s before readings were 281.83, 274.30 and 281.77 MiB; after readings were 518.10, 510.44 and 507.19 MiB. Both medians exceed their limits. The small after miss is still a miss. No memory A/B has established whether Stage 9 caused the increase. Reports are in `.dev/perf/stage9-controlled-2026-10-02T21-58-26/`; [stack.md](stack.md#measurements) also records the diff and 4x slowdown results.
+The 1,000 tok/s before readings were 281.83, 274.30 and 281.77 MiB; after readings were 518.10, 510.44 and 507.19 MiB. Both medians exceeded their limits. The small after miss was still a miss. No memory A/B had yet established whether Stage 9 caused the increase. Reports are in `.dev/perf/stage9-controlled-2026-10-02T21-58-26/`; [stack.md](stack.md#measurements) also records the diff and 4x slowdown results.
 
 The first full run, `.dev/perf/stage9-2026-10-02T21-16-02/`, passed its medians but recorded an 87.5-second follow-scroll outlier. You confirmed interacting with Tondo during that run, so it is not the controlled acceptance result. Five traced runs on main and six on Stage 9 all kept following, with maximum lag of 20.5 ms. The subsequent uninstrumented full run did not reproduce the outlier. The original run did not record input events, so interaction is a possible explanation, not a proven root cause. All temporary tracing was removed; the follow-scroll code is unchanged.
 
@@ -601,12 +601,39 @@ Screenshots opened and checked:
 - `.dev/perf/stage9-controlled-2026-10-02T21-58-26/mid-stream-1.png` and `mid-stream-2.png`
 
 Limits of verification and behavior:
-- These checks ran on macOS. Linux CI awaits an approved PR.
+- The performance budgets are measured on macOS. PR #14 runs functional CI on macOS and Ubuntu.
 - The performance suite exercises the shared diff renderer, not checkpoint latency on a very large checkout.
 - Checkpoints cover the whole checkout, including outside edits and other threads' work. A turn reuses the prior completion as its baseline, so edits between prompts can appear too. The panel warns about shared edits; worktree isolation remains Stage 11.
 - A crash can leave private temporary-index directories or unreachable Git objects. Ref deletion does not run Git garbage collection.
 
-Next: stop at the failed budget. With approval for another foreground measurement session, attribute memory against main and test a specific fix. Do not substitute the earlier passing medians or lower the limits. Stage 10 has not started.
+### Stage 9 memory follow-up, 2026-10-02
+
+The approved investigation reproduced a before-stream miss on main too, at 279.97 MiB over three runs. It did not establish a checkpoint-specific regression. Two existing sources of memory use were reduced:
+
+- The empty-state prompt/button and composer now have small compositor layers. DevTools confirmed their separate layers; `vmmap` showed that the empty state no longer allocates the three 2432×416 raster tiles seen in the original build.
+- A pnpm patch makes `@streamdown/code` share highlighters by theme pair and retain at most 128 highlighted results. The original plugin retained 452 results during one reply; clearing its cache released about 4.8 MiB. Evicted results are recomputed on demand. Four tests cover eviction/recomputation, concurrent languages and aliases, unknown fences and separate theme pairs.
+
+The unchanged PR build and the fix each ran the 1,000 tok/s case twelve times in alternating blocks, on the built-in 2x/120 Hz display. Total before-stream memory fell from 276.44 to 266.92 MiB; the GPU accounted for 8.96 MiB of that reduction. After-stream renderer memory fell from 176.45 to 172.89 MiB. Total after-stream memory fell from 506.92 to 504.57 MiB, but that smaller difference is inconclusive, with a two-sided permutation p of 0.083. [stack.md](stack.md#stage-9-memory-follow-up) records the ranges and individual samples.
+
+After removing all measurement instrumentation, the unchanged full suite passed 17 tests in 12.5 minutes. Medians of three runs:
+
+| Metric | Result | Fixed budget |
+|---|---|---|
+| Total footprint before / after 1,000 tok/s | 266.24 / 505.63 MiB | 279.4 / 510.4 MiB |
+| Total footprint before / after 200 tok/s | 266.65 / 485.65 MiB | 279.4 / 522.5 MiB |
+| Frame p95 / p99, worst normal-speed scenario | 10.1 / 10.3 ms | 16.7 / 33 ms |
+| Input to paint p95, all normal-speed scenarios | 32 ms | 32 ms |
+| Longest time behind the end, worst scenario median | 19.5 ms | 100 ms |
+| Switch to a running thread | 89.6 ms | 100 ms |
+| Cold start | 241 ms | 1,000 ms |
+
+The memory comparison used unrounded values. Every individual single-thread memory reading passed too. Input remains at its limit, and the after-1,000-tok/s median has only 4.77 MiB of headroom. No normal-speed task exceeded 50 ms. Full reports and screenshots are in `.dev/perf/stage9-memory-2026-10-02T23-37-51-876Z/`; diagnostic results are in `.dev/stage9-memory/`.
+
+Final local checks passed: frozen install, typecheck, lint, format check, 392 unit/contract tests in 42 files, both benchmark suites, build, smoke and 55 Electron tests. React Compiler compiled 82 functions without skips; smoke reached renderer readiness in 265 ms. The new cache test initially required identical internal Shiki state after recomputation. That assertion was too strict under CPU load; it now checks eviction, source and theme without depending on timing-sensitive token scopes. The rebuilt production files match the measured build byte for byte.
+
+Opened and checked the new empty-window, file-completion, turn-diff and both mid-stream screenshots. The layer probes recorded no page or console errors. Checkpoint behavior and the limits above are unchanged. The PR records fresh-clone and platform CI checks for the pushed commits.
+
+Next: review PR #14. It remains a draft; nothing has been merged, and Stage 10 has not started.
 
 ## Stage 10: Integrated terminal
 

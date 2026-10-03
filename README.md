@@ -4,7 +4,7 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The TipTap composer keeps Markdown literal, completes `@` file paths, recalls prompts with Up, and accepts images by paste, drop or the attachment button. Text and image drafts stay with their thread across restarts. The Changes panel shows per-turn Git checkpoints with a file filter and highlighted diffs. Stage 9 remains blocked on its memory budget; [docs/plan.md](docs/plan.md#stage-9-report-2026-10-02) records the failed measurements. [AGENTS.md](AGENTS.md) lists the commands.
+**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The TipTap composer keeps Markdown literal, completes `@` file paths, recalls prompts with Up, and accepts images by paste, drop or the attachment button. Text and image drafts stay with their thread across restarts. The Changes panel shows per-turn Git checkpoints with a file filter and highlighted diffs. Stage 9 awaits review. Its memory fix passes the unchanged performance budgets; [docs/plan.md](docs/plan.md#stage-9-memory-follow-up-2026-10-02) records the measurements. [AGENTS.md](AGENTS.md) lists the commands.
 
 ## Goals
 
@@ -58,6 +58,8 @@ A tondo is a circular painting or relief, a form that became popular in 15th-cen
 Built on [pi](https://github.com/earendil-works/pi) by Earendil Works. Performance ideas borrowed from [T3 Code](https://github.com/pingdotgg/t3code). Tondo is not affiliated with either project.
 
 Some of Tondo's code is adapted from T3 Code, which is MIT licensed, Copyright (c) 2026 T3 Tools Inc. Each adapted file says which T3 file it came from in its header comment. The composer's plain Markdown editor, prompt-history behavior, image thumbnails and enlarged preview follow T3's composer. Hidden-ref checkpoints and sparse-index handling follow T3's GitVcsDriver.
+
+Tondo carries a [patch](patches/@streamdown__code@1.1.1.patch) to [@streamdown/code](https://github.com/vercel/streamdown), which is Apache-2.0 licensed. It shares themed highlighters and bounds the cache of highlighted results.
 
 ## License
 
