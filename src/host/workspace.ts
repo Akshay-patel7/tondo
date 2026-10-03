@@ -31,6 +31,7 @@ import { messageTitle, SessionIndex, type SessionSummary } from "./sessionIndex"
 import type { Store, StoredProject, StoredThread } from "./store";
 import type { Supervisor } from "./supervisor";
 import { canonical } from "./trust";
+import { Terminals } from "./terminals";
 
 const v = PROTOCOL_VERSION;
 
@@ -62,6 +63,7 @@ export interface WorkspaceOptions {
   readonly copy: (text: string) => void;
   /** Asks main to show a file in Finder. */
   readonly reveal: (file: string) => void;
+  readonly terminalGroups: (pgids: number[]) => void;
 }
 
 export class Workspace {
@@ -77,6 +79,7 @@ export class Workspace {
   private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
   private readonly files = new FileIndexes();
+  private readonly terminals: Terminals;
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
   /** The threads whose pi is running, starting, asking about trust or exited. */
@@ -104,6 +107,25 @@ export class Workspace {
     this.attention = options.attention;
     this.copy = options.copy;
     this.reveal = options.reveal;
+    this.terminals = new Terminals(
+      async (threadId, kind) => {
+        const row = this.row(threadId);
+        const project = this.project(row.projectId);
+        if (await this.supervisor.needsTrustAnswer(project.path))
+          throw new Error("Answer the project's trust question before opening its terminal.");
+        return this.supervisor.terminalLaunch(project.path, kind);
+      },
+      this.send,
+      options.terminalGroups,
+    );
+  }
+
+  disconnected(): void {
+    this.terminals.detachAll();
+  }
+
+  closeTerminals(): Promise<void> {
+    return this.terminals.closeAll();
   }
 
   /** You clicked a notification about the thread. */
@@ -124,10 +146,20 @@ export class Workspace {
     this.sendSnapshot();
     this.lastSidebar = "";
     this.sendSidebar();
+    this.terminals.greet();
   }
 
   handle(message: ClientMessage): void {
     switch (message.type) {
+      case "terminal-open":
+      case "terminal-close":
+      case "terminal-attach":
+      case "terminal-detach":
+      case "terminal-write":
+      case "terminal-resize":
+      case "terminal-ack":
+        this.run(() => this.terminals.handle(message));
+        break;
       case "add-project":
         if (!this.choosing) {
           this.choosing = true;
@@ -415,6 +447,7 @@ export class Workspace {
       previous.hide();
       previous.lastUsed = Date.now();
     }
+    this.terminals.detachAll();
     this.visibleId = id;
     this.unread.delete(id);
     thread.show();
@@ -607,7 +640,10 @@ export class Workspace {
     const project = this.project(projectId);
     this.removingProjects.add(projectId);
     try {
-      const closing: Promise<void>[] = [];
+      const closing = this.store
+        .threads()
+        .filter((row) => row.projectId === projectId)
+        .map((row) => this.terminals.close(row.id));
       for (const thread of this.live.values()) {
         if (thread.projectId !== projectId) continue;
         if (thread.id === this.visibleId) {
@@ -645,6 +681,7 @@ export class Workspace {
       row.archived ||
       row.draft.trim() ||
       row.hasImages ||
+      this.terminals.has(id) ||
       this.forgettingThreads.has(id) ||
       this.removingProjects.has(row.projectId)
     )

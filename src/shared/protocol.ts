@@ -9,12 +9,13 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import type { TerminalCommand, TerminalEvent } from "./terminal";
 import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -199,6 +200,7 @@ type Versioned<T> = T & { readonly v: typeof PROTOCOL_VERSION };
 
 /** What the page asks of the host. */
 export type ClientMessage = Versioned<
+  | TerminalCommand
   /** Ask for a folder, add it as a project and start a thread there. */
   | { type: "add-project" }
   /** Forget a project and what Tondo kept about its threads. pi's session files stay. */
@@ -261,6 +263,7 @@ export type ClientMessage = Versioned<
 
 /** What the host sends the page. */
 export type HostMessage = Versioned<
+  | TerminalEvent
   /**
    * The thread on screen, whole, with its draft. The host sends it to each
    * new port, when you open a thread and when its pi starts or exits.
@@ -317,6 +320,7 @@ export type HostMessage = Versioned<
 export type MainToHostMessage =
   | { type: "connect" }
   | { type: "collect-garbage" }
+  | { type: "stop-terminals" }
   /** The folder you picked in the dialog `choose-project` asked for, or null if you cancelled. */
   | { type: "project-chosen"; folder: string | null }
   /** You clicked the notification about a thread. */
@@ -350,6 +354,7 @@ export type HostToMainMessage =
   /** Every process group the host started. Main kills them if the host dies. */
   | { type: "process-groups"; pgids: number[] }
   | { type: "garbage-collected" }
+  | { type: "terminals-stopped" }
   /** Show the folder dialog and answer with project-chosen. */
   | { type: "choose-project" }
   /**
@@ -383,6 +388,14 @@ export function parseClientMessage(data: unknown): ParseResult {
   const v = PROTOCOL_VERSION;
   const { type, threadId, projectId } = message;
   switch (type) {
+    case "terminal-open":
+    case "terminal-close":
+    case "terminal-attach":
+    case "terminal-detach":
+    case "terminal-write":
+    case "terminal-resize":
+    case "terminal-ack":
+      return parseTerminalMessage(message, type);
     case "add-project":
       return exactly(message, { v, type });
     case "remove-project":
@@ -633,6 +646,49 @@ export function parseClientMessage(data: unknown): ParseResult {
     default:
       return invalid(`unknown message type ${describe(type)}`);
   }
+}
+
+function parseTerminalMessage(
+  message: Record<string, unknown>,
+  type: TerminalCommand["type"],
+): ParseResult {
+  const { threadId, terminalId, attachment, cols, rows, data, kind, sequence } = message;
+  const bad = badThreadId(type, threadId);
+  if (bad) return invalid(bad);
+  const base = { v: PROTOCOL_VERSION, threadId: threadId as string } as const;
+  if (type === "terminal-open") {
+    if (kind !== "shell" && kind !== "login") return invalid("terminal-open: invalid kind");
+    return exactly(message, { ...base, type, kind });
+  }
+  if (badThreadId(type, terminalId)) return invalid(`${type}: invalid terminalId`);
+  const session = { ...base, terminalId: terminalId as string };
+  if (type === "terminal-close") return exactly(message, { ...session, type });
+  if (type === "terminal-write") {
+    if (typeof data !== "string" || data.length === 0 || data.length > 16_384)
+      return invalid("terminal-write: data must have 1 to 16384 characters");
+    return exactly(message, { ...session, type, data });
+  }
+  if (type === "terminal-resize" || type === "terminal-attach") {
+    if (
+      !Number.isInteger(cols) ||
+      (cols as number) < 2 ||
+      (cols as number) > 500 ||
+      !Number.isInteger(rows) ||
+      (rows as number) < 1 ||
+      (rows as number) > 200
+    )
+      return invalid(`${type}: dimensions must be 2..500 columns and 1..200 rows`);
+    const size = { cols: cols as number, rows: rows as number };
+    if (type === "terminal-resize") return exactly(message, { ...session, type, ...size });
+    if (badThreadId(type, attachment)) return invalid(`${type}: invalid attachment`);
+    return exactly(message, { ...session, type, ...size, attachment: attachment as string });
+  }
+  if (badThreadId(type, attachment)) return invalid(`${type}: invalid attachment`);
+  const attached = { ...session, attachment: attachment as string };
+  if (type === "terminal-detach") return exactly(message, { ...attached, type });
+  if (!Number.isSafeInteger(sequence) || (sequence as number) < 1)
+    return invalid("terminal-ack: sequence must be a positive integer");
+  return exactly(message, { ...attached, type, sequence: sequence as number });
 }
 
 /** Why `threadId` isn't one, or undefined if it is. The host still checks that the thread exists. */

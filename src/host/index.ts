@@ -1,5 +1,5 @@
-// The host runs in an Electron utility process and owns pi and Git. The
-// terminals come later. Main hands the host a MessagePort to the page on every
+// The host runs in an Electron utility process and owns pi, Git and PTYs.
+// Main hands the host a MessagePort to the page on every
 // page load. The host sends each new port what the page shows, and after that
 // only what changes.
 import path from "node:path";
@@ -60,7 +60,10 @@ function serve(port: MessagePortMain, workspace: Workspace): void {
     }
   });
   port.on("close", () => {
-    if (page === port) page = undefined;
+    if (page === port) {
+      page = undefined;
+      workspace.disconnected();
+    }
   });
   port.start();
   workspace.greet();
@@ -71,8 +74,9 @@ function start(): void {
   const store = Store.open(path.join(config.userData, "tondo.sqlite"));
   let piGroups: readonly number[] = [];
   let gitGroups: readonly number[] = [];
+  let terminalGroups: readonly number[] = [];
   const reportGroups = () =>
-    tellMain({ type: "process-groups", pgids: [...piGroups, ...gitGroups] });
+    tellMain({ type: "process-groups", pgids: [...piGroups, ...gitGroups, ...terminalGroups] });
   watchCheckpointGroups((pgids) => {
     gitGroups = pgids;
     reportGroups();
@@ -90,6 +94,10 @@ function start(): void {
     attention: (attention) => tellMain({ type: "attention", ...attention }),
     copy: (text) => tellMain({ type: "copy", text }),
     reveal: (file) => tellMain({ type: "reveal", path: file }),
+    terminalGroups: (pgids) => {
+      terminalGroups = pgids;
+      reportGroups();
+    },
   });
   process.parentPort.on("message", ({ data, ports }) => {
     const message = data as MainToHostMessage;
@@ -105,6 +113,16 @@ function start(): void {
         break;
       case "open-thread":
         workspace.openThread(message.threadId);
+        break;
+      case "stop-terminals":
+        void workspace.closeTerminals().then(
+          () => tellMain({ type: "terminals-stopped" }),
+          (error: unknown) => {
+            console.error("Tondo Host couldn't stop its terminals:", error);
+            // Main still owns the reported groups and cleans up after us.
+            process.exit(1);
+          },
+        );
         break;
       case "collect-garbage":
         collectGarbage().then(

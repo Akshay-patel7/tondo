@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import type { HostConfig, SettingsFile, TrustInfo } from "../shared/protocol";
 import { findPi } from "./findPi";
+import type { TerminalKind } from "../shared/terminal";
+import type { TerminalLaunch } from "./terminals";
 import { captureLoginEnv } from "./loginEnv";
 import { startPi, type PiLaunch, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
@@ -90,6 +92,27 @@ export class Supervisor {
         this.reportGroups([...this.groups]);
       },
     });
+  }
+
+  /** A shell, or a separate non-saving interactive pi using this profile's credentials. */
+  async terminalLaunch(cwd: string, kind: TerminalKind): Promise<TerminalLaunch> {
+    const env = piEnv(await this.captureLoginEnv(), this.config);
+    if (kind === "shell") {
+      return { command: env.SHELL || os.userInfo().shell || "/bin/sh", args: ["-i"], cwd, env };
+    }
+    const settings = readSettings(this.settingsFile);
+    const pi = findPi(env, settings.piPath);
+    return {
+      command: pi.node,
+      args: [
+        pi.cli,
+        "--no-session",
+        ...trustArgs(cwd, env, settings.projectTrust),
+        ...this.config.piArgs,
+      ],
+      cwd,
+      env,
+    };
   }
 
   /** Where pi, started in `cwd`, keeps the sessions it lists for `cwd`. */
