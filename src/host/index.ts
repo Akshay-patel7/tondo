@@ -75,8 +75,12 @@ function start(): void {
   let piGroups: readonly number[] = [];
   let gitGroups: readonly number[] = [];
   let terminalGroups: readonly number[] = [];
+  let actionGroups: readonly number[] = [];
   const reportGroups = () =>
-    tellMain({ type: "process-groups", pgids: [...piGroups, ...gitGroups, ...terminalGroups] });
+    tellMain({
+      type: "process-groups",
+      pgids: [...piGroups, ...gitGroups, ...terminalGroups, ...actionGroups],
+    });
   watchCheckpointGroups((pgids) => {
     gitGroups = pgids;
     reportGroups();
@@ -86,6 +90,11 @@ function start(): void {
     reportGroups();
   });
   const workspace = new Workspace({
+    userData: config.userData,
+    gitGroups: (pgids) => {
+      actionGroups = pgids;
+      reportGroups();
+    },
     store,
     supervisor,
     limits: { ...POOL_LIMITS, ...config.pool },

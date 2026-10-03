@@ -44,6 +44,14 @@ export const MIGRATIONS: readonly string[] = [
      data TEXT NOT NULL,
      PRIMARY KEY (thread_id, turn)
    ) STRICT;`,
+  `CREATE TABLE worktrees (
+     path TEXT PRIMARY KEY,
+     repository TEXT NOT NULL,
+     branch TEXT NOT NULL,
+     thread_id TEXT NOT NULL UNIQUE
+   ) STRICT;`,
+  // No foreign key: retain ownership after interrupted creation or thread deletion,
+  // so cleanup can inspect only folders Tondo actually created.
 ];
 
 /** Brings `db` up to date with `migrations`, one transaction per migration. */
@@ -95,6 +103,13 @@ export interface StoredThread {
   /** What you were writing in the composer. */
   readonly draft: string;
   readonly hasImages: boolean;
+}
+
+export interface StoredWorktree {
+  readonly path: string;
+  readonly repository: string;
+  readonly branch: string;
+  readonly threadId: string;
 }
 
 export interface StoredCheckpoint extends CheckpointTurn {
@@ -286,6 +301,22 @@ export class Store {
         "INSERT INTO checkpoint_turns (thread_id, turn, data) VALUES (?, ?, ?) ON CONFLICT (thread_id, turn) DO UPDATE SET data = excluded.data",
       )
       .run(threadId, checkpoint.turn, JSON.stringify(checkpoint));
+  }
+
+  worktrees(): StoredWorktree[] {
+    return this.db
+      .prepare("SELECT path, repository, branch, thread_id AS threadId FROM worktrees")
+      .all() as unknown as StoredWorktree[];
+  }
+
+  addWorktree(worktree: StoredWorktree): void {
+    this.db
+      .prepare("INSERT INTO worktrees (path, repository, branch, thread_id) VALUES (?, ?, ?, ?)")
+      .run(worktree.path, worktree.repository, worktree.branch, worktree.threadId);
+  }
+
+  forgetWorktree(worktreePath: string): void {
+    this.db.prepare("DELETE FROM worktrees WHERE path = ?").run(worktreePath);
   }
 
   ui(): StoredUi {

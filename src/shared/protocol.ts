@@ -9,13 +9,14 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import { isGitAction, type GitCommand, type GitEvent } from "./git";
 import type { TerminalCommand, TerminalEvent } from "./terminal";
 import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -193,6 +194,8 @@ export interface OpenThread {
   readonly askingTrust: boolean;
   /** A prompt is waiting for its Git baseline or the previous completion capture. */
   readonly preparing: boolean;
+  /** A checkout owned by this thread, rather than the project's shared local checkout. */
+  readonly worktree: boolean;
   readonly pi: PiStatus;
 }
 
@@ -200,6 +203,7 @@ type Versioned<T> = T & { readonly v: typeof PROTOCOL_VERSION };
 
 /** What the page asks of the host. */
 export type ClientMessage = Versioned<
+  | GitCommand
   | TerminalCommand
   /** Ask for a folder, add it as a project and start a thread there. */
   | { type: "add-project" }
@@ -263,6 +267,7 @@ export type ClientMessage = Versioned<
 
 /** What the host sends the page. */
 export type HostMessage = Versioned<
+  | GitEvent
   | TerminalEvent
   /**
    * The thread on screen, whole, with its draft. The host sends it to each
@@ -388,6 +393,34 @@ export function parseClientMessage(data: unknown): ParseResult {
   const v = PROTOCOL_VERSION;
   const { type, threadId, projectId } = message;
   switch (type) {
+    case "git-refresh": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      return exactly(message, { v, type, threadId: threadId as string });
+    }
+    case "git-action": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id, expectedBranch, action } = message;
+      if (
+        !Number.isSafeInteger(id) ||
+        (id as number) < 0 ||
+        !(
+          expectedBranch === null ||
+          (typeof expectedBranch === "string" && expectedBranch.length <= 250)
+        ) ||
+        !isGitAction(action)
+      )
+        return invalid("git-action: invalid action or request identity");
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        id: id as number,
+        expectedBranch,
+        action,
+      });
+    }
     case "terminal-open":
     case "terminal-close":
     case "terminal-attach":

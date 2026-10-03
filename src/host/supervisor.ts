@@ -157,7 +157,7 @@ export class Supervisor {
   }
 
   /** Your login shell's environment. The shell runs once, the first time Tondo needs it. */
-  private captureLoginEnv(): Promise<Record<string, string>> {
+  captureLoginEnv(): Promise<Record<string, string>> {
     this.loginEnv ??= captureLoginEnv(process.env).then(({ env, problem }) => {
       if (problem) {
         console.error(
