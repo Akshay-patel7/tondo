@@ -333,6 +333,23 @@ After fixing terminal padding that clipped the final row, the repeated terminal 
 
 The native-process and provider-auth probes, the Linux build requirements, and verification limits are in the [Stage 10 report](plan.md#stage-10-report-2026-10-03).
 
+### Stage 11 Git actions measurements
+
+The final run in `.dev/perf/stage11-final-2026-10-03T04-16-58/` passed 18 automated checks in 13.0 minutes, but the manual memory gate failed. Those tests record memory without asserting its limit. The fixed after-1,000-tok/s limit is 510.4 MiB. The three readings were 521.584, 510.803 and 511.506 MiB; the median is 1.106 MiB over budget. Stage 11 is blocked, with no threshold change or retry to replace the failed run.
+
+| Metric | 1,000 tok/s | 200 tok/s | 10 streaming threads |
+|---|---|---|---|
+| Frame p95 / p99 | 10.1 / 10.3 ms | 10.0 / 10.3 ms | 10.0 / 10.3 ms |
+| Input-to-paint p95 | 32 ms | 32 ms | 32 ms |
+| Total footprint before / after | 269.912 / 511.506 MiB | 273.037 / 497.600 MiB | 354.756 / 510.913 MiB |
+| Renderer footprint before / after | 66.408 / 177.095 MiB | 66.501 / 176.173 MiB | 91.470 / 153.611 MiB |
+
+The other single-thread memory medians pass their limits. Switching took 89.4 ms and cold start 250.6 ms. Port round-trip p95 was 0.10 ms; 1,000-/5,000-message snapshots took 1.6/6.6 ms. Terminal output sent 50 MiB in a median 1.893 seconds without a long task. No normal-speed streaming or diff task reached 100 ms. Input latency remains at its limit. At informational 4x slowdown, the colored diff had one 231 ms task.
+
+The earlier run in `.dev/perf/stage11-2026-10-03T03-45-37/` passed memory with 272.459 MiB before and 508.038 MiB after at 1,000 tok/s. That build preceded the final missing-worktree cleanup and pooled-terminal guard fixes. It is not the final acceptance result. No controlled A/B against main has established whether the final excess comes from Stage 11 or measurement variation.
+
+No dependencies were added. Git/`gh` run in the host. The renderer receives deduplicated status every two seconds for the visible checkout; GitHub PR status is cached for 30 seconds with a bounded cache. The ownership ledger and per-thread checkout routing are described in the [Stage 11 report](plan.md#stage-11-report-2026-10-03).
+
 ## Open questions
 
 - **How do real screens compare?** The empty-window numbers come from a trivial hidden page, not a real app.

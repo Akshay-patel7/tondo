@@ -48,6 +48,7 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 - Unpackaged runs keep app data in `.dev/userData`, with one running instance per profile. `TONDO_USER_DATA_DIR` overrides the folder, and smoke and e2e point it at temporary folders. Never run against `~/Library/Application Support/Tondo`.
 - Leave `~/.pi/agent` alone. Unpackaged runs give pi `<userData>/pi-agent` as its `PI_CODING_AGENT_DIR`, and `TONDO_PI_ARGS`, a JSON array, adds arguments to every pi, which is how e2e runs the faux provider. Runs against the real `~/.pi/agent` happen only at the plan's measurement points, and only after asking.
 - Integrated shells inherit the same scratch `PI_CODING_AGENT_DIR`. Provider sign-in runs a separate interactive pi with `--no-session`; test login with synthetic credentials in a temporary profile, never with the real auth file.
+- Managed worktrees live under `<userData>/worktrees/<thread-id>`. The host's ownership ledger survives interrupted creation so cleanup never scans arbitrary folders. Route pi, terminals, file completion, session discovery and checkpoints through the thread's checkout, not the sidebar project's path. Never automatically force-remove a worktree or delete its branch.
 - Main writes its own log and the host's to `<userData>/logs/`, as `main.log` and `host.log`.
 - Stop only processes you started, by the PID or process group you captured. Never kill by name or pattern. macOS has no `timeout` command, so scripts use Node deadlines.
 
@@ -55,6 +56,7 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 
 - Tests wait for events, never for time. T3's AGENTS.md puts it plainly: "A test that needs a timeout to pass is wrong."
 - Tests that need pi run the real pi offline with pi-ai's faux provider. docs/plan.md's "Test layers" section has the command.
+- Git tests use generated repositories and bare remotes. PR tests put a recording `gh` stub on PATH, with a test login shell that preserves it. Keep both fetch and push operations local; never test against a real remote or use live GitHub credentials.
 - UI claims come with screenshots you open and look at.
 - The build fails if the React Compiler skips a function or compiles nothing. Fix the code rather than loosening `panicThreshold`.
 - The performance budgets in docs/plan.md are fixed. Missing one stops the stage. Don't lower the bar to finish.
