@@ -62,6 +62,9 @@ const BUDGET = {
   inputP95: 32,
   switchMs: 100,
   coldStartMs: 1000,
+  /** Fixed single-thread totals from docs/plan.md, compared before rounding. */
+  memoryBeforeMiB: 279.4,
+  memoryAfterMiB: { 1000: 510.4, 200: 522.5 },
   /** docs/plan.md holds the time behind the end to the thread-switch budget. */
   lagMs: 100,
 };
@@ -184,6 +187,21 @@ test("budgets", () => {
     expect
       .soft(median(runs.map((run) => run.longestLag)), `time behind the end ${at}`)
       .toBeLessThanOrEqual(BUDGET.lagMs);
+  }
+  for (const rate of RATES) {
+    const runs = results.streams[rate];
+    expect
+      .soft(
+        median(runs.map((run) => run.memoryBefore.total)) / 2 ** 20,
+        `total memory before streaming at ${rate} tokens per second (MiB)`,
+      )
+      .toBeLessThanOrEqual(BUDGET.memoryBeforeMiB);
+    expect
+      .soft(
+        median(runs.map((run) => run.memoryAfter.total)) / 2 ** 20,
+        `total memory after streaming at ${rate} tokens per second (MiB)`,
+      )
+      .toBeLessThanOrEqual(BUDGET.memoryAfterMiB[rate]);
   }
   expect
     .soft(median(results.switches), "switch to a running thread")
@@ -405,6 +423,7 @@ function formatReport(): string {
     ``,
     `Machine: ${results.machine}. Frame interval ${intervals.length > 0 ? time(median(intervals)) : "not measured"}.`,
     `Medians of ${RUNS} runs, each run in parentheses. Memory counts Tondo's processes, not pi's.`,
+    `Memory limits apply to single-thread total medians, compared before rounding.`,
     `In the last column, ${BUSY_THREADS - 1} other threads stream the reply too, with ${FOLLOW_UPS} follow-ups queued so they outlast the thread on screen.`,
     ``,
     `| Metric | Budget | 1,000 tok/s | 200 tok/s | 1,000 tok/s, ${BUSY_THREADS} threads streaming |`,
@@ -417,8 +436,18 @@ function formatReport(): string {
     perStream(behindLabel, "100 ms or less", (run) => run.longestLag),
     perStream("Input to paint p95", "32 ms or less", (run) => run.inputP95, input),
     perStream("Keys typed", "", (run) => run.keys, String),
-    perStream("Memory, all processes, before", "baseline", (run) => run.memoryBefore.total, mib),
-    perStream("Memory, all processes, after", "baseline", (run) => run.memoryAfter.total, mib),
+    perStream(
+      "Memory, all processes, before",
+      `${BUDGET.memoryBeforeMiB} MiB, single thread`,
+      (run) => run.memoryBefore.total,
+      mib,
+    ),
+    perStream(
+      "Memory, all processes, after",
+      `${BUDGET.memoryAfterMiB[1000]} / ${BUDGET.memoryAfterMiB[200]} MiB, single thread`,
+      (run) => run.memoryAfter.total,
+      mib,
+    ),
     perStream("Memory, renderer, before", "baseline", (run) => run.memoryBefore.renderer, mib),
     perStream("Memory, renderer, after", "baseline", (run) => run.memoryAfter.renderer, mib),
     perStream("Memory, host, before", "", (run) => run.memoryBefore.host, mib),

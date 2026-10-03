@@ -76,6 +76,38 @@ test("pi's reply streams in as pi writes it", async () => {
   expect(Math.max(...seen)).toBeLessThanOrEqual(answer.length);
 });
 
+test("markdown code controls stay usable without backdrop blur in both themes", async () => {
+  const code = "const answer = 42;";
+  const page = await start({ responses: [reply(`\`\`\`typescript\n${code}\n\`\`\``)] });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  // Exercise Copy without replacing the user's clipboard.
+  const copied = await page.evaluateHandle(() => {
+    const values: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void values.push(text) },
+    });
+    return values;
+  });
+  await send(page, "Show the code.");
+  await waitForIdle(page);
+  await expect(page.locator("pre")).toContainText(code);
+  await expect(page.locator("pre span[style*='--shiki-dark']").first()).toBeVisible();
+  const actions = page.locator('[data-streamdown="code-block-actions"]');
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(actions).toHaveCSS("backdrop-filter", "none");
+  await page.screenshot({ path: "test-results/code-controls-light.png" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(actions).toHaveCSS("backdrop-filter", "none");
+  await page.screenshot({ path: "test-results/code-controls-dark.png" });
+  await actions.getByRole("button", { name: "Copy Code", exact: true }).click();
+  await expect.poll(() => copied.jsonValue()).toEqual([`${code}\n`]);
+  expect(errors).toEqual([]);
+});
+
 test("Escape stops pi mid-reply", async () => {
   const answer = words(3000);
   const page = await start({

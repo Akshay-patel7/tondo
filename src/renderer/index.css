@@ -83,6 +83,12 @@
   }
 }
 
+/* Keep code controls legible without a separate backdrop-filter compositing layer. */
+[data-streamdown="code-block-actions"] {
+  background-color: var(--sidebar);
+  backdrop-filter: none;
+}
+
 /* Markdown stays literal. Each paragraph is one line, including empty lines. */
 .composer-editor {
   white-space: pre-wrap;
