@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { DraftImage } from "../shared/images";
+import type { CheckpointTurn } from "../shared/checkpoints";
 
 /**
  * Migration n takes the store from version n to n + 1. A store's version is
@@ -36,6 +37,12 @@ export const MIGRATIONS: readonly string[] = [
   `CREATE TABLE draft_images (
      thread_id TEXT PRIMARY KEY REFERENCES threads (id) ON DELETE CASCADE,
      images TEXT NOT NULL
+   ) STRICT;`,
+  `CREATE TABLE checkpoint_turns (
+     thread_id TEXT NOT NULL REFERENCES threads (id) ON DELETE CASCADE,
+     turn INTEGER NOT NULL,
+     data TEXT NOT NULL,
+     PRIMARY KEY (thread_id, turn)
    ) STRICT;`,
 ];
 
@@ -88,6 +95,11 @@ export interface StoredThread {
   /** What you were writing in the composer. */
   readonly draft: string;
   readonly hasImages: boolean;
+}
+
+export interface StoredCheckpoint extends CheckpointTurn {
+  readonly root: string | null;
+  readonly baseline: boolean;
 }
 
 /** The window's state that outlives a restart. */
@@ -259,6 +271,21 @@ export class Store {
         )
         .run(threadId, JSON.stringify(images));
     }
+  }
+
+  checkpoints(threadId: string): StoredCheckpoint[] {
+    const rows = this.db
+      .prepare("SELECT data FROM checkpoint_turns WHERE thread_id = ? ORDER BY turn")
+      .all(threadId) as { data: string }[];
+    return rows.map(({ data }) => JSON.parse(data) as StoredCheckpoint);
+  }
+
+  saveCheckpoint(threadId: string, checkpoint: StoredCheckpoint): void {
+    this.db
+      .prepare(
+        "INSERT INTO checkpoint_turns (thread_id, turn, data) VALUES (?, ?, ?) ON CONFLICT (thread_id, turn) DO UPDATE SET data = excluded.data",
+      )
+      .run(threadId, checkpoint.turn, JSON.stringify(checkpoint));
   }
 
   ui(): StoredUi {

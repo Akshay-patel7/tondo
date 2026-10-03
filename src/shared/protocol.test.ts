@@ -25,6 +25,8 @@ describe("parseClientMessage", () => {
       { v, type: "set-draft", threadId, text: "" },
       { v, type: "set-draft", threadId, text: "half a thought" },
       { v, type: "list-files", threadId, id: 1 },
+      { v, type: "list-checkpoints", threadId },
+      { v, type: "read-checkpoint", threadId, id: 1, turn: 2 },
       { v, type: "set-draft-images", threadId, images: [IMAGE_FIXTURE] },
       { v, type: "set-draft-images", threadId, images: [] },
       {
@@ -66,6 +68,21 @@ describe("parseClientMessage", () => {
       expect(result).toEqual({ ok: true, message });
       if (result.ok) expect(result.message).not.toBe(message);
     }
+  });
+
+  it("checks checkpoint identities and forbids paths or Git arguments from the page", () => {
+    for (const turn of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1", null]) {
+      expect(rejection({ v, type: "read-checkpoint", threadId: "t", id: 1, turn })).toContain(
+        "valid integers",
+      );
+    }
+    expect(rejection({ v, type: "list-checkpoints", threadId: "" })).toContain("threadId");
+    expect(rejection({ v, type: "read-checkpoint", threadId: "t", id: -1, turn: 1 })).toContain(
+      "valid integers",
+    );
+    expect(
+      rejection({ v, type: "read-checkpoint", threadId: "t", id: 1, turn: 1, path: "/outside" }),
+    ).toContain("unexpected field");
   });
 
   it("rejects anything that isn't an object", () => {

@@ -28,7 +28,7 @@ describe("migrate", () => {
     const db = new DatabaseSync(":memory:");
     migrate(db);
     expect(version(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(["draft_images", "projects", "threads", "ui"]);
+    expect(tables(db)).toEqual(["checkpoint_turns", "draft_images", "projects", "threads", "ui"]);
   });
 
   it("does nothing to a store that's up to date", () => {
@@ -95,6 +95,28 @@ describe("migrate", () => {
 });
 
 describe("Store", () => {
+  it("persists checkpoint metadata and deletes it with its thread", () => {
+    const file = path.join(dir, "checkpoints.sqlite");
+    let store = Store.open(file);
+    const project = store.addProject("/work/a", 1);
+    store.addThread({ id: "t", projectId: project.id, sessionFile: null, createdAt: 2 });
+    const checkpoint = {
+      turn: 1,
+      startedAt: 3,
+      state: "ready" as const,
+      reason: null,
+      root: "/work/a",
+      baseline: true,
+    };
+    store.saveCheckpoint("t", checkpoint);
+    store.close();
+    store = Store.open(file);
+    expect(store.checkpoints("t")).toEqual([checkpoint]);
+    store.removeThread("t");
+    expect(store.checkpoints("t")).toEqual([]);
+    store.close();
+  });
+
   it("keeps projects, threads and the window's state across a restart", () => {
     const file = path.join(dir, "nested", "tondo.sqlite");
     const store = Store.open(file);

@@ -5,6 +5,7 @@ import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
 import { toggleSidebar, useHost } from "./connection";
 import { DialogPanel } from "./extensionUi/DialogPanel";
+import { DiffPanel, toggleDiffPanel, useDiffPanel } from "./diffs/DiffPanel";
 import { useExtensionUi } from "./extensionUi/store";
 import { StatusLine, Widgets } from "./extensionUi/Widgets";
 import { folderName } from "./format";
@@ -64,6 +65,7 @@ function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
   const title = useHost((host) => host.thread?.title);
   const project = useHost((host) => host.thread?.project);
   const connection = useHost((host) => host.connection);
+  const changesOpen = useDiffPanel((open) => open);
   return (
     // The header gets its own compositing layer. In the page's layer its text
     // would need a raster tile as wide as the window, 3.9 MiB at 2x, redrawn
@@ -94,6 +96,16 @@ function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
           {folderName(project)}
         </span>
       )}
+      {project === undefined ? null : (
+        <button
+          type="button"
+          aria-pressed={changesOpen}
+          onClick={toggleDiffPanel}
+          className="app-no-drag ml-auto rounded-control px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+        >
+          Changes
+        </button>
+      )}
       {connection === "reconnecting" ? (
         <span role="status" className="shrink-0 text-xs text-warning">
           Reconnecting…
@@ -115,23 +127,27 @@ function Thread() {
   const threadId = useHost((host) => host.thread?.id);
   const threadKey = useThreadKey((key) => key);
   const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
+  const changesOpen = useDiffPanel((open) => open);
   return (
-    <>
-      <main className="min-h-0 flex-1">
-        <Timeline key={threadKey} />
-      </main>
-      <footer className="shrink-0 px-4 pb-4">
-        <div className="mx-auto max-w-3xl">
-          <Banners />
-          <QueueList />
-          <Widgets placement="aboveEditor" />
-          {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
-          <DialogPanel />
-          <Composer key={threadId} hidden={asking} />
-          <Widgets placement="belowEditor" />
-          <StatusLine />
-        </div>
-      </footer>
-    </>
+    <div className="flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main className="min-h-0 flex-1">
+          <Timeline key={threadKey} />
+        </main>
+        <footer className="shrink-0 px-4 pb-4">
+          <div className="mx-auto max-w-3xl">
+            <Banners />
+            <QueueList />
+            <Widgets placement="aboveEditor" />
+            {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
+            <DialogPanel />
+            <Composer key={threadId} hidden={asking} />
+            <Widgets placement="belowEditor" />
+            <StatusLine />
+          </div>
+        </footer>
+      </div>
+      {changesOpen ? <DiffPanel key={threadId} /> : null}
+    </div>
   );
 }

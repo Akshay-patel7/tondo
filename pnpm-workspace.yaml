@@ -12,3 +12,7 @@ overrides:
   # @pierre/diffs asks for @shikijs/transformers ^3 || ^4, and 4.x brings a
   # second copy of Shiki's core. Pin it to the Shiki that @streamdown/code uses.
   "@pierre/diffs>@shikijs/transformers": 3.23.0
+patchedDependencies:
+  # Share highlighters by theme pair and retain only 128 token results. The
+  # unpatched plugin keeps every intermediate streaming block indefinitely.
+  "@streamdown/code@1.1.1": patches/@streamdown__code@1.1.1.patch

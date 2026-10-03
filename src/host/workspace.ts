@@ -20,6 +20,8 @@ import {
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
 import { FileIndexes } from "./fileIndex";
+import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
+import { TurnCheckpoints } from "./turnCheckpoints";
 import type { DraftImage } from "../shared/images";
 import { LiveThread, type ThreadListener } from "./liveThread";
 import { PiExitError } from "./piProcess";
@@ -85,6 +87,8 @@ export class Workspace {
   private readonly unread = new Set<string>();
   private visibleId: string | null = null;
   private choosing = false;
+  private readonly removingProjects = new Set<number>();
+  private readonly forgettingThreads = new Set<string>();
   private indexing: Promise<void> = Promise.resolve();
   private refreshQueued = false;
   private sidebarTimer: NodeJS.Timeout | undefined;
@@ -174,6 +178,22 @@ export class Workspace {
           this.row(message.threadId);
           this.store.setDraftImages(message.threadId, message.images);
           this.scheduleSidebar();
+        });
+        break;
+      case "list-checkpoints":
+        this.run(() => this.sendCheckpoints(this.running(message.threadId)));
+        break;
+      case "read-checkpoint":
+        this.run(async () => {
+          const diff = await this.running(message.threadId).checkpoints.diff(message.turn);
+          this.send({
+            v,
+            type: "checkpoint-diff",
+            threadId: message.threadId,
+            id: message.id,
+            turn: message.turn,
+            diff,
+          });
         });
         break;
       case "list-files":
@@ -401,7 +421,7 @@ export class Workspace {
     thread.lastUsed = Date.now();
     this.store.setUi("openThread", id);
     this.sendSnapshot();
-    if (previous) this.forgetIfUnused(previous.id);
+    if (previous) this.run(() => this.forgetIfUnused(previous.id));
     this.sendSidebar();
     this.checkPool();
   }
@@ -415,10 +435,36 @@ export class Workspace {
       { id, file: row.sessionFile },
       this.supervisor,
       this.listen(() => thread),
+      new TurnCheckpoints(this.store, id, project.path, () => {
+        const current = this.live.get(id);
+        if (current?.visible) this.run(() => this.sendCheckpoints(current));
+        this.checkPool();
+      }),
     );
     this.live.set(id, thread);
     this.run(() => thread.open());
     return thread;
+  }
+
+  private async sendCheckpoints(thread: LiveThread): Promise<void> {
+    let unavailable: string | null = null;
+    try {
+      if (!(await checkpointRoot(thread.project)))
+        unavailable = "This folder is not a Git checkout. Turn diffs need Git.";
+    } catch (error) {
+      unavailable = error instanceof Error ? error.message : String(error);
+    }
+    const shared = [...this.live.values()].some(
+      (other) => other.id !== thread.id && other.project === thread.project,
+    );
+    this.send({
+      v,
+      type: "checkpoints",
+      threadId: thread.id,
+      turns: thread.checkpoints.turns,
+      shared,
+      unavailable,
+    });
   }
 
   private listen(self: () => LiveThread): ThreadListener {
@@ -558,46 +604,89 @@ export class Workspace {
   }
 
   private async removeProject(projectId: number): Promise<void> {
-    this.project(projectId);
-    const closing: Promise<void>[] = [];
-    for (const thread of this.live.values()) {
-      if (thread.projectId !== projectId) continue;
-      if (thread.id === this.visibleId) {
-        this.visibleId = null;
-        this.store.setUi("openThread", null);
+    const project = this.project(projectId);
+    this.removingProjects.add(projectId);
+    try {
+      const closing: Promise<void>[] = [];
+      for (const thread of this.live.values()) {
+        if (thread.projectId !== projectId) continue;
+        if (thread.id === this.visibleId) {
+          this.visibleId = null;
+          this.store.setUi("openThread", null);
+        }
+        closing.push(this.letGo(thread));
       }
-      closing.push(this.letGo(thread));
+      if (this.visibleId === null) this.sendSnapshot();
+      await Promise.all(closing);
+      for (const [id, entry] of this.found) {
+        if (entry.projectId === projectId) this.found.delete(id);
+      }
+      for (const row of this.store.threads().filter((stored) => stored.projectId === projectId)) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- delete refs before forgetting their owner.
+        await this.deleteThreadCheckpoints(row.id, project.path);
+      }
+      this.store.removeProject(projectId);
+      this.sendSidebar();
+    } finally {
+      this.removingProjects.delete(projectId);
     }
-    for (const [id, entry] of this.found) {
-      if (entry.projectId === projectId) this.found.delete(id);
-    }
-    this.store.removeProject(projectId);
-    if (this.visibleId === null) this.sendSnapshot();
-    this.sendSidebar();
-    await Promise.all(closing);
   }
 
   /**
    * Forgets a new thread you left without writing anything, so new threads
    * you don't use don't pile up in the sidebar.
    */
-  private forgetIfUnused(id: string): void {
+  private async forgetIfUnused(id: string): Promise<void> {
     const row = this.store.thread(id);
     const thread = this.live.get(id);
-    if (!row || row.pinned || row.archived || row.draft.trim() || row.hasImages) return;
+    if (
+      !row ||
+      row.pinned ||
+      row.archived ||
+      row.draft.trim() ||
+      row.hasImages ||
+      this.forgettingThreads.has(id) ||
+      this.removingProjects.has(row.projectId)
+    )
+      return;
     if (row.sessionFile !== null && existsSync(row.sessionFile)) return;
     // An extension command can wait on your answer before the thread has a message.
-    if (thread && (thread.state.messages.length > 0 || thread.state.running || thread.waiting)) {
+    if (
+      thread &&
+      (thread.state.messages.length > 0 ||
+        thread.state.running ||
+        thread.waiting ||
+        thread.preparing ||
+        thread.checkpoints.busy)
+    ) {
       return;
     }
-    this.store.removeThread(id);
-    if (thread) this.run(() => this.letGo(thread));
+    const project = this.project(row.projectId);
+    this.forgettingThreads.add(id);
+    try {
+      if (thread) await this.letGo(thread);
+      await this.deleteThreadCheckpoints(id, project.path);
+      this.store.removeThread(id);
+      this.sendSidebar();
+    } finally {
+      this.forgettingThreads.delete(id);
+    }
+  }
+
+  private async deleteThreadCheckpoints(id: string, project: string): Promise<void> {
+    const roots = new Set(this.store.checkpoints(id).map((record) => record.root));
+    roots.add(await checkpointRoot(project));
+    for (const root of roots) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- delete one repository's refs at a time.
+      if (root) await deleteCheckpoints(root, id);
+    }
   }
 
   /** Forgets, after Tondo starts, the new threads you left without writing anything. */
-  private forgetUnused(): void {
+  private async forgetUnused(): Promise<void> {
     for (const row of this.store.threads()) {
-      if (row.id !== this.visibleId) this.forgetIfUnused(row.id);
+      // oxlint-disable-next-line eslint/no-await-in-loop -- finish cleanup before advancing to the next row.
+      if (row.id !== this.visibleId) await this.forgetIfUnused(row.id);
     }
     this.sendSidebar();
   }
@@ -727,6 +816,7 @@ export class Workspace {
       project: thread.project,
       title: this.titleOf(thread.id),
       askingTrust: thread.askingTrust,
+      preparing: thread.preparing,
       pi: thread.status,
     };
   }
@@ -747,6 +837,7 @@ export class Workspace {
 
   /** The thread's row in Tondo's store. A session pi wrote outside Tondo gets one the first time you use it. */
   private row(id: string): StoredThread {
+    if (this.forgettingThreads.has(id)) throw new Error("This unused thread is being removed.");
     const row = this.store.thread(id);
     if (row) return row;
     const found = this.found.get(id);
@@ -757,6 +848,7 @@ export class Workspace {
   }
 
   private project(id: number): StoredProject {
+    if (this.removingProjects.has(id)) throw new Error("This project is being removed.");
     const project = this.store.projects().find((candidate) => candidate.id === id);
     if (!project) throw new Error(`Tondo has no project ${id}.`);
     return project;

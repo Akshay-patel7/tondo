@@ -42,6 +42,7 @@ const open: OpenThread = {
   project: "/work/tondo",
   title: "Thread a",
   askingTrust: false,
+  preparing: false,
   pi: { state: "stopped" },
 };
 

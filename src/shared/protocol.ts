@@ -9,11 +9,12 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -189,6 +190,8 @@ export interface OpenThread {
   readonly title: string;
   /** Whether Tondo is waiting to hear if pi may load the project's own settings and extensions. */
   readonly askingTrust: boolean;
+  /** A prompt is waiting for its Git baseline or the previous completion capture. */
+  readonly preparing: boolean;
   readonly pi: PiStatus;
 }
 
@@ -212,6 +215,8 @@ export type ClientMessage = Versioned<
   | { type: "set-draft-images"; threadId: string; images: readonly DraftImage[] }
   /** List project files for @ completion, correlated so stale scans can't replace a new menu. */
   | { type: "list-files"; threadId: string; id: number }
+  | { type: "list-checkpoints"; threadId: string }
+  | { type: "read-checkpoint"; threadId: string; turn: number; id: number }
   | { type: "set-sidebar-hidden"; hidden: boolean }
   /** Look for sessions pi wrote outside Tondo, such as in its own interface. */
   | { type: "refresh" }
@@ -275,6 +280,14 @@ export type HostMessage = Versioned<
   | { type: "status"; thread: OpenThread }
   | { type: "sidebar"; projects: SidebarProject[] }
   | { type: "files"; threadId: string; id: number; index: FileIndex }
+  | {
+      type: "checkpoints";
+      threadId: string;
+      turns: readonly CheckpointTurn[];
+      shared: boolean;
+      unavailable: string | null;
+    }
+  | { type: "checkpoint-diff"; threadId: string; turn: number; id: number; diff: CheckpointDiff }
   /** Images stay saved until pi accepts them. A failed send leaves them in the draft. */
   | { type: "image-send-ended"; threadId: string; imageIds: readonly string[]; sent: boolean }
   /** The window's state that outlives a restart. The host sends it to each new port. */
@@ -460,6 +473,30 @@ export function parseClientMessage(data: unknown): ParseResult {
         return invalid(`list-files: id must be a nonnegative integer, not ${describe(id)}`);
       }
       return exactly(message, { v, type, threadId: threadId as string, id: id as number });
+    }
+    case "list-checkpoints": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      return exactly(message, { v, type, threadId: threadId as string });
+    }
+    case "read-checkpoint": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id, turn } = message;
+      if (
+        !Number.isSafeInteger(id) ||
+        (id as number) < 0 ||
+        !Number.isSafeInteger(turn) ||
+        (turn as number) < 1
+      )
+        return invalid("read-checkpoint: id and turn must be valid integers");
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        id: id as number,
+        turn: turn as number,
+      });
     }
     case "set-sidebar-hidden": {
       const { hidden } = message;

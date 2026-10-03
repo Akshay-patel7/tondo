@@ -94,9 +94,11 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const [loadingImages, setLoadingImages] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const pi = usePi();
-  const working = useThread(
+  const preparing = useHost((host) => host.thread?.preparing ?? false);
+  const piWorking = useThread(
     (thread) => thread.running || thread.compaction !== null || thread.retry !== null,
   );
+  const working = preparing || piWorking;
   const queued = useThread(
     (thread) => thread.queue.steering.length + thread.queue.followUp.length > 0,
   );
@@ -261,6 +263,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
     return true;
   };
 
+  // Give the card its own raster layer instead of using the wider footer.
   return (
     <div
       hidden={hidden}
@@ -279,7 +282,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
         event.stopPropagation();
         void attach([...event.dataTransfer.files]);
       }}
-      className="rounded-panel border border-border bg-card shadow-composer focus-within:border-ring"
+      className="rounded-panel border border-border bg-card shadow-composer will-change-transform focus-within:border-ring"
     >
       {query === null ? null : (
         <SlashMenu
