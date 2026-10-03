@@ -66,7 +66,18 @@ describe("drainGroup", () => {
     expect(signalGroup(pgid, 0)).toBe(true);
     await drainGroup(pgid, 5_000);
     expect(signalGroup(pgid, 0)).toBe(false);
-    expect(() => process.kill(orphan, 0)).toThrow("ESRCH");
+    // A stopped group may still contain an exited PID waiting for init to reap it.
+    await expect
+      .poll(() => {
+        try {
+          process.kill(orphan, 0);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+          throw error;
+        }
+      })
+      .toBe(false);
   });
 
   // macOS answers EPERM when a group holds only exited processes nobody has
@@ -91,6 +102,8 @@ describe("drainGroup", () => {
         const [line] = (await once(holder.stdout, "data")) as [string];
         const pgid = Number(line.trim());
         expect(() => process.kill(-pgid, 0)).toThrow("EPERM");
+        // A positive-PID probe still succeeds for this zombie. It isn't proof of a live helper.
+        expect(() => process.kill(pgid, 0)).not.toThrow();
         expect(signalGroup(pgid, 0)).toBe(false);
         await drainGroup(pgid, 100);
       } finally {
