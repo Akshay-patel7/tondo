@@ -838,36 +838,40 @@ The earlier run, `.dev/perf/stage11-2026-10-03T03-45-37/`, passed with 272.459 M
 
 ### Stage 11 CI and memory follow-up, 2026-10-03
 
-The follow-up fixes two CI test races, the image-send-after-Stop race found during full-suite verification, and an existing GPU memory cost in Markdown rendering.
+The follow-up fixes CI failures, image admission after Stop and terminal shutdown. It also removes an existing GPU memory cost in Markdown rendering.
 
 - On macOS, a helper can have exited while its PID still awaits reaping. The zombie answers `kill(pid, 0)` even though its process group has stopped. The process tests now poll for PID disappearance, and the zombie test asserts this difference. The focused suites passed twenty consecutive runs.
 - A Git test mistook the previous thread's visible Model picker for the new thread's readiness. It now waits for the target heading before waiting for pi. The unchanged Linux build failed 3 of 40 Git cases; the readiness fix passed 40 of 40. Forty repeated macOS Git cases passed too. No guard assertion or timeout was weakened.
 - After Stop, the composer can become idle while the completion checkpoint is still saving files. The host rejected an image in that interval. A deterministic test holds a real Git clean filter open and reproduced the rejection with every busy flag false except checkpoint work. Image prompts now wait through the existing checkpoint-preparation path. Active pi work, queued prompts and pending sends still block them. The pool and Git actions retain the full busy guard. The deterministic case and the original image test passed 24 repeated runs after the fix.
 - Markdown code-action controls now use an opaque theme background instead of backdrop blur. Twelve interleaved runs per build lowered median total memory after streaming from 509.780 to 460.670 MiB. GPU footprint accounts for most of the reduction. [stack.md](stack.md#stage-11-ci-and-memory-follow-up) records the samples and attribution. The memory runner now asserts the existing limits on unrounded medians; replaying the original failed result correctly fails the new assertion.
 
-The final macOS checks passed typecheck, lint, formatting, 456 unit tests in 49 files, build and smoke. Smoke reported 285 ms to renderer readiness. Full E2E passed 66 tests in 3.2 minutes after the image fix; the earlier full run's image failure is retained in `.dev/stage11-fix/root-e2e.log`. Code-control screenshots in both themes were opened and inspected, and the test clicks Copy and checks its exact text without changing the user's clipboard.
+The first macOS checks passed typecheck, lint, formatting, 456 unit tests in 49 files, build and smoke. Smoke reported 285 ms to renderer readiness. Full E2E passed 66 tests in 3.2 minutes after the image fix; the earlier full run's image failure is retained in `.dev/stage11-fix/root-e2e.log`. Code-control screenshots in both themes were opened and inspected, and the test clicks Copy and checks its exact text without changing the user's clipboard.
 
 Fresh-clone verification then caught a queue test using the Stop button as proof that pi was running. Stop also appears during checkpoint preparation. The steering and queue-recall tests now wait for the tool's running state before sending queued prompts; sixty focused repetitions passed. This changes tests only, not the measured application. The first clone's 65-pass/1-fail E2E log is retained in `.dev/stage11-fix/landing/tip-e2e.log`.
 
 The first PR #17 CI run passed all 66 E2E tests on Ubuntu but left a closed provider-sign-in terminal visible on macOS. The PTY's exit event can arrive after process-group cleanup and session removal; publishing that late event reopened the drawer with `Exited (0)`. New unit tests force that ordering for both removed and replaced sessions and failed before the fix. Terminal state now publishes only while the same session is still registered. A naturally exited terminal still retains its output until explicitly closed.
 
-The initial full performance run passed 18 checks in 13.0 minutes, including the new memory assertions. It used the built-in 2x/120 Hz display, the original measurement helper and no placement override. Artifacts are in `.dev/perf/stage11-ci-memory-2026-10-03T07-00-41-978Z/`.
+After the terminal fix, every code commit passed frozen install, typecheck, lint, formatting, unit tests and build in a fresh clone. The tip passed 459 unit tests in 49 files, benchmarks, smoke, all 66 E2E tests and twenty repeated provider sign-ins. Local Ubuntu 24.04 arm64 passed 456 unit tests with three platform skips, smoke and all 66 E2E tests. Both jobs in [CI run 37108556803](https://github.com/Akshay-patel7/tondo/actions/runs/37108556803) passed too. Logs and screenshots are retained in `.dev/stage11-fix/`.
+
+The initial full performance run passed 18 checks in 13.0 minutes, including the new memory assertions. Its after-stream medians were 461.866 MiB at 1,000 tok/s and 440.709 MiB at 200 tok/s. Artifacts remain in `.dev/perf/stage11-ci-memory-2026-10-03T07-00-41-978Z/`.
+
+The build with the terminal fix passed another full 18-check performance run in 13.0 minutes. It used the built-in 2x/120 Hz display, the original measurement helper and no placement override. The final artifacts are in `.dev/perf/stage11-ci-terminal-2026-10-03T08-17-19-796Z/`.
 
 | Metric | Unchanged limit | Final median |
 |---|---|---|
-| Total before, 1,000 / 200 tok/s | 279.4 MiB | 271.147 / 271.334 MiB |
-| Total after 1,000 tok/s | 510.4 MiB | 461.866 MiB |
-| Total after 200 tok/s | 522.5 MiB | 440.709 MiB |
+| Total before, 1,000 / 200 tok/s | 279.4 MiB | 270.881 / 272.256 MiB |
+| Total after 1,000 tok/s | 510.4 MiB | 461.178 MiB |
+| Total after 200 tok/s | 522.5 MiB | 439.475 MiB |
 | Frame p95 / p99, 1,000 tok/s | 16.7 / 33 ms | 10.1 / 10.3 ms |
 | Frame p95 / p99, 200 tok/s and ten streaming threads | 16.7 / 33 ms | 10.0 / 10.3 ms |
-| Input p95, single-thread / ten-thread cases | 32 ms | 32 / 24 ms |
-| Switch to a running thread | 100 ms | 90.1 ms |
-| Cold start | 1,000 ms | 241.3 ms |
+| Input p95, single-thread / ten-thread cases | 32 ms | 32 / 32 ms |
+| Switch to a running thread | 100 ms | 90.3 ms |
+| Cold start | 1,000 ms | 241.1 ms |
 | Normal-speed tasks at least 100 ms | None | None in streaming, diffs or terminal output |
-| Terminal output | No task at least 100 ms | 50 MiB in 1.893 seconds |
+| Terminal output | No task at least 100 ms | 50 MiB in 1.892 seconds |
 | Port round-trip p95 | Under 1 ms | 0.10 ms |
 
-The raw memory medians pass, and every individual single-thread reading passes too. The after-1,000-tok/s readings were 461.866, 459.506 and 467.787 MiB. Input latency remains at its single-thread limit. At informational 4x slowdown, the colored diff had one 220 ms task. Both mid-stream screenshots and the normal-speed terminal screenshot were opened and inspected.
+The raw memory medians pass, and every individual single-thread reading passes too. The after-1,000-tok/s readings were 473.100, 455.475 and 461.178 MiB. Input latency is at its limit in all three cases. At informational 4x slowdown, the colored diff had one 221 ms task. Both final mid-stream screenshots, the normal-speed terminal screenshot and the closed sign-in drawer screenshot were opened and inspected.
 
 The earlier macOS create-worktree dialog timeout did not recur in the forty repeated Git cases; its specific cause remains unproven. Live GitHub writes, real credentials, arbitrary hooks and unusual remote layouts remain outside the generated-repository tests. No dependencies, safety policy or performance limits changed. Stage 12 remains unstarted.
 
