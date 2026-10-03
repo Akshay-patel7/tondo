@@ -335,7 +335,7 @@ The native-process and provider-auth probes, the Linux build requirements, and v
 
 ### Stage 11 Git actions measurements
 
-The final run in `.dev/perf/stage11-final-2026-10-03T04-16-58/` passed 18 automated checks in 13.0 minutes, but the manual memory gate failed. Those tests record memory without asserting its limit. The fixed after-1,000-tok/s limit is 510.4 MiB. The three readings were 521.584, 510.803 and 511.506 MiB; the median is 1.106 MiB over budget. Stage 11 is blocked, with no threshold change or retry to replace the failed run.
+The final run in `.dev/perf/stage11-final-2026-10-03T04-16-58/` passed 18 automated checks in 13.0 minutes, but the manual memory gate failed. Those tests record memory without asserting its limit. The fixed after-1,000-tok/s limit is 510.4 MiB. The three readings were 521.584, 510.803 and 511.506 MiB; the median is 1.106 MiB over budget. That blocked Stage 11. The follow-up below keeps the failed run and the same thresholds.
 
 | Metric | 1,000 tok/s | 200 tok/s | 10 streaming threads |
 |---|---|---|---|
@@ -349,6 +349,29 @@ The other single-thread memory medians pass their limits. Switching took 89.4 ms
 The earlier run in `.dev/perf/stage11-2026-10-03T03-45-37/` passed memory with 272.459 MiB before and 508.038 MiB after at 1,000 tok/s. That build preceded the final missing-worktree cleanup and pooled-terminal guard fixes. It is not the final acceptance result. No controlled A/B against main has established whether the final excess comes from Stage 11 or measurement variation.
 
 No dependencies were added. Git/`gh` run in the host. The renderer receives deduplicated status every two seconds for the visible checkout; GitHub PR status is cached for 30 seconds with a bounded cache. The ownership ledger and per-thread checkout routing are described in the [Stage 11 report](plan.md#stage-11-report-2026-10-03).
+
+### Stage 11 CI and memory follow-up
+
+After PR #16 merged, the user authorized fixing CI and the memory miss. The memory comparison used merged main `0d1ae61` and a build whose only application change was an opaque background instead of backdrop blur on Markdown's code-action controls. Both ran the same instrumented measurement helper on the built-in 2x/120 Hz display. Four alternating blocks of three fresh app runs per build reversed order every other round. There was no placement override or settling wait.
+
+| Footprint, MiB | Main median | Opaque controls median | Main range | Opaque controls range |
+|---|---|---|---|---|
+| Total before | 273.201 | 272.576 | 268.068–277.459 | 267.990–276.943 |
+| Total after | 509.780 | 460.670 | 502.428–515.741 | 455.694–467.584 |
+| Renderer after | 176.892 | 170.072 | 170.548–178.314 | 150.236–176.580 |
+| GPU after | 254.040 | 209.595 | 248.173–257.220 | 203.954–225.157 |
+| GPU IOSurface after | 113.672 | 81.578 | 110.453–115.000 | 77.391–94.531 |
+
+The after-stream total fell by 49.109 MiB. GPU footprint fell by 44.445 MiB, including 32.094 MiB in IOSurface allocations. Separate `LayerTree.compositingReasons` captures identified the code-action controls' backdrop filter; that reason disappeared with the fix. `vmmap` showed 113.1 MiB of resident IOSurface allocations before and 85.0 MiB with the fix. Virtual allocation size and region count did not fall, so those are not substitutes for physical footprint.
+
+After-stream total samples, in MiB:
+
+- Main: 513.069, 506.803, 509.366, 511.272, 509.741, 509.819, 503.241, 510.803, 508.897, 513.741, 502.428, 515.741.
+- Opaque controls: 460.397, 467.584, 462.397, 465.381, 456.850, 459.725, 460.944, 466.366, 458.788, 458.475, 466.225, 455.694.
+
+An exact two-sided permutation test over all 2,704,156 partitions gave p=0.000186 for the median total-after difference. All twelve fixed-build before and after readings passed their limits. Frame p95/p99 medians stayed at 10.1/10.3 ms, and input p95 stayed at 32 ms in every run. This reduces an existing Markdown rendering cost; it does not establish that Stage 11 introduced the original 1.106 MiB excess.
+
+Raw observations, footprint categories and layer captures are in `.dev/stage11-fix/`. Diagnostic changes were removed from both trees. The memory gate now asserts the existing single-thread total limits against unrounded medians. Replaying the original failed Stage 11 results through that assertion correctly failed at 511.506 MiB against 510.4 MiB. The [follow-up report](plan.md#stage-11-ci-and-memory-follow-up-2026-10-03) records the final build's full-suite result and the CI fixes.
 
 ## Open questions
 

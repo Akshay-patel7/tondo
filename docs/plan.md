@@ -21,7 +21,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 8 | Composer | L | Done |
 | 9 | Per-turn diff panel | M | Done |
 | 10 | Integrated terminal | M | Done |
-| 11 | Git actions: branches, worktrees, pull requests | L | Blocked: memory budget |
+| 11 | Git actions: branches, worktrees, pull requests | L | Done |
 | 12 | Visual design, onboarding, polish | L | Not started |
 | 13 | Packaging, signing, updates | M | Not started |
 
@@ -753,7 +753,7 @@ Size: L. T3's branch and git UI is 4,793 lines, `GitVcsDriverCore.ts` is 3,710, 
 
 ### Stage 11 report (2026-10-03)
 
-**Blocked on memory.** The features and functional checks are implemented, but the final build exceeds the fixed after-stream memory limit. The user requested a draft review PR after this report. That does not waive the memory gate or mark the stage complete.
+The original build failed its memory budget. This report preserves that result. PR #16 merged, then the user authorized a [CI and memory follow-up](#stage-11-ci-and-memory-follow-up-2026-10-03), including its PR and merge. The follow-up passes the unchanged budgets.
 
 #### Implemented
 
@@ -836,7 +836,36 @@ The earlier run, `.dev/perf/stage11-2026-10-03T03-45-37/`, passed with 272.459 M
 5. `test(git): verify isolated checkouts and explicit publishing`
 6. `docs: record stage 11 results`
 
-Next: investigate the memory miss with an approved controlled A/B against main. Stage 12 remains unstarted.
+### Stage 11 CI and memory follow-up, 2026-10-03
+
+The follow-up fixes two CI test races, the image-send-after-Stop race found during full-suite verification, and an existing GPU memory cost in Markdown rendering.
+
+- On macOS, a helper can have exited while its PID still awaits reaping. The zombie answers `kill(pid, 0)` even though its process group has stopped. The process tests now poll for PID disappearance, and the zombie test asserts this difference. The focused suites passed twenty consecutive runs.
+- A Git test mistook the previous thread's visible Model picker for the new thread's readiness. It now waits for the target heading before waiting for pi. The unchanged Linux build failed 3 of 40 Git cases; the readiness fix passed 40 of 40. Forty repeated macOS Git cases passed too. No guard assertion or timeout was weakened.
+- After Stop, the composer can become idle while the completion checkpoint is still saving files. The host rejected an image in that interval. A deterministic test holds a real Git clean filter open and reproduced the rejection with every busy flag false except checkpoint work. Image prompts now wait through the existing checkpoint-preparation path. Active pi work, queued prompts and pending sends still block them. The pool and Git actions retain the full busy guard. The deterministic case and the original image test passed 24 repeated runs after the fix.
+- Markdown code-action controls now use an opaque theme background instead of backdrop blur. Twelve interleaved runs per build lowered median total memory after streaming from 509.780 to 460.670 MiB. GPU footprint accounts for most of the reduction. [stack.md](stack.md#stage-11-ci-and-memory-follow-up) records the samples and attribution. The memory runner now asserts the existing limits on unrounded medians; replaying the original failed result correctly fails the new assertion.
+
+The final macOS checks passed typecheck, lint, formatting, 456 unit tests in 49 files, build and smoke. Smoke reported 285 ms to renderer readiness. Full E2E passed 66 tests in 3.2 minutes after the image fix; the earlier full run's image failure is retained in `.dev/stage11-fix/root-e2e.log`. Code-control screenshots in both themes were opened and inspected, and the test clicks Copy and checks its exact text without changing the user's clipboard.
+
+The full performance run passed 18 checks in 13.0 minutes, including the new memory assertions. It used the built-in 2x/120 Hz display, the original measurement helper and no placement override. Artifacts are in `.dev/perf/stage11-ci-memory-2026-10-03T07-00-41-978Z/`.
+
+| Metric | Unchanged limit | Final median |
+|---|---|---|
+| Total before, 1,000 / 200 tok/s | 279.4 MiB | 271.147 / 271.334 MiB |
+| Total after 1,000 tok/s | 510.4 MiB | 461.866 MiB |
+| Total after 200 tok/s | 522.5 MiB | 440.709 MiB |
+| Frame p95 / p99, 1,000 tok/s | 16.7 / 33 ms | 10.1 / 10.3 ms |
+| Frame p95 / p99, 200 tok/s and ten streaming threads | 16.7 / 33 ms | 10.0 / 10.3 ms |
+| Input p95, single-thread / ten-thread cases | 32 ms | 32 / 24 ms |
+| Switch to a running thread | 100 ms | 90.1 ms |
+| Cold start | 1,000 ms | 241.3 ms |
+| Normal-speed tasks at least 100 ms | None | None in streaming, diffs or terminal output |
+| Terminal output | No task at least 100 ms | 50 MiB in 1.893 seconds |
+| Port round-trip p95 | Under 1 ms | 0.10 ms |
+
+The raw memory medians pass, and every individual single-thread reading passes too. The after-1,000-tok/s readings were 461.866, 459.506 and 467.787 MiB. Input latency remains at its single-thread limit. At informational 4x slowdown, the colored diff had one 220 ms task. Both mid-stream screenshots and the normal-speed terminal screenshot were opened and inspected.
+
+The earlier macOS create-worktree dialog timeout did not recur in the forty repeated Git cases; its specific cause remains unproven. Live GitHub writes, real credentials, arbitrary hooks and unusual remote layouts remain outside the generated-repository tests. No dependencies, safety policy or performance limits changed. Stage 12 remains unstarted.
 
 ## Stage 12: Visual design and polish
 
