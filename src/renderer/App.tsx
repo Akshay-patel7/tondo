@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Banners } from "./banners/Banners";
 import { runAppCommand } from "./commands";
 import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
-import { toggleSidebar, useHost } from "./connection";
+import { openTerminal, toggleSidebar, useHost } from "./connection";
+import { useTerminals } from "./terminal/store";
 import { DialogPanel } from "./extensionUi/DialogPanel";
 import { DiffPanel, toggleDiffPanel, useDiffPanel } from "./diffs/DiffPanel";
 import { useExtensionUi } from "./extensionUi/store";
@@ -23,6 +24,8 @@ import { Toasts } from "./toasts/Toasts";
 import { SearchIcon, SidebarIcon } from "./ui/icons";
 import { IconButton } from "./ui/IconButton";
 
+const TerminalDrawer = lazy(() => import("./terminal/TerminalDrawer"));
+
 export function App() {
   const sidebarHidden = useHost((host) => host.sidebarHidden);
   const paletteOpen = usePalette((open) => open);
@@ -37,6 +40,8 @@ export function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       // Holding a shortcut down would start a thread, or a pi, for every repeat.
       if (event.repeat || event.isComposing) return;
+      // On Linux, Ctrl+K/B/N belong to the shell while its terminal has focus.
+      if (!isMac && event.target instanceof Element && event.target.closest(".xterm")) return;
       const command = appCommand(event, isMac);
       if (!command) return;
       event.preventDefault();
@@ -106,6 +111,24 @@ function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
           Changes
         </button>
       )}
+      {project === undefined ? null : (
+        <>
+          <button
+            type="button"
+            onClick={() => openTerminal()}
+            className="app-no-drag rounded-control px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+          >
+            Terminal
+          </button>
+          <button
+            type="button"
+            onClick={() => openTerminal("login")}
+            className="app-no-drag rounded-control px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+          >
+            Sign in to a provider
+          </button>
+        </>
+      )}
       {connection === "reconnecting" ? (
         <span role="status" className="shrink-0 text-xs text-warning">
           Reconnecting…
@@ -126,6 +149,7 @@ function Body() {
 function Thread() {
   const threadId = useHost((host) => host.thread?.id);
   const threadKey = useThreadKey((key) => key);
+  const terminal = useTerminals((terminals) => (threadId ? terminals.get(threadId) : undefined));
   const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
   const changesOpen = useDiffPanel((open) => open);
   return (
@@ -146,6 +170,17 @@ function Thread() {
             <StatusLine />
           </div>
         </footer>
+        {threadId && terminal ? (
+          <Suspense
+            fallback={
+              <p role="status" className="p-3 text-sm">
+                Loading terminal…
+              </p>
+            }
+          >
+            <TerminalDrawer key={terminal.id} threadId={threadId} session={terminal} />
+          </Suspense>
+        ) : null}
       </div>
       {changesOpen ? <DiffPanel key={threadId} /> : null}
     </div>

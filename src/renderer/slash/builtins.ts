@@ -11,6 +11,7 @@ import {
 import { newThreadHere, runPaletteAction } from "../commands";
 import {
   compactContext,
+  openTerminal,
   copyLastReply,
   exportThread,
   reloadPi,
@@ -33,6 +34,8 @@ export function runBuiltin(name: BuiltinName, args: string): void {
 }
 
 const RUN: Record<RunName, (args: string) => void> = {
+  login: () => openTerminal("login"),
+  logout: () => openTerminal("login"),
   model: (args) => {
     const session = readySession();
     if (!session) return;
