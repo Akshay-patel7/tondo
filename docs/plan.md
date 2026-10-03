@@ -20,7 +20,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 7 | Extension UI and slash commands | M | Done |
 | 8 | Composer | L | Done |
 | 9 | Per-turn diff panel | M | Done |
-| 10 | Integrated terminal | M | Not started |
+| 10 | Integrated terminal | M | Awaiting review |
 | 11 | Git actions: branches, worktrees, pull requests | L | Not started |
 | 12 | Visual design, onboarding, polish | L | Not started |
 | 13 | Packaging, signing, updates | M | Not started |
@@ -665,6 +665,67 @@ Done when:
 - Closing the drawer leaves no process in the pty's group.
 
 Size: M. T3's terminal backend and drawer are 5,105 lines.
+
+### Stage 10 report (2026-10-03)
+
+Shipped:
+
+- One host-owned PTY per thread, with its project folder, captured environment and `TERM=xterm-256color`. xterm and node-pty load only when needed. Switching threads detaches the view without stopping the shell; page reload replays its history.
+- A drawer resized by dragging or the keyboard, with WebGL and a tested DOM fallback. Terminal output bypasses React. The host pauses the PTY at its 64 KiB acknowledgement window; the renderer acknowledges each parsed chunk.
+- Host history capped at 5,000 lines or 8 MiB. Replay to a renderer is capped at 512 KiB, and xterm scrollback has a corresponding four-byte-cell text budget. These are text limits, not a 512 KiB cap on xterm's cell and GPU allocations. A stateful filter removes terminal queries, replies and control strings from retained history.
+- Close and normal app quit capture descendant job-control groups before stopping the shell, then escalate from TERM to KILL. Main retains reported groups as a fallback if the host dies.
+- Provider sign-in in a separate interactive pi with `--no-session`. `/login` and `/logout` in the composer open that drawer. The user runs the command there, then chooses Refresh models while the chat pi is idle. Other running threads need `/reload` too.
+- Exact dependency versions, node-pty's build permission, and an install-time macOS helper permission fix. Main still loads no native module; the CSP is unchanged.
+
+Verify-first results:
+
+- node-pty 1.1.0 spawned a shell in Electron 44.4.5's utility process and changed `stty size` from 24×80 to 40×100 without a native rebuild. A fresh macOS install also ran a PTY successfully. Linux compiled node-pty with Python, make and g++.
+- xterm 6.0.0, Fit 0.11.0 and WebGL 0.19.0 ran under the production CSP. E2E also forces WebGL unavailable and runs a real command through the DOM fallback.
+- An isolated pi 0.87.1 RPC process reported zero authenticated Anthropic models both before and after an external synthetic credential write, then 15 after restart. Tondo therefore offers an explicit refresh instead of silently restarting active threads. The interactive-login E2E proves the refresh exposes Claude after saving a synthetic API key.
+
+Proofs:
+
+| Check | Observed result |
+|---|---|
+| Fresh install | macOS helper mode 0755; real PTY ran and exited 0. Linux native build succeeded. |
+| `pnpm typecheck`, `pnpm lint`, `pnpm format:check` | Pass |
+| `pnpm test` | 437 tests in 45 files pass |
+| Build and `pnpm smoke` | Pass; 84 React functions compiled |
+| `pnpm e2e` | 60 pass on the final macOS run |
+| Focused Linux E2E under Ubuntu 24.04 / OrbStack | All 14 terminal, slash-command and window-security tests pass |
+| Close and quit | Shell and background-job groups empty after Close; quit also kills a separate job group that ignores HUP and TERM |
+
+An earlier macOS run hit the existing image-only-send-after-Stop race. An unchanged `main` build at `5de2191` reproduced the same error in 4 of 10 focused runs: "Wait for pi to finish before sending images." No image-send code or test was changed. A later full run passed, but that does not resolve the race. Logs are in `.dev/stage10/main-images.log`.
+
+Screenshots opened and checked: `test-results/terminal.png` and `test-results/terminal-login.png`. The close test also writes `terminal-processes.txt` in its Playwright result folder, with both groups present before Close and none afterward.
+
+Perf vs budgets: the full approved run passed all 18 checks in 13.0 minutes on the built-in 2×/120 Hz display. Reports are in `.dev/perf/2026-10-03T01-56-03/`. Screenshot review then exposed 5 px of terminal clipping: FitAddon counted padding on its mount as cell space. Moving that padding outside the measured mount fixed it. The final macOS and Linux suites pass the new geometry assertion, and the terminal performance rerun passes in `.dev/perf/2026-10-03T02-16-20/`.
+
+| Metric | Budget | Observed result |
+|---|---|---|
+| 50 MiB terminal output, tasks ≥100 ms | None | 0 in all three native runs; 0 at 4× too |
+| 50 MiB terminal output, elapsed | Informational | 1.893 s median, samples 1.910 / 1.886 / 1.893 s; 8.141 s at 4× |
+| Streaming frame p95 / p99 | ≤16.7 / ≤33 ms | 10.0–10.1 / 10.3 ms across the native scenarios |
+| Streaming input-to-paint p95 | ≤32 ms | 32 ms |
+| Long tasks ≥100 ms, native streaming and diffs | None | 0 |
+| Switch to a running thread | ≤100 ms | 91 ms |
+| Cold start | ≤1 s | 240 ms |
+| Page/host round-trip p95 | <1 ms | 0.10 ms |
+| Memory medians | Stage 1 baseline +10% | Pass; single-thread total before/after 267/507 MiB at 1,000 tok/s and 270/490 MiB at 200 tok/s |
+
+The terminal rerun's `terminal-1x.png` was opened and checked too; the completion marker and shell prompt are fully visible. The informational 4× colored-diff run had one 229 ms task. Input latency is still at its budget, and the 1,000 tok/s memory median remains close to its limit.
+
+Changes to the plan: the hardware-dependent 50 MiB gate lives in `pnpm perf`, not CI's E2E suite. No performance budget or CSP rule changed. Provider refresh is explicit because running pi processes did not notice an external credential write.
+
+Not verified: a real provider OAuth login or a paid model request. The login test uses a synthetic API key in a temporary profile. Full Linux regression and x64 Linux CI remain for the PR. Forced-host-crash cleanup of separate terminal job-control groups is not covered; normal Close and app quit are covered. Packaging must still unpack node-pty from asar and remove other architectures' prebuilds in Stage 13.
+
+Proposed commits:
+
+- `feat(terminal): add host-owned PTY sessions`
+- `feat(terminal): add resizable drawers and provider sign-in`
+- `test(terminal): gate output throughput and record stage results`
+
+Next: after this stage is approved and merged, start Stage 11 by reading T3's Git action and worktree code at the pinned commit.
 
 ## Stage 11: Git actions
 

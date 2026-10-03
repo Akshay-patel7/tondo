@@ -10,7 +10,7 @@ pnpm 12.6.0 comes from `packageManager` in package.json, and Node 24.15.0 from `
 
 | Command | What it does |
 |---|---|
-| `pnpm install` | Installs dependencies. Electron downloads its binary the first time it runs, or when you run `pnpm exec install-electron`. |
+| `pnpm install` | Installs dependencies and fixes node-pty's macOS spawn-helper permissions. On Linux, node-pty compiles with node-gyp and needs Python, make and a C++ compiler. Electron downloads its binary the first time it runs, or when you run `pnpm exec install-electron`. |
 | `pnpm dev` | Runs the app with hot reload. |
 | `pnpm build` | Builds main, preload, host and renderer into `out/`. |
 | `pnpm typecheck` | Runs tsc on the root config and on each layer's config. |
@@ -20,7 +20,7 @@ pnpm 12.6.0 comes from `packageManager` in package.json, and Node 24.15.0 from `
 | `pnpm bench` | Runs the Vitest benchmarks, `src/**/*.bench.ts`. |
 | `pnpm smoke` | Builds, launches the app, and fails on startup errors in Electron's log. |
 | `pnpm e2e` | Builds, then drives the app with Playwright. Screenshots go to `test-results/`. |
-| `pnpm perf` | Builds, then measures streaming, big diffs and the page's port to the host against the budgets in docs/plan.md. It takes about 12 minutes and keeps the window on top, so ask before running it. It fails unless the window is on a 2x display refreshing at 120 Hz, like the built-in Retina the budgets were measured on. Results go to `.dev/perf/<time>/`. |
+| `pnpm perf` | Builds, then measures streaming, big diffs, terminal output and the page's port to the host against the budgets in docs/plan.md. It takes about 12 minutes and keeps the window on top, so ask before running it. It fails unless the window is on a 2x display refreshing at 120 Hz, like the built-in Retina the budgets were measured on. Results go to `.dev/perf/<time>/`. |
 | `pnpm fixtures` | Re-records `fixtures/` by running the pinned pi offline with the faux provider. `pnpm fixtures tool-cards` re-records one, and it needs ripgrep and fd on PATH. |
 
 CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` on macOS and Ubuntu (.github/workflows/ci.yml). `perf` stays local because its numbers depend on the machine. On Linux, smoke and e2e need a display, so CI wraps them in `xvfb-run`.
@@ -47,6 +47,7 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 
 - Unpackaged runs keep app data in `.dev/userData`, with one running instance per profile. `TONDO_USER_DATA_DIR` overrides the folder, and smoke and e2e point it at temporary folders. Never run against `~/Library/Application Support/Tondo`.
 - Leave `~/.pi/agent` alone. Unpackaged runs give pi `<userData>/pi-agent` as its `PI_CODING_AGENT_DIR`, and `TONDO_PI_ARGS`, a JSON array, adds arguments to every pi, which is how e2e runs the faux provider. Runs against the real `~/.pi/agent` happen only at the plan's measurement points, and only after asking.
+- Integrated shells inherit the same scratch `PI_CODING_AGENT_DIR`. Provider sign-in runs a separate interactive pi with `--no-session`; test login with synthetic credentials in a temporary profile, never with the real auth file.
 - Main writes its own log and the host's to `<userData>/logs/`, as `main.log` and `host.log`.
 - Stop only processes you started, by the PID or process group you captured. Never kill by name or pattern. macOS has no `timeout` command, so scripts use Node deadlines.
 
