@@ -263,6 +263,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
     return true;
   };
 
+  // Give the card its own raster layer instead of using the wider footer.
   return (
     <div
       hidden={hidden}
@@ -281,7 +282,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
         event.stopPropagation();
         void attach([...event.dataTransfer.files]);
       }}
-      className="rounded-panel border border-border bg-card shadow-composer focus-within:border-ring"
+      className="rounded-panel border border-border bg-card shadow-composer will-change-transform focus-within:border-ring"
     >
       {query === null ? null : (
         <SlashMenu
