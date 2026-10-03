@@ -201,17 +201,17 @@ export class LiveThread {
     return this.extensionUi.dialogs.length > 0;
   }
 
-  /**
-   * Whether pi is starting or working, holds messages you queued, or waits
-   * for your answer. The pool never stops a busy thread's pi.
-   */
+  /** Whether pi or its checkpoints are busy. The pool never stops a busy thread's pi. */
   get busy(): boolean {
+    return this.piBusy || this.checkpoints.busy;
+  }
+
+  private get piBusy(): boolean {
     const { running, compaction, retry, queue } = this.thread;
     return (
       this.piStatus.state === "starting" ||
       this.imageSendPending ||
       this.preparing ||
-      this.checkpoints.busy ||
       running ||
       compaction !== null ||
       retry !== null ||
@@ -300,7 +300,9 @@ export class LiveThread {
           throw new Error(
             "Extension commands don't receive images. Run the command without attachments.",
           );
-        if (this.busy) throw new Error("Wait for pi to finish before sending images.");
+        // Images cannot join pi's text queue. An idle pi can still take an image
+        // after prepare() below waits for the preceding completion checkpoint.
+        if (this.piBusy) throw new Error("Wait for pi to finish before sending images.");
         this.imageSendPending = true;
         sendingImages = true;
       }

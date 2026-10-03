@@ -72,7 +72,18 @@ it("bounds output and reaps a helper that inherited the command's process group"
   );
   await expect(commands.run("git", dir, ["status"])).rejects.toThrow("output exceeded 4 MiB");
   const pid = Number(readFileSync(pidFile, "utf8"));
-  expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  // macOS stops signalling the group before init necessarily reaps each PID.
+  await expect
+    .poll(() => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        throw error;
+      }
+    })
+    .toBe(false);
   expect(groups.at(-1)).toEqual([]);
 });
 

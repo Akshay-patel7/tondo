@@ -283,6 +283,8 @@ export class Terminals {
   }
 
   private publish(session: Session): void {
+    // node-pty can deliver an exit after close removed or replaced this session.
+    if (this.sessions.get(session.threadId) !== session) return;
     this.send({ v, type: "terminal-state", threadId: session.threadId, terminal: session.state });
   }
 

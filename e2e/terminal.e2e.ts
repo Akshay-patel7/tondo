@@ -135,6 +135,7 @@ test("provider sign-in runs a separate interactive pi in the isolated profile", 
   await expect(page.getByLabel("Model").locator("option")).toContainText(["Claude"]);
   await page.getByRole("button", { name: "Close terminal", exact: true }).click();
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
+  await page.screenshot({ path: "test-results/terminal-login-closed.png" });
 });
 
 test("switching threads retains each shell, and clipboard paste reaches the terminal", async () => {

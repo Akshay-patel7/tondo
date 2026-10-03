@@ -126,6 +126,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await page.getByRole("button", { name: "New worktree", exact: true }).click();
   await page.getByLabel("Branch name", { exact: true }).fill("feature/worktree");
   await submit("Create worktree thread");
+  await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
   await expect(page.getByLabel("Git branch")).toHaveValue("feature/worktree");
   const checkout = worktreePath();
@@ -267,6 +268,7 @@ test("branch changes are refused while a background local thread is mid-turn", a
   await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
   await page.getByRole("button", { name: "project", exact: true }).hover();
   await page.getByRole("button", { name: "New thread in project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
   await expect(
     page.getByLabel("Git branch").locator("option", { hasText: "other" }),
@@ -300,6 +302,8 @@ test("a terminal still protects its checkout after the pool stops its thread's p
   await expect(page.locator(".xterm-accessibility-tree")).toContainText("$");
   await page.getByRole("button", { name: "project", exact: true }).hover();
   await page.getByRole("button", { name: "New thread in project", exact: true }).click();
+  // Do not mistake the previous thread's still-visible model picker for the new pi.
+  await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
   await expect.poll(() => piGroups(app)).not.toContain(first);
   await expect(
@@ -314,6 +318,7 @@ test("a terminal still protects its checkout after the pool stops its thread's p
   expect(git(project, "branch", "--show-current")).toBe("main");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await threadRows(page).filter({ hasText: "Keep this shell" }).click();
+  await expect(page.getByRole("heading", { name: "Keep this shell", exact: true })).toBeVisible();
   await waitForPi(page);
   await page.getByRole("button", { name: "Close terminal", exact: true }).click();
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
