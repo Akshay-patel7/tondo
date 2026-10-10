@@ -18,30 +18,37 @@ export function NoThread() {
   // The page can't ask the host for anything until main hands it a port.
   const connected = useHost((host) => host.connection === "connected");
   const project = useHost((host) => host.projects[0]);
+  // The welcome is one layer of its own, sized to it, rather than part of the
+  // window-wide tiles. Larger or more layers here leave the GPU process holding
+  // more raster memory when the first thread opens.
   return (
     <main className="flex min-h-0 flex-1">
       <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">{project ? <MessageSquarePlus /> : <FolderPlus />}</EmptyMedia>
-          <EmptyTitle>
-            <h1>{project ? "No thread open" : "Welcome to Tondo"}</h1>
-          </EmptyTitle>
-          <EmptyDescription>
-            {project
-              ? "Open a thread from the sidebar, or start a new one."
-              : "Add a project folder to work with pi there."}
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button
-            disabled={!connected}
-            onClick={project ? () => newThread(project.id) : addProject}
-          >
-            <Plus data-icon="inline-start" aria-hidden />
-            {project ? `New thread in ${folderName(project.path)}` : "Add project…"}
-          </Button>
-          {project ? null : <PiStatus connected={connected} />}
-        </EmptyContent>
+        <div className="flex w-full max-w-sm flex-col items-center gap-6 will-change-transform">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              {project ? <MessageSquarePlus /> : <FolderPlus />}
+            </EmptyMedia>
+            <EmptyTitle>
+              <h1>{project ? "No thread open" : "Welcome to Tondo"}</h1>
+            </EmptyTitle>
+            <EmptyDescription>
+              {project
+                ? "Open a thread from the sidebar, or start a new one."
+                : "Add a project folder to work with pi there."}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              disabled={!connected}
+              onClick={project ? () => newThread(project.id) : addProject}
+            >
+              <Plus data-icon="inline-start" aria-hidden />
+              {project ? `New thread in ${folderName(project.path)}` : "Add project…"}
+            </Button>
+            {project ? null : <PiStatus connected={connected} />}
+          </EmptyContent>
+        </div>
       </Empty>
     </main>
   );
