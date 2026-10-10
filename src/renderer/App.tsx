@@ -11,6 +11,8 @@ import { DiffPanel, toggleDiffPanel, useDiffPanel } from "./diffs/DiffPanel";
 import { useExtensionUi } from "./extensionUi/store";
 import { StatusLine, Widgets } from "./extensionUi/Widgets";
 import { folderName } from "./format";
+import { PiSetup } from "./onboarding/PiSetup";
+import { SignInPrompt } from "./onboarding/SignInPrompt";
 import { CommandPalette } from "./palette/CommandPalette";
 import { togglePalette, usePalette } from "./palette/store";
 import { isMac } from "./platform";
@@ -143,11 +145,19 @@ function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
 
 function Body() {
   const settingsOpen = useSettingsPage((page) => page.open);
+  const threadId = useHost((host) => host.thread?.id);
   const project = useHost((host) => host.thread?.project);
   const askingTrust = useHost((host) => host.thread?.askingTrust ?? false);
+  // Set when the thread's pi couldn't start because Tondo found no pi it can run.
+  const piProblem = useHost((host) => {
+    const pi = host.thread?.pi;
+    return pi?.state === "exited" ? pi.problem : undefined;
+  });
   if (settingsOpen) return <SettingsPage />;
   if (project === undefined) return <NoThread />;
-  if (askingTrust) return <TrustPrompt project={project} />;
+  // Keyed by thread, so each thread's question takes focus when you open it.
+  if (askingTrust) return <TrustPrompt key={threadId} project={project} />;
+  if (piProblem) return <PiSetup key={threadId} problem={piProblem} />;
   return <Thread />;
 }
 
@@ -157,6 +167,10 @@ function Thread() {
   const terminal = useTerminals((terminals) => (threadId ? terminals.get(threadId) : undefined));
   const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
   const changesOpen = useDiffPanel((open) => open);
+  const needsSignIn = useHost((host) => {
+    const pi = host.thread?.pi;
+    return pi?.state === "ready" && !pi.session.signedIn;
+  });
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -166,6 +180,7 @@ function Thread() {
         <footer className="shrink-0 px-4 pb-4">
           <div className="mx-auto max-w-3xl">
             <Banners />
+            {needsSignIn ? <SignInPrompt /> : null}
             <QueueList />
             <Widgets placement="aboveEditor" />
             {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
