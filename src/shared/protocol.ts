@@ -27,7 +27,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -51,6 +51,19 @@ export interface SlashCommand {
   /** Empty if the command has none. */
   readonly description: string;
   readonly source: SlashCommandSource;
+}
+
+/** A terminal command as the page sends it. A login terminal can name the provider pi signs in to. */
+export type TerminalRequest =
+  | Exclude<TerminalCommand, { type: "terminal-open" }>
+  | (Extract<TerminalCommand, { type: "terminal-open" }> & { provider?: string });
+
+/** What the page may name as a sign-in provider: what Tondo types after "/login ". */
+const PROVIDER = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])?$/;
+
+/** Whether `name` may follow "/login " as the provider of a sign-in terminal. */
+export function isLoginProvider(name: string): boolean {
+  return PROVIDER.test(name);
 }
 
 /** What a running pi last said about its model, thinking level and context. */
@@ -247,7 +260,7 @@ type Versioned<T> = T & { readonly v: typeof PROTOCOL_VERSION };
 /** What the page asks of the host. */
 export type ClientMessage = Versioned<
   | GitCommand
-  | TerminalCommand
+  | TerminalRequest
   /** Ask for a folder, add it as a project and start a thread there. */
   | { type: "add-project" }
   /** Forget a project and what Tondo kept about its threads. pi's session files stay. */
@@ -762,13 +775,19 @@ function parseTerminalMessage(
   message: Record<string, unknown>,
   type: TerminalCommand["type"],
 ): ParseResult {
-  const { threadId, terminalId, attachment, cols, rows, data, kind, sequence } = message;
+  const { threadId, terminalId, attachment, cols, rows, data, kind, sequence, provider } = message;
   const bad = badThreadId(type, threadId);
   if (bad) return invalid(bad);
   const base = { v: PROTOCOL_VERSION, threadId: threadId as string } as const;
   if (type === "terminal-open") {
     if (kind !== "shell" && kind !== "login") return invalid("terminal-open: invalid kind");
-    return exactly(message, { ...base, type, kind });
+    if (provider === undefined) return exactly(message, { ...base, type, kind });
+    if (kind !== "login") return invalid("terminal-open: only a login terminal takes a provider");
+    if (typeof provider !== "string" || !PROVIDER.test(provider))
+      return invalid(
+        `terminal-open: provider must be 1 to 64 letters, digits, spaces, dots, underscores or hyphens, starting with a letter or digit and not ending in a space, not ${describe(provider)}`,
+      );
+    return exactly(message, { ...base, type, kind, provider });
   }
   if (badThreadId(type, terminalId)) return invalid(`${type}: invalid terminalId`);
   const session = { ...base, terminalId: terminalId as string };

@@ -146,7 +146,8 @@ export function terminalCommand(message: TerminalCommand): void {
   send({ v, ...message });
 }
 
-export function openTerminal(kind: TerminalKind = "shell"): void {
+/** A new sign-in terminal given `provider` opens pi's sign-in for that provider. */
+export function openTerminal(kind: TerminalKind = "shell", provider?: string): void {
   const thread = useHost.getState().thread;
   if (!thread || thread.askingTrust) return;
   const existing = useTerminals.getState().get(thread.id);
@@ -161,7 +162,13 @@ export function openTerminal(kind: TerminalKind = "shell"): void {
     document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
     return;
   }
-  terminalCommand({ type: "terminal-open", threadId: thread.id, kind });
+  send({
+    v,
+    type: "terminal-open",
+    threadId: thread.id,
+    kind,
+    ...(provider === undefined ? {} : { provider }),
+  });
 }
 
 export function listCheckpoints(): void {
