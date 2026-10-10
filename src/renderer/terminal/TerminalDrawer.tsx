@@ -83,6 +83,18 @@ function clampHeight(height: number): number {
   return Math.max(160, Math.min(height, window.innerHeight * 0.65));
 }
 
+// pi's /login provider list needs up to 20 terminal rows: a 17-row selector
+// (borders, title, search box, eight providers, a count line and blank lines)
+// above pi's two- or three-line footer. A sign-in drawer opens with room for
+// 24, so footer and status lines that wrap still fit, unless clampHeight caps it.
+const LOGIN_ROWS = 24;
+// At fontSize 13 an xterm cell is 15px on macOS. 16 covers fonts whose cells
+// are a little taller.
+const ROW_HEIGHT = 16;
+// Around the rows: the top border, the h-9 header, the hint wrapped to two
+// text-xs lines over pb-2, and the terminal's p-2 above and below.
+const LOGIN_CHROME = 1 + 36 + (2 * 16 + 8) + 2 * 8;
+
 function statusLabel(session: TerminalState): string {
   if (session.status === "running") return "";
   if (session.status === "exited")
@@ -97,7 +109,9 @@ export default function TerminalDrawer({
   threadId: string;
   session: TerminalState;
 }) {
-  const [height, setHeight] = useState(280);
+  const [height, setHeight] = useState(() =>
+    session.kind === "login" ? clampHeight(LOGIN_CHROME + LOGIN_ROWS * ROW_HEIGHT) : 280,
+  );
   const drag = useRef<{ y: number; height: number } | null>(null);
   const opener = useRef<Element | null>(null);
   const region = useRef<HTMLElement>(null);
