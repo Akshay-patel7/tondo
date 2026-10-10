@@ -6,12 +6,15 @@ import type { OpenThread, SidebarProject, SidebarThread } from "../../shared/pro
 import type { ShortcutCommand } from "../../shared/settings";
 import { folderName } from "../format";
 import { shortcutLabelFor } from "../shortcuts";
+import { useTerminals } from "../terminal/store";
 
 export type PaletteAction =
   | { readonly type: "new-thread"; readonly projectId: number }
   | { readonly type: "add-project" }
   | { readonly type: "toggle-sidebar" }
   | { readonly type: "settings" }
+  /** Opens the open thread's terminal, or closes it. */
+  | { readonly type: "terminal"; readonly open: boolean }
   | { readonly type: "rename-thread"; readonly threadId: string }
   | { readonly type: "pin-thread"; readonly threadId: string; readonly pinned: boolean }
   | { readonly type: "archive-thread"; readonly threadId: string; readonly archived: boolean }
@@ -73,6 +76,16 @@ export function paletteItems({
     { type: "toggle-sidebar" },
   );
   action("settings", "Settings", "", keys("settings"), { type: "settings" });
+  // The header's Terminal button opens it, and no shortcut does. A thread that
+  // asks whether to trust its folder can't have one. Like the shortcuts, the
+  // terminal's state is read from its store as the palette lists it.
+  if (open && !open.askingTrust) {
+    const terminalOpen = useTerminals.getState().has(open.id);
+    action("terminal", terminalOpen ? "Close terminal" : "Open terminal", "", "", {
+      type: "terminal",
+      open: !terminalOpen,
+    });
+  }
   const shown = open && projects.flatMap(({ threads }) => threads).find((t) => t.id === open.id);
   if (shown) {
     const threadId = shown.id;

@@ -3,9 +3,11 @@ import {
   addProject,
   archiveThread,
   newThread,
+  openTerminal,
   openThread,
   pinThread,
   setCollapsed,
+  terminalCommand,
   toggleSidebar,
   useHost,
 } from "./connection";
@@ -15,6 +17,7 @@ import { openSettings } from "./settings/store";
 import type { AppCommand } from "./shortcuts";
 import { stepThread, threadOrder } from "./sidebar/model";
 import { startRename } from "./sidebar/store";
+import { useTerminals } from "./terminal/store";
 
 /** Starts a thread in the open thread's project, or else the first project, or else adds one. */
 export function newThreadHere(): void {
@@ -74,6 +77,10 @@ export function runPaletteAction(action: PaletteAction): void {
     case "settings":
       openSettings();
       break;
+    case "terminal":
+      if (action.open) openTerminal();
+      else closeTerminal();
+      break;
     case "rename-thread": {
       // The title is edited in place, so the sidebar has to show the thread.
       const { sidebarHidden, projects } = useHost.getState();
@@ -93,5 +100,14 @@ export function runPaletteAction(action: PaletteAction): void {
       if (action.archived) archiveThread(action.threadId, false);
       openThread(action.threadId);
       break;
+  }
+}
+
+/** Closes the open thread's terminal, if it has one. */
+function closeTerminal(): void {
+  const { thread } = useHost.getState();
+  const terminal = thread ? useTerminals.getState().get(thread.id) : undefined;
+  if (thread && terminal) {
+    terminalCommand({ type: "terminal-close", threadId: thread.id, terminalId: terminal.id });
   }
 }

@@ -1,5 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import type { OpenThread, SidebarProject, SidebarThread } from "../../shared/protocol";
+import type { TerminalState } from "../../shared/terminal";
+import { useTerminals } from "../terminal/store";
 import { filterItems, paletteItems, type PaletteItem } from "./model";
 
 function thread(id: string, updatedAt: number, extra: Partial<SidebarThread> = {}): SidebarThread {
@@ -50,7 +52,11 @@ const open: OpenThread = {
 const labels = (items: readonly PaletteItem[]) =>
   items.map(({ group, label }) => `${group}: ${label}`);
 
+const terminalItem = (items: readonly PaletteItem[]) => items.find(({ key }) => key === "terminal");
+
 describe("paletteItems", () => {
+  afterEach(() => useTerminals.setState(new Map(), true));
+
   test("lists actions, recent threads, projects, then archived threads", () => {
     const items = paletteItems({ projects, open, sidebarHidden: false, isMac: true });
     expect(labels(items)).toEqual([
@@ -58,6 +64,7 @@ describe("paletteItems", () => {
       "Actions: Add project…",
       "Actions: Hide sidebar",
       "Actions: Settings",
+      "Actions: Open terminal",
       "Actions: Rename thread",
       "Actions: Unpin thread",
       "Actions: Archive thread",
@@ -93,6 +100,29 @@ describe("paletteItems", () => {
       "Actions: Hide sidebar",
       "Actions: Settings",
     ]);
+  });
+
+  test("opens the open thread's terminal, or closes it", () => {
+    const input = { projects, open, sidebarHidden: false, isMac: true };
+    expect(terminalItem(paletteItems(input))).toMatchObject({
+      label: "Open terminal",
+      shortcut: "",
+      action: { type: "terminal", open: true },
+    });
+    const running: TerminalState = {
+      id: "t1",
+      kind: "shell",
+      status: "running",
+      error: null,
+      exitCode: null,
+    };
+    useTerminals.setState(new Map([["a", running]]), true);
+    expect(terminalItem(paletteItems(input))).toMatchObject({
+      label: "Close terminal",
+      action: { type: "terminal", open: false },
+    });
+    const asking = { ...open, askingTrust: true };
+    expect(terminalItem(paletteItems({ ...input, open: asking }))).toBeUndefined();
   });
 
   test("offers no rename before pi has saved the thread", () => {
