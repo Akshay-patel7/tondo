@@ -1,0 +1,257 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, X.Y.Z or X.Y.Z-prerelease. A manual run builds and smokes but never publishes."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve and validate the version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            version="${REF_NAME#v}"
+          else
+            version="$INPUT_VERSION"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not X.Y.Z or X.Y.Z-prerelease"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  mac:
+    name: Build macOS
+    needs: version
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .tool-versions
+          cache: true
+          require-lockfile: true
+
+      # Signing and notarization switch on only for the variables exported here.
+      # Empty secrets are never exported, because electron-builder treats an
+      # empty CSC_LINK as a value.
+      - name: Prepare signing
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "::add-mask::$CSC_LINK"
+            echo "CSC_LINK=$CSC_LINK" >> "$GITHUB_ENV"
+            if [ -n "$CSC_KEY_PASSWORD" ]; then
+              echo "::add-mask::$CSC_KEY_PASSWORD"
+              echo "CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "::warning::CSC_LINK is empty, so the macOS build is ad-hoc signed. It can't auto-update or pass Gatekeeper."
+          fi
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
+            # APPLE_API_KEY holds the .p8 content, and electron-builder wants a path.
+            printf '%s\n' "$APPLE_API_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+            chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+            {
+              echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8"
+              echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
+              echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::Apple API key secrets are incomplete, so the macOS build is not notarized."
+          fi
+
+      - name: Package
+        run: pnpm package --mac --arch arm64,x64 --version "$VERSION"
+
+      - name: Smoke arm64 dmg
+        run: |
+          mnt="$RUNNER_TEMP/mnt"
+          dest="$RUNNER_TEMP/smoke-dmg"
+          rm -rf "$dest"
+          mkdir -p "$mnt" "$dest"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/Tondo-$VERSION-arm64.dmg" > /dev/null
+          ditto "$mnt/Tondo.app" "$dest/Tondo.app"
+          hdiutil detach "$mnt"
+          node scripts/smoke.mts --app "$dest/Tondo.app"
+
+      - name: Smoke arm64 zip
+        run: |
+          dest="$RUNNER_TEMP/smoke-zip-arm64"
+          rm -rf "$dest"
+          mkdir -p "$dest"
+          ditto -x -k "dist/Tondo-$VERSION-arm64.zip" "$dest"
+          node scripts/smoke.mts --app "$dest/Tondo.app"
+
+      - name: Smoke x64 zip
+        run: |
+          if arch -x86_64 /usr/bin/true 2> /dev/null; then
+            dest="$RUNNER_TEMP/smoke-zip-x64"
+            rm -rf "$dest"
+            mkdir -p "$dest"
+            ditto -x -k "dist/Tondo-$VERSION-x64.zip" "$dest"
+            node scripts/smoke.mts --app "$dest/Tondo.app"
+          else
+            echo "::warning::Rosetta is not available on this runner, so the x64 build was not smoke tested."
+          fi
+
+      - name: Archive renderer sourcemaps
+        run: |
+          shopt -s nullglob
+          maps=(out/renderer/assets/*.map)
+          if [ "${#maps[@]}" -eq 0 ]; then
+            echo "::error::No renderer sourcemaps found in out/renderer/assets"
+            exit 1
+          fi
+          zip -j "dist/Tondo-$VERSION-renderer-sourcemaps.zip" "${maps[@]}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+
+  linux:
+    name: Build Linux (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .tool-versions
+          cache: true
+          require-lockfile: true
+
+      - name: Package
+        run: pnpm package --linux --arch ${{ matrix.arch }} --version "$VERSION"
+
+      - name: Install the deb
+        run: sudo apt-get install -y ./dist/*.deb
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces by default. The
+      # deb's postinst installs an AppArmor profile, so this smoke must pass
+      # sandboxed with the restriction ON. That's why the sysctl below comes
+      # only after it.
+      - name: Smoke deb (AppArmor restriction on)
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node scripts/smoke.mts --app /opt/Tondo/tondo
+
+      # AppRun adds --no-sandbox whenever `unshare -Ur true` fails, which it does
+      # under the restriction. Relaxing it first lets the AppImage run sandboxed,
+      # and the smoke then proves the sandbox rather than warning about it.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The AppImage uses the static type 2 runtime, so it needs neither libfuse2
+      # nor /dev/fuse here; scripts/smoke.mts sets APPIMAGE_EXTRACT_AND_RUN=1 when
+      # /dev/fuse is missing.
+      - name: Smoke AppImage
+        run: |
+          shopt -s nullglob
+          images=(dist/*.AppImage)
+          if [ "${#images[@]}" -ne 1 ]; then
+            echo "::error::Expected one AppImage, found ${#images[@]}"
+            exit 1
+          fi
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node scripts/smoke.mts --app "${images[0]}"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.blockmap
+            dist/latest-linux*.yml
+          if-no-files-found: error
+
+  # Manual runs stop after the build jobs. Only a tag push publishes.
+  publish:
+    name: Publish draft release
+    needs: [version, mac, linux]
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Create or update the draft release
+        run: |
+          shopt -s nullglob
+          files=(release/*.dmg release/*.zip release/*.deb release/*.AppImage release/*.blockmap release/latest*.yml)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No release files were downloaded"
+            exit 1
+          fi
+          printf '%s\n' "${files[@]}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber "${files[@]}"
+          else
+            flags=()
+            if [[ "$VERSION" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$TAG" --draft --verify-tag --title "Tondo $VERSION" --generate-notes "${flags[@]}" "${files[@]}"
+          fi

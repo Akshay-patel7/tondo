@@ -9,6 +9,9 @@ allowBuilds:
   # in. Neither build script is needed.
   "@google/genai": false
   protobufjs: false
+  # electron-builder pulls this in for Windows installers, which Tondo doesn't
+  # build. Its script only picks a 7-Zip binary for them.
+  electron-winstaller: false
 overrides:
   # @pierre/diffs asks for @shikijs/transformers ^3 || ^4, and 4.x brings a
   # second copy of Shiki's core. Pin it to the Shiki that @streamdown/code uses.

@@ -4,7 +4,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { FauxScript } from "../scripts/fixtures/faux-ext";
 import { launchTondo, type LaunchOptions, type Tondo } from "./launch";
@@ -58,7 +58,14 @@ export function launchWithPi({
   writeFileSync(scriptPath, JSON.stringify(script));
   return launchTondo({
     ...options,
-    settings: { ...settings, piPath: installPi(cli, path.join(workDir, "bin")) },
+    settings: {
+      ...settings,
+      piPath: installPi(cli, path.join(workDir, "bin"), {
+        args: [...PI_ARGS, ...piArgs],
+        agentDir: path.join(workDir, "pi-agent"),
+        scriptPath,
+      }),
+    },
     env: {
       ...env,
       TONDO_PI_ARGS: JSON.stringify([...PI_ARGS, ...piArgs]),
@@ -67,12 +74,44 @@ export function launchWithPi({
   });
 }
 
-/** Installs `cli` the way Tondo finds pi: a `pi` command in `bin` with a node beside it. */
-function installPi(cli: string, bin: string): string {
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * Installs `cli` the way Tondo finds pi: a `pi` command in `bin` with a node
+ * beside it. Tondo runs `<that node> <cli.js> ...` and never runs `pi` itself,
+ * and a packaged app ignores TONDO_PI_ARGS. So for a packaged app the node is
+ * a script that adds the faux arguments and environment, then runs the real node.
+ */
+function installPi(
+  cli: string,
+  bin: string,
+  faux: { args: string[]; agentDir: string; scriptPath: string },
+): string {
   mkdirSync(bin);
-  symlinkSync(cli, path.join(bin, "pi"));
-  symlinkSync(process.execPath, path.join(bin, "node"));
-  return path.join(bin, "pi");
+  const pi = path.join(bin, "pi");
+  const node = path.join(bin, "node");
+  symlinkSync(cli, pi);
+  if (process.env.TONDO_E2E_EXECUTABLE) {
+    mkdirSync(faux.agentDir);
+    writeFileSync(
+      node,
+      [
+        "#!/bin/sh",
+        `export PI_CODING_AGENT_DIR=${shellQuote(faux.agentDir)}`,
+        `export TONDO_FAUX_SCRIPT=${shellQuote(faux.scriptPath)}`,
+        'cli="$1"',
+        "shift",
+        `exec ${shellQuote(process.execPath)} "$cli" ${faux.args.map(shellQuote).join(" ")} "$@"`,
+        "",
+      ].join("\n"),
+    );
+    chmodSync(node, 0o755);
+  } else {
+    symlinkSync(process.execPath, node);
+  }
+  return pi;
 }
 
 /** Makes main's folder dialog pick `folder` from now on, without showing it. */

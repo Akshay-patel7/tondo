@@ -81,6 +81,9 @@ export default defineConfig({
     // inside its budget (docs/stack.md, "Stage 12 measurements"). Not with
     // esbuild's keepNames: wrapping every named closure cost the terminal a
     // third of its throughput.
-    build: { minify: "esbuild" },
+    // Hidden sourcemaps: the .map files sit next to the bundles, but the shipped JS has no
+    // sourceMappingURL comment. The page never loads a map, so its memory doesn't change,
+    // and the minified renderer's stack traces can be mapped offline.
+    build: { minify: "esbuild", sourcemap: "hidden" },
   },
 });
