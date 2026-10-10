@@ -16,6 +16,8 @@ import { togglePalette, usePalette } from "./palette/store";
 import { isMac } from "./platform";
 import { NoThread } from "./project/NoThread";
 import { TrustPrompt } from "./project/TrustPrompt";
+import { SettingsPage } from "./settings/SettingsPage";
+import { useSettingsPage } from "./settings/store";
 import { Sheets } from "./sheets/Sheets";
 import { appCommand, shortcutLabel } from "./shortcuts";
 import { Sidebar } from "./sidebar/Sidebar";
@@ -140,8 +142,10 @@ function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
 }
 
 function Body() {
+  const settingsOpen = useSettingsPage((page) => page.open);
   const project = useHost((host) => host.thread?.project);
   const askingTrust = useHost((host) => host.thread?.askingTrust ?? false);
+  if (settingsOpen) return <SettingsPage />;
   if (project === undefined) return <NoThread />;
   if (askingTrust) return <TrustPrompt project={project} />;
   return <Thread />;

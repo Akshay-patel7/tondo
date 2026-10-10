@@ -11,6 +11,7 @@ import {
 } from "./connection";
 import type { PaletteAction } from "./palette/model";
 import { closePalette, togglePalette } from "./palette/store";
+import { openSettings } from "./settings/store";
 import type { AppCommand } from "./shortcuts";
 import { stepThread, threadOrder } from "./sidebar/model";
 import { startRename } from "./sidebar/store";
@@ -42,6 +43,9 @@ export function runAppCommand(command: AppCommand): void {
     case "add-project":
       addProject();
       break;
+    case "settings":
+      openSettings();
+      break;
     case "step-thread": {
       const id = stepThread(threadOrder(projects), thread?.id, command.step);
       if (id !== undefined) openThread(id);
@@ -66,6 +70,9 @@ export function runPaletteAction(action: PaletteAction): void {
       break;
     case "toggle-sidebar":
       toggleSidebar();
+      break;
+    case "settings":
+      openSettings();
       break;
     case "rename-thread": {
       // The title is edited in place, so the sidebar has to show the thread.

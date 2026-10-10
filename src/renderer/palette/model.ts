@@ -3,13 +3,15 @@
 // threads, then projects. Tondo's matches words anywhere in an item's label
 // or detail, which is enough until the list outgrows it.
 import type { OpenThread, SidebarProject, SidebarThread } from "../../shared/protocol";
+import type { ShortcutCommand } from "../../shared/settings";
 import { folderName } from "../format";
-import { shortcutLabel } from "../shortcuts";
+import { shortcutLabelFor } from "../shortcuts";
 
 export type PaletteAction =
   | { readonly type: "new-thread"; readonly projectId: number }
   | { readonly type: "add-project" }
   | { readonly type: "toggle-sidebar" }
+  | { readonly type: "settings" }
   | { readonly type: "rename-thread"; readonly threadId: string }
   | { readonly type: "pin-thread"; readonly threadId: string; readonly pinned: boolean }
   | { readonly type: "archive-thread"; readonly threadId: string; readonly archived: boolean }
@@ -46,6 +48,7 @@ export function paletteItems({
   isMac,
 }: PaletteInput): PaletteItem[] {
   const items: PaletteItem[] = [];
+  const keys = (command: ShortcutCommand) => shortcutLabelFor(command, isMac) ?? "";
   const action = (
     key: string,
     label: string,
@@ -56,19 +59,20 @@ export function paletteItems({
 
   const here = open ? { id: open.projectId, path: open.project } : projects[0];
   if (here) {
-    action("new-thread", "New thread", folderName(here.path), shortcutLabel("N", isMac), {
+    action("new-thread", "New thread", folderName(here.path), keys("new-thread"), {
       type: "new-thread",
       projectId: here.id,
     });
   }
-  action("add-project", "Add project…", "", shortcutLabel("O", isMac), { type: "add-project" });
+  action("add-project", "Add project…", "", keys("add-project"), { type: "add-project" });
   action(
     "toggle-sidebar",
     sidebarHidden ? "Show sidebar" : "Hide sidebar",
     "",
-    shortcutLabel("B", isMac),
+    keys("toggle-sidebar"),
     { type: "toggle-sidebar" },
   );
+  action("settings", "Settings", "", keys("settings"), { type: "settings" });
   const shown = open && projects.flatMap(({ threads }) => threads).find((t) => t.id === open.id);
   if (shown) {
     const threadId = shown.id;

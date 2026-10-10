@@ -57,6 +57,7 @@ describe("paletteItems", () => {
       "Actions: New thread",
       "Actions: Add project…",
       "Actions: Hide sidebar",
+      "Actions: Settings",
       "Actions: Rename thread",
       "Actions: Unpin thread",
       "Actions: Archive thread",
@@ -69,15 +70,17 @@ describe("paletteItems", () => {
     ]);
     expect(items[0]).toMatchObject({ detail: "tondo", shortcut: "⌘N" });
     expect(items[0]!.action).toEqual({ type: "new-thread", projectId: 1 });
+    expect(items[3]).toMatchObject({ shortcut: "⌘,", action: { type: "settings" } });
     expect(items.at(-1)!.action).toEqual({ type: "open-thread", threadId: "z", archived: true });
   });
 
   test("starts a new thread in the first project when none is open", () => {
     const items = paletteItems({ projects, open: null, sidebarHidden: true, isMac: false });
-    expect(labels(items).slice(0, 4)).toEqual([
+    expect(labels(items).slice(0, 5)).toEqual([
       "Actions: New thread",
       "Actions: Add project…",
       "Actions: Show sidebar",
+      "Actions: Settings",
       "Threads: Thread b",
     ]);
     expect(items[0]).toMatchObject({ shortcut: "Ctrl+N", action: { projectId: 1 } });
@@ -85,7 +88,11 @@ describe("paletteItems", () => {
 
   test("offers only Add project and the sidebar without projects", () => {
     const items = paletteItems({ projects: [], open: null, sidebarHidden: false, isMac: true });
-    expect(labels(items)).toEqual(["Actions: Add project…", "Actions: Hide sidebar"]);
+    expect(labels(items)).toEqual([
+      "Actions: Add project…",
+      "Actions: Hide sidebar",
+      "Actions: Settings",
+    ]);
   });
 
   test("offers no rename before pi has saved the thread", () => {
