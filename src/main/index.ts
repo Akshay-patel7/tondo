@@ -20,6 +20,7 @@ import {
   registerAppScheme,
 } from "./security";
 import { APP_URL, isSameOrigin } from "./securityPolicy";
+import { startUpdater } from "./updater";
 import { createMainWindow } from "./window";
 
 // The profile decides the single-instance lock, so it's set before anything else.
@@ -42,6 +43,7 @@ if (!app.requestSingleInstanceLock()) {
   // Only the instance holding the lock writes the logs.
   const logs = path.join(app.getPath("userData"), "logs");
   copyConsoleTo(new LogFile(path.join(logs, "main.log")));
+  console.log(`Tondo ${app.getVersion()} is running`);
   const hostLog = new LogFile(path.join(logs, "host.log"));
   const hostOutput = {
     stdout: lineWriter(hostLog, "stdout"),
@@ -154,6 +156,9 @@ if (!app.requestSingleInstanceLock()) {
         Object.assign(globalThis, { tondoCollectHostGarbage: () => started.collectGarbage() });
       }
       openMainWindow();
+      startUpdater().catch((error: unknown) => {
+        console.error("Tondo Updates: couldn't start:", error);
+      });
     })
     .catch((error: unknown) => {
       console.error("Tondo failed to start:", error);
