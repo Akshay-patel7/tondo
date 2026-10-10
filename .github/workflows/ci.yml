@@ -61,3 +61,78 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: test-results/
           if-no-files-found: ignore
+
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, ubuntu-24.04]
+    env:
+      VERSION: 0.0.0-ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: .tool-versions
+          cache: true
+          require-lockfile: true
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: pnpm package --mac --arch arm64 --version "$VERSION"
+
+      - name: Smoke dmg
+        if: runner.os == 'macOS'
+        run: |
+          mnt="$RUNNER_TEMP/mnt"
+          dest="$RUNNER_TEMP/smoke-dmg"
+          rm -rf "$dest"
+          mkdir -p "$mnt" "$dest"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/Tondo-$VERSION-arm64.dmg" > /dev/null
+          ditto "$mnt/Tondo.app" "$dest/Tondo.app"
+          hdiutil detach "$mnt"
+          node scripts/smoke.mts --app "$dest/Tondo.app"
+
+      - name: Smoke zip
+        if: runner.os == 'macOS'
+        run: |
+          dest="$RUNNER_TEMP/smoke-zip"
+          rm -rf "$dest"
+          mkdir -p "$dest"
+          ditto -x -k "dist/Tondo-$VERSION-arm64.zip" "$dest"
+          node scripts/smoke.mts --app "$dest/Tondo.app"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: pnpm package --linux --version "$VERSION"
+
+      - name: Install the deb
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y ./dist/*.deb
+
+      # The default AppArmor restriction stays on here: the deb's profile must
+      # keep the sandbox working. The sysctl is relaxed only after this smoke.
+      - name: Smoke deb (AppArmor restriction on)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node scripts/smoke.mts --app /opt/Tondo/tondo
+
+      # AppRun falls back to --no-sandbox when `unshare -Ur true` fails, as it
+      # does under the restriction. Relaxing it lets the AppImage run sandboxed.
+      - name: Allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Smoke AppImage
+        if: runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          images=(dist/*.AppImage)
+          if [ "${#images[@]}" -ne 1 ]; then
+            echo "::error::Expected one AppImage, found ${#images[@]}"
+            exit 1
+          fi
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node scripts/smoke.mts --app "${images[0]}"
