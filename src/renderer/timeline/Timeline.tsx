@@ -57,6 +57,8 @@ export function Timeline() {
   const listRef = useRef<LegendListRef>(null);
   const opened = useRef(false);
   const [following, setFollowing] = useState(true);
+  // Size changes read whether to follow before React re-renders with it.
+  const followingNow = useRef(true);
   const lastScroll = useRef(0);
   const shown = timelineRows(messages);
   const rows: readonly TimelineRow[] = streaming ? [...shown, messages.length] : shown;
@@ -67,7 +69,8 @@ export function Timeline() {
     if (!state) return;
     const previousScroll = lastScroll.current;
     lastScroll.current = state.scroll;
-    setFollowing((wasFollowing) => followsAfterScroll(wasFollowing, previousScroll, state));
+    followingNow.current = followsAfterScroll(followingNow.current, previousScroll, state);
+    setFollowing(followingNow.current);
   };
 
   // Legend List hides the rows until its opening scroll to the end finishes.
@@ -84,11 +87,17 @@ export function Timeline() {
     opened.current = true;
     void listRef.current?.scrollToEnd({ animated: false });
   };
+  // Legend List follows a row that grows only while the view is within a
+  // screen of the end. A row that grows by more in one layout, like a long
+  // reply that lands whole in a new thread, would leave the view behind.
   const onItemSizeChanged = () => {
-    if (opened.current) return;
     const state = listRef.current?.getState();
-    if (state && state.contentLength - state.scroll - state.scrollLength <= state.scrollLength) {
-      endOpeningScroll();
+    if (!state) return;
+    const gap = state.contentLength - state.scroll - state.scrollLength;
+    if (!opened.current) {
+      if (gap <= state.scrollLength) endOpeningScroll();
+    } else if (followingNow.current && gap > state.scrollLength) {
+      void listRef.current?.scrollToEnd({ animated: false });
     }
   };
 
@@ -99,6 +108,7 @@ export function Timeline() {
     const list = listRef.current;
     if (!list) return;
     list.getScrollableNode().focus({ preventScroll: true });
+    followingNow.current = true;
     setFollowing(true);
     void list.scrollToEnd({ animated: false });
   };
