@@ -102,7 +102,9 @@ function Thread() {
         <main className="min-h-0 flex-1">
           <Timeline key={threadKey} />
         </main>
-        <footer className="shrink-0 px-4 pb-4">
+        {/* When the terminal drawer needs the room, the footer gives up height and clips. The
+            clip margin keeps the composer card's shadow, which reaches 20px past the footer. */}
+        <footer className="min-h-0 overflow-clip px-4 pb-4 [overflow-clip-margin:20px]">
           <div className="mx-auto max-w-3xl">
             <Banners />
             {needsSignIn ? <SignInPrompt /> : null}
