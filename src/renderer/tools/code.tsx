@@ -8,6 +8,7 @@ import {
   PatchDiff,
   Virtualizer,
   WorkerPoolContext,
+  type BaseCodeOptions,
   type FileContents,
   type FileDiffOptions,
   type FileOptions,
@@ -97,13 +98,56 @@ function WithPool({ children }: { children: ReactNode }) {
   return <WorkerPoolContext value={pool}>{children}</WorkerPoolContext>;
 }
 
-/** The card's scroll box. Only the lines in and near the view are on the page. */
-function CodeBox({ children }: { children: ReactNode }) {
+/**
+ * The card's scroll box. Only the lines in and near the view are on the page.
+ * A box taller than its code scrolls, and the keyboard can focus it then.
+ */
+function CodeBox({ label, children }: { label: string; children: ReactNode }) {
+  // The Virtualizer gives its element only a class and a style, so the scroll
+  // box gets its role and name once it's on the page.
+  const nameScrollBox = (wrapper: HTMLDivElement | null) => {
+    const box = wrapper?.firstElementChild;
+    box?.setAttribute("role", "region");
+    box?.setAttribute("aria-label", label);
+  };
   return (
-    <Virtualizer className="max-h-[360px] overflow-auto [--diffs-font-family:var(--font-mono)]">
-      {children}
-    </Virtualizer>
+    <div ref={nameScrollBox} className="relative">
+      <Virtualizer className="peer max-h-[360px] overflow-auto outline-hidden [--diffs-font-family:var(--font-mono)]">
+        {children}
+      </Virtualizer>
+      {/* The code paints over any ring on its own box, so the focus ring sits
+          on top. It's on the page only while the box has keyboard focus. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 hidden rounded-[inherit] ring-2 ring-ring ring-inset peer-focus-visible:block"
+      />
+    </div>
   );
+}
+
+type Scheme = "light" | "dark";
+
+// Main sets the page's color scheme from the theme setting.
+const DARK = window.matchMedia("(prefers-color-scheme: dark)");
+
+function subscribeToScheme(onChange: () => void): () => void {
+  DARK.addEventListener("change", onChange);
+  return () => DARK.removeEventListener("change", onChange);
+}
+
+const currentScheme = (): Scheme => (DARK.matches ? "dark" : "light");
+
+/**
+ * The pool colors code for both of pierre's themes at once, so a scheme change
+ * only switches which colors show. Nothing is highlighted again.
+ */
+function useScheme(): Scheme {
+  return useSyncExternalStore(subscribeToScheme, currentScheme);
+}
+
+/** `options` for each scheme, made once so a render passes the same object. */
+function byScheme<Options extends BaseCodeOptions>(options: Options): Record<Scheme, Options> {
+  return { light: { ...options, themeType: "light" }, dark: { ...options, themeType: "dark" } };
 }
 
 /**
@@ -123,13 +167,15 @@ const DIFF_OPTIONS: FileDiffOptions<undefined, undefined> = {
   disableFileHeader: true,
   tokenizeMaxLength: MAX_COLORED_DIFF_LINES,
 };
+const DIFF_SCHEMES = byScheme(DIFF_OPTIONS);
 
 /** A single-file unified patch, like the one pi's edit reports. */
 export function DiffView({ patch }: { patch: string }) {
+  const scheme = useScheme();
   return (
     <WithPool>
-      <CodeBox>
-        <PatchDiff patch={patch} options={DIFF_OPTIONS} />
+      <CodeBox label="Diff">
+        <PatchDiff patch={patch} options={DIFF_SCHEMES[scheme]} />
       </CodeBox>
     </WithPool>
   );
@@ -144,6 +190,8 @@ const WITHOUT_NUMBERS: FileOptions<undefined, undefined> = {
   ...WITH_NUMBERS,
   disableLineNumbers: true,
 };
+const NUMBERED_SCHEMES = byScheme(WITH_NUMBERS);
+const UNNUMBERED_SCHEMES = byScheme(WITHOUT_NUMBERS);
 
 /**
  * A file's text, highlighted for the language its name suggests. pierre
@@ -159,12 +207,13 @@ export function FileView({
   contents: string;
   lineNumbers: boolean;
 }) {
+  const scheme = useScheme();
   // pierre would number the empty line after a final newline, which editors don't show.
   const file: FileContents = { name, contents: contents.replace(/\n$/, "") };
   return (
     <WithPool>
-      <CodeBox>
-        <File file={file} options={lineNumbers ? WITH_NUMBERS : WITHOUT_NUMBERS} />
+      <CodeBox label={name || "File"}>
+        <File file={file} options={(lineNumbers ? NUMBERED_SCHEMES : UNNUMBERED_SCHEMES)[scheme]} />
       </CodeBox>
     </WithPool>
   );

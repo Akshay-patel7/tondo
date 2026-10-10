@@ -1,9 +1,16 @@
-// The model and thinking level pickers. They're native selects until Stage 12
-// brings Base UI. They show what pi last reported, and a pick goes to pi,
-// which reports the change back.
-import type { ReactNode } from "react";
+// The model and thinking level pickers. They show what pi last reported, and a
+// pick goes to pi, which reports the change back.
 import type { PiSession, ThinkingLevel } from "../../shared/protocol";
 import { setModel, setThinkingLevel } from "../connection";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 
 const THINKING_LABELS: Record<ThinkingLevel, string> = {
   off: "Thinking off",
@@ -15,78 +22,67 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
   max: "Max thinking",
 };
 
-function Picker({
-  name,
-  label,
-  value,
-  onChange,
-  children,
-}: {
-  /** What /model and /thinking find the picker by. */
-  name: "model" | "thinking";
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  children: ReactNode;
-}) {
-  return (
-    <span className="relative inline-flex items-center">
-      <select
-        data-picker={name}
-        aria-label={label}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="max-w-56 appearance-none truncate rounded-control bg-transparent py-1 pr-6 pl-2 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {children}
-      </select>
-      <svg
-        viewBox="0 0 12 12"
-        aria-hidden="true"
-        className="pointer-events-none absolute right-1.5 size-3 text-muted-foreground"
-      >
-        <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      </svg>
-    </span>
-  );
-}
-
 /** A model's value in the picker. */
 function modelKey(provider: string, id: string): string {
   return `${provider}/${id}`;
 }
 
+// Each trigger keeps data-picker, which /model and /thinking find it by (slash/builtins.ts).
 export function ModelPicker({ session }: { session: PiSession }) {
   const { model, models } = session;
-  const current = model ? modelKey(model.provider, model.id) : "";
+  const current = model ? modelKey(model.provider, model.id) : null;
   const listed = models.some((option) => modelKey(option.provider, option.id) === current);
   const providers = [...new Set(models.map((option) => option.provider))];
+  // pi's model isn't one you have credentials for. It shows, but you can't pick it.
+  const unlisted = models.length > 0 && current !== null && !listed ? current : null;
+  const labels: Record<string, string> = Object.fromEntries([
+    ...(unlisted === null ? [] : [[unlisted, unlisted]]),
+    ...models.map((option) => [modelKey(option.provider, option.id), option.name]),
+  ]);
 
-  const pick = (value: string) => {
+  const pick = (value: string | null) => {
     const picked = models.find((option) => modelKey(option.provider, option.id) === value);
     if (picked) setModel(picked.provider, picked.id);
   };
 
+  // With no models to pick from, the picker says so rather than naming the
+  // model pi falls back to.
   return (
-    <Picker name="model" label="Model" value={current} onChange={pick}>
-      {listed ? null : (
-        // pi's model isn't one you have credentials for, or pi has none.
-        <option value={current} disabled>
-          {current || "No model"}
-        </option>
-      )}
-      {providers.map((provider) => (
-        <optgroup key={provider} label={provider}>
-          {models
-            .filter((option) => option.provider === provider)
-            .map((option) => (
-              <option key={option.id} value={modelKey(provider, option.id)}>
-                {option.name}
-              </option>
-            ))}
-        </optgroup>
-      ))}
-    </Picker>
+    <Select
+      items={labels}
+      value={models.length === 0 ? null : current}
+      onValueChange={pick}
+      disabled={models.length === 0}
+    >
+      <SelectTrigger
+        data-picker="model"
+        aria-label="Model"
+        variant="ghost"
+        size="xs"
+        className="max-w-56"
+      >
+        <SelectValue placeholder="No model" />
+      </SelectTrigger>
+      <SelectContent>
+        {unlisted === null ? null : (
+          <SelectItem value={unlisted} disabled>
+            {unlisted}
+          </SelectItem>
+        )}
+        {providers.map((provider) => (
+          <SelectGroup key={provider}>
+            <SelectGroupLabel>{provider}</SelectGroupLabel>
+            {models
+              .filter((option) => option.provider === provider)
+              .map((option) => (
+                <SelectItem key={option.id} value={modelKey(provider, option.id)}>
+                  {option.name}
+                </SelectItem>
+              ))}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -95,18 +91,27 @@ export function ThinkingPicker({ session }: { session: PiSession }) {
   // A model without reasoning offers only "off".
   if (thinkingLevels.length < 2) return null;
 
-  const pick = (value: string) => {
+  const pick = (value: string | null) => {
     const level = thinkingLevels.find((option) => option === value);
     if (level) setThinkingLevel(level);
   };
 
   return (
-    <Picker name="thinking" label="Thinking level" value={thinkingLevel} onChange={pick}>
-      {thinkingLevels.map((level) => (
-        <option key={level} value={level}>
-          {THINKING_LABELS[level]}
-        </option>
-      ))}
-    </Picker>
+    <Select
+      items={thinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level] }))}
+      value={thinkingLevel}
+      onValueChange={pick}
+    >
+      <SelectTrigger data-picker="thinking" aria-label="Thinking level" variant="ghost" size="xs">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {thinkingLevels.map((level) => (
+          <SelectItem key={level} value={level}>
+            {THINKING_LABELS[level]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

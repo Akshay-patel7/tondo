@@ -528,10 +528,6 @@ export function showSessionInfo(): void {
   send({ v, type: "session-info", threadId: requireShownId() });
 }
 
-export function showSettingsFiles(): void {
-  send({ v, type: "settings-files", threadId: requireShownId() });
-}
-
 export function showTrust(): void {
   send({ v, type: "trust-status", threadId: requireShownId() });
 }

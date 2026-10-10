@@ -196,7 +196,6 @@ export interface SettingsFile {
 /** A panel a slash command opens, with what the host found out for it. */
 export type Sheet =
   | { readonly kind: "session"; readonly info: SessionInfo }
-  | { readonly kind: "settings"; readonly files: readonly SettingsFile[] }
   | { readonly kind: "trust"; readonly project: string; readonly trust: TrustInfo };
 
 /** A thread as the sidebar lists it. */
@@ -298,8 +297,6 @@ export type ClientMessage = Versioned<
   | { type: "export"; threadId: string; path: string }
   /** /session: answered with a session sheet. */
   | { type: "session-info"; threadId: string }
-  /** /settings: answered with a settings sheet. */
-  | { type: "settings-files"; threadId: string }
   /** /trust: answered with a trust sheet. */
   | { type: "trust-status"; threadId: string }
   /** /reload: stop pi and start it again on the same session. */
@@ -520,7 +517,6 @@ export function parseClientMessage(data: unknown): ParseResult {
     case "restart":
     case "copy-reply":
     case "session-info":
-    case "settings-files":
     case "trust-status":
     case "reload": {
       const bad = badThreadId(type, threadId);

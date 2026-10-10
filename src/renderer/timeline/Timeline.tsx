@@ -7,9 +7,11 @@ import {
   type LegendListRenderItemProps,
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
+import { ArrowDown } from "lucide-react";
 import { useRef, useState } from "react";
 import { useThread } from "../thread/store";
 import { timelineRows } from "../tools/model";
+import { Button } from "../ui/button";
 import { followsAfterScroll } from "./follow";
 import { MessageView } from "./MessageView";
 
@@ -90,8 +92,21 @@ export function Timeline() {
     }
   };
 
+  // The button goes away once the list follows again, so keyboard focus moves
+  // to the transcript first. Following starts before the scroll, so the view
+  // stays at the end when rows there measure taller than their estimates.
+  const jumpToLatest = () => {
+    const list = listRef.current;
+    if (!list) return;
+    list.getScrollableNode().focus({ preventScroll: true });
+    setFollowing(true);
+    void list.scrollToEnd({ animated: false });
+  };
+
   return (
-    <div className="h-full min-h-0" data-testid="timeline" data-following={following}>
+    <div className="relative h-full min-h-0" data-testid="timeline" data-following={following}>
+      {/* The focus ring is inset, like ScrollArea's: outside the list it would
+          run under the header and the composer. */}
       <LegendList<TimelineRow>
         ref={listRef}
         data={rows}
@@ -106,8 +121,22 @@ export function Timeline() {
         onScroll={onScroll}
         onItemSizeChanged={onItemSizeChanged}
         onReady={endOpeningScroll}
-        className="h-full min-h-0 overflow-x-hidden overscroll-y-contain px-4 [overflow-anchor:none]"
+        role="region"
+        aria-label="Transcript"
+        tabIndex={0}
+        className="h-full min-h-0 overflow-x-hidden overscroll-y-contain px-4 outline-hidden [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       />
+      {following ? null : (
+        // The border sets the button off from the rows it floats over. The
+        // fill covers the button's transparent border, which the rows would
+        // show through.
+        <div className="absolute inset-x-0 bottom-4 mx-auto w-fit rounded-control border border-border bg-secondary">
+          <Button variant="secondary" size="sm" onClick={jumpToLatest}>
+            <ArrowDown aria-hidden />
+            Jump to latest
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

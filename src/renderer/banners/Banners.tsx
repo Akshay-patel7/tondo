@@ -1,68 +1,52 @@
 // Banners above the composer: pi stopped, a retry, a compaction, and errors
 // the host reported. The wording of the retry and compaction banners follows
-// pi's own status lines.
-import type { ReactNode } from "react";
+// pi's own status lines. Errors are alerts, which screen readers announce at
+// once, and the rest are statuses, which they announce when they're idle.
+import { ChevronRight, CircleAlert, RotateCw, X } from "lucide-react";
 import type { CompactionReason, Retry } from "../../shared/thread";
 import { dismissError, restartPi, useHost, usePi } from "../connection";
 import { useThread } from "../thread/store";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 
-const TONES = {
-  error: "border-destructive/30 bg-destructive/8",
-  warning: "border-warning/30 bg-warning/8",
-  info: "border-border bg-muted",
-};
-
-function Banner({
-  tone,
-  alert,
-  children,
-  action,
-}: {
-  tone: keyof typeof TONES;
-  /** Screen readers announce an alert at once, and a status when they're idle. */
-  alert: boolean;
-  children: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div
-      role={alert ? "alert" : "status"}
-      className={`flex items-start gap-3 rounded-panel border px-4 py-2 text-sm ${TONES[tone]}`}
-    >
-      <div className="min-w-0 flex-1 py-0.5">{children}</div>
-      {action}
-    </div>
-  );
-}
+// Alert centers its icon and button on the whole text unless there's a
+// description, so each banner keeps them on the first line of its text. Beside
+// a 24 px button, the title's 2 px margins make that line as tall as the
+// button, and the icon sits 4 px down. Without a button, the icon sits 2 px
+// down, as Alert puts it beside a description. One line looks as it did.
 
 function PiStopped({ error }: { error: string }) {
   // PiExitError puts the exit on the first line and pi's stderr after it.
   const [summary, ...rest] = error.split("\n");
   const details = rest.join("\n").trim();
   return (
-    <Banner
-      tone="error"
-      alert
-      action={
-        <button
-          type="button"
-          onClick={restartPi}
-          className="shrink-0 rounded-control bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          Restart pi
-        </button>
-      }
-    >
-      <p className="font-medium">{summary}</p>
+    <Alert variant="destructive" role="alert">
+      <CircleAlert aria-hidden className={details ? undefined : "self-start translate-y-1"} />
+      <AlertTitle className={details ? "break-words" : "my-0.5 break-words"}>{summary}</AlertTitle>
       {details ? (
-        <details className="mt-1">
-          <summary className="cursor-default text-xs text-muted-foreground select-none">
-            Details
-          </summary>
-          <pre className="mt-1 max-h-40 overflow-auto text-xs whitespace-pre-wrap">{details}</pre>
-        </details>
+        <AlertDescription>
+          <details className="group/details">
+            <summary className="inline-flex cursor-default list-none items-center gap-1 rounded-sm text-xs outline-none select-none hover:text-foreground focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
+              <ChevronRight
+                aria-hidden
+                className="size-3 transition-transform duration-150 group-open/details:rotate-90"
+              />
+              Details
+            </summary>
+            <pre className="mt-1.5 max-h-40 overflow-auto text-xs whitespace-pre-wrap">
+              {details}
+            </pre>
+          </details>
+        </AlertDescription>
       ) : null}
-    </Banner>
+      {/* On the summary's line, so opening the details doesn't move it. */}
+      <AlertAction className="self-start">
+        <Button size="xs" onClick={restartPi}>
+          Restart pi
+        </Button>
+      </AlertAction>
+    </Alert>
   );
 }
 
@@ -84,36 +68,39 @@ export function Banners() {
 
   return (
     <div className="mb-2 flex flex-col gap-2 empty:hidden">
-      {pi.state === "exited" ? <PiStopped error={pi.error} /> : null}
+      {/* A pi Tondo couldn't find or can't run is explained in the main area instead. */}
+      {pi.state === "exited" && pi.problem === undefined ? <PiStopped error={pi.error} /> : null}
       {retry ? (
-        <Banner tone="warning" alert={false}>
-          <p className="font-medium">{retryText(retry)}</p>
-          <p className="mt-0.5 text-xs break-words text-muted-foreground">{retry.errorMessage}</p>
-        </Banner>
+        <Alert variant="warning" role="status">
+          <RotateCw aria-hidden className="self-start translate-y-0.5" />
+          <AlertTitle>{retryText(retry)}</AlertTitle>
+          {retry.errorMessage ? (
+            <AlertDescription className="break-words">{retry.errorMessage}</AlertDescription>
+          ) : null}
+        </Alert>
       ) : null}
       {compaction ? (
-        <Banner tone="info" alert={false}>
-          <p>{compactionText(compaction)}</p>
-        </Banner>
+        <Alert role="status">
+          {/* It spins only while pi compacts, and the banner goes when pi is done. */}
+          <Spinner className="self-start translate-y-0.5" />
+          <AlertTitle>{compactionText(compaction)}</AlertTitle>
+        </Alert>
       ) : null}
       {errors.map((error) => (
-        <Banner
-          key={error}
-          tone="error"
-          alert
-          action={
-            <button
-              type="button"
+        <Alert key={error} variant="destructive" role="alert">
+          <CircleAlert aria-hidden className="self-start translate-y-1" />
+          <AlertTitle className="my-0.5 break-words whitespace-pre-wrap">{error}</AlertTitle>
+          <AlertAction className="self-start">
+            <Button
+              variant="ghost"
+              size="icon-xs"
               aria-label="Dismiss error"
               onClick={() => dismissError(error)}
-              className="shrink-0 rounded-control px-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             >
-              ×
-            </button>
-          }
-        >
-          <p className="break-words whitespace-pre-wrap">{error}</p>
-        </Banner>
+              <X aria-hidden />
+            </Button>
+          </AlertAction>
+        </Alert>
       ))}
     </div>
   );

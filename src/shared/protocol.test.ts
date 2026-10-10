@@ -58,7 +58,6 @@ describe("parseClientMessage", () => {
       { v, type: "export", threadId, path: "" },
       { v, type: "export", threadId, path: "notes/thread.html" },
       { v, type: "session-info", threadId },
-      { v, type: "settings-files", threadId },
       { v, type: "trust-status", threadId },
       { v, type: "reload", threadId },
       { v, type: "reveal", path: "/tmp/pi-session.html" },
@@ -144,7 +143,6 @@ describe("parseClientMessage", () => {
         "restart",
         "copy-reply",
         "session-info",
-        "settings-files",
         "trust-status",
         "reload",
       ]) {

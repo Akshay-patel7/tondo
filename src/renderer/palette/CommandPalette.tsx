@@ -1,12 +1,14 @@
 // The command palette: type to find an action, a thread or a project, then
 // press Enter. It looks like T3 Code's (apps/web/src/components/
-// CommandPalette.tsx), which builds on Base UI's Autocomplete. Tondo has no
-// Base UI until Stage 12, so this one follows the ARIA combobox pattern itself.
+// CommandPalette.tsx), which builds on Base UI's Autocomplete. This one sits in
+// the ui Dialog and follows the ARIA combobox pattern itself.
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { runPaletteAction } from "../commands";
 import { useHost } from "../connection";
 import { isMac } from "../platform";
-import { SearchIcon } from "../ui/icons";
+import { Dialog, DialogPopup } from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Kbd } from "../ui/kbd";
 import { filterItems, paletteItems, type PaletteGroup, type PaletteItem } from "./model";
 import { closePalette } from "./store";
 
@@ -25,6 +27,10 @@ function groupItems(items: readonly PaletteItem[]): Group[] {
   return groups;
 }
 
+/**
+ * App.tsx mounts the palette only while it's open. Escape, a press outside it
+ * and its shortcut close it, and focus goes back to where it was.
+ */
 export function CommandPalette() {
   const projects = useHost((host) => host.projects);
   const open = useHost((host) => host.thread);
@@ -37,15 +43,6 @@ export function CommandPalette() {
 
   const items = filterItems(paletteItems({ projects, open, sidebarHidden, isMac }), query);
   const current = Math.min(highlighted, items.length - 1);
-
-  // Focuses the search field, and gives focus back to where it was when the palette closes.
-  useLayoutEffect(() => {
-    const previous = document.activeElement;
-    input.current?.focus();
-    return () => {
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, []);
 
   useLayoutEffect(() => {
     document.getElementById(`${id}-option-${current}`)?.scrollIntoView({ block: "nearest" });
@@ -61,9 +58,6 @@ export function CommandPalette() {
       event.preventDefault();
       const item = items[current];
       if (item) runPaletteAction(item.action);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closePalette();
     } else if (event.key === "Tab") {
       // Focus stays in the palette until it closes.
       event.preventDefault();
@@ -71,35 +65,35 @@ export function CommandPalette() {
   };
 
   return (
-    <>
-      <div className="app-no-drag fixed inset-0 z-40 bg-black/20" onPointerDown={closePalette} />
-      <div
-        role="dialog"
-        aria-modal="true"
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) closePalette();
+      }}
+    >
+      <DialogPopup
         aria-label="Command palette"
-        className="app-no-drag fixed top-[12vh] left-1/2 z-50 flex max-h-[420px] w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-panel border border-border bg-card shadow-composer"
+        showCloseButton={false}
+        initialFocus={input}
+        className="mt-[12vh] max-h-[min(30rem,76vh)] max-w-xl self-start"
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 text-muted-foreground">
-          <SearchIcon />
-          <input
-            ref={input}
-            role="combobox"
-            aria-label="Search"
-            aria-expanded="true"
-            aria-controls={`${id}-list`}
-            aria-autocomplete="list"
-            aria-activedescendant={items.length > 0 ? `${id}-option-${current}` : undefined}
-            placeholder="Search commands, projects, and threads…"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setHighlighted(0);
-              list.current?.scrollTo({ top: 0 });
-            }}
-            onKeyDown={onKeyDown}
-            className="h-12 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-          />
-        </div>
+        <Input
+          ref={input}
+          role="combobox"
+          aria-label="Search"
+          aria-expanded="true"
+          aria-controls={`${id}-list`}
+          aria-autocomplete="list"
+          aria-activedescendant={items.length > 0 ? `${id}-option-${current}` : undefined}
+          placeholder="Search commands, projects, and threads…"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setHighlighted(0);
+            list.current?.scrollTo({ top: 0 });
+          }}
+          onKeyDown={onKeyDown}
+        />
         <div
           ref={list}
           id={`${id}-list`}
@@ -107,19 +101,19 @@ export function CommandPalette() {
           aria-label="Results"
           // Clicking an item mustn't take focus from the search field.
           onMouseDown={(event) => event.preventDefault()}
-          className="min-h-0 overflow-y-auto p-2"
+          className="min-h-0 overflow-y-auto"
         >
           {items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
+            <p className="py-6 text-center text-sm text-muted-foreground">
               No matching commands, projects, or threads.
             </p>
           ) : null}
           {groupItems(items).map((group, groupIndex) => (
-            <div key={group.name} role="presentation" className="not-first:mt-2">
+            <div key={group.name} role="presentation" className="not-first:mt-3">
               <div
                 id={`${id}-group-${groupIndex}`}
                 aria-hidden="true"
-                className="px-2 pt-1 pb-1 text-xs font-medium text-muted-foreground"
+                className="px-2.5 pb-1 text-xs font-medium text-muted-foreground"
               >
                 {group.name}
               </div>
@@ -132,7 +126,7 @@ export function CommandPalette() {
                     aria-selected={index === current}
                     onPointerMove={() => setHighlighted(index)}
                     onClick={() => runPaletteAction(item.action)}
-                    className={`flex items-center gap-3 rounded-control px-2 py-1.5 text-sm ${
+                    className={`flex items-center gap-3 rounded-control px-2.5 py-1.5 text-sm ${
                       index === current ? "bg-accent text-accent-foreground" : ""
                     }`}
                   >
@@ -140,18 +134,14 @@ export function CommandPalette() {
                     <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                       {item.detail}
                     </span>
-                    {item.shortcut ? (
-                      <kbd className="shrink-0 font-sans text-xs text-muted-foreground">
-                        {item.shortcut}
-                      </kbd>
-                    ) : null}
+                    {item.shortcut ? <Kbd className="shrink-0">{item.shortcut}</Kbd> : null}
                   </div>
                 ))}
               </div>
             </div>
           ))}
         </div>
-      </div>
-    </>
+      </DialogPopup>
+    </Dialog>
   );
 }

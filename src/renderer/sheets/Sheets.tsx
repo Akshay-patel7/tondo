@@ -1,23 +1,38 @@
-// Panels that slash commands open over the window: /session, /settings,
-// /trust and /hotkeys. They look like the command palette and close with
-// Escape, a click outside or their close button.
-import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
-import type { SessionInfo, SettingsFile, TrustInfo } from "../../shared/protocol";
+// Panels that slash commands open over the window: /session, /trust and
+// /hotkeys. Each is a ui Dialog, so it closes with Escape, a click
+// outside or its close button, and focus goes back where it was.
+import { useRef, type ReactNode } from "react";
+import type { SessionInfo, TrustInfo } from "../../shared/protocol";
+import { SHORTCUT_COMMANDS, SHORTCUT_TITLES } from "../../shared/settings";
 import { answerTrust, revealFile } from "../connection";
 import { formatPercent, formatTokens } from "../format";
 import { isMac } from "../platform";
-import { shortcutLabel } from "../shortcuts";
-import { CrossIcon } from "../ui/icons";
-import { closeSheet, useSheet } from "./store";
+import { shortcutLabel, shortcutLabelFor } from "../shortcuts";
+import { Button } from "../ui/button";
+import { Dialog, DialogFooter, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Kbd } from "../ui/kbd";
+import { closeSheet, useSheet, type OpenSheet } from "./store";
 
 export function Sheets() {
-  const sheet = useSheet((open) => open);
-  if (!sheet) return null;
+  const sheet = useSheet((state) => state.sheet);
+  const open = useSheet((state) => state.open);
+  const id = useSheet((state) => state.id);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) closeSheet();
+      }}
+    >
+      {sheet === null ? null : <SheetFor key={id} sheet={sheet} />}
+    </Dialog>
+  );
+}
+
+function SheetFor({ sheet }: { sheet: OpenSheet }) {
   switch (sheet.kind) {
     case "session":
       return <SessionSheet info={sheet.info} />;
-    case "settings":
-      return <SettingsSheet files={sheet.files} />;
     case "trust":
       return <TrustSheet project={sheet.project} trust={sheet.trust} />;
     case "hotkeys":
@@ -25,68 +40,39 @@ export function Sheets() {
   }
 }
 
-/** A modal panel. Focus stays inside it until it closes, then goes back where it was. */
-function Sheet({ title, children }: { title: string; children: ReactNode }) {
-  const titleId = useId();
+/**
+ * A modal panel with a title, and buttons under it if it has any. It opens
+ * with the panel itself focused, so Enter can't answer a question you haven't
+ * read yet.
+ */
+function Sheet({
+  title,
+  children,
+  footer,
+}: {
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
   const panel = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const previous = document.activeElement;
-    panel.current?.querySelector<HTMLElement>("button")?.focus();
-    return () => {
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, []);
-
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeSheet();
-    } else if (event.key === "Tab") {
-      event.preventDefault();
-      const buttons = [...(panel.current?.querySelectorAll<HTMLElement>("button") ?? [])];
-      const index = buttons.indexOf(document.activeElement as HTMLElement);
-      const step = event.shiftKey ? -1 : 1;
-      buttons[(index + step + buttons.length) % buttons.length]?.focus();
-    }
-  };
-
   return (
-    <>
-      <div className="app-no-drag fixed inset-0 z-40 bg-black/20" onPointerDown={closeSheet} />
-      <div
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onKeyDown={onKeyDown}
-        className="app-no-drag fixed top-[12vh] left-1/2 z-50 flex max-h-[76vh] w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-panel border border-border bg-card shadow-composer"
-      >
-        <div className="flex shrink-0 items-center gap-2 border-b border-border py-2 pr-2 pl-5">
-          <h2 id={titleId} className="min-w-0 flex-1 truncate font-medium">
-            {title}
-          </h2>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={closeSheet}
-            className="flex size-7 items-center justify-center rounded-control text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <CrossIcon />
-          </button>
-        </div>
-        <div className="min-h-0 overflow-y-auto px-5 py-4 text-sm">{children}</div>
-      </div>
-    </>
+    <DialogPopup ref={panel} initialFocus={panel} className="max-w-lg">
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+      </DialogHeader>
+      <div>{children}</div>
+      {footer}
+    </DialogPopup>
   );
 }
 
 /** A heading and the rows under it. */
 function Rows({ heading, children }: { heading: string; children: ReactNode }) {
   return (
-    <section className="not-first:mt-4">
+    <section className="not-first:mt-5">
       <h3 className="text-xs font-medium text-muted-foreground">{heading}</h3>
-      <dl className="mt-1.5 grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-1">
+      {/* 8rem holds the widest keys, "Enter or 1 to 9", so every section's text starts in line. */}
+      <dl className="mt-2 grid grid-cols-[minmax(8rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
         {children}
       </dl>
     </section>
@@ -108,14 +94,11 @@ const REVEAL = isMac ? "Show in Finder" : "Show in folder";
 function FilePath({ path }: { path: string }) {
   return (
     <span className="flex items-start gap-2">
-      <span className="min-w-0 flex-1 font-mono text-xs break-all">{path}</span>
-      <button
-        type="button"
-        onClick={() => revealFile(path)}
-        className="shrink-0 text-xs font-medium text-primary hover:underline"
-      >
+      {/* A 20px line, like the label beside it, so their first lines share a baseline. */}
+      <span className="min-w-0 flex-1 font-mono text-xs/5 break-all">{path}</span>
+      <Button variant="link" size="xs" className="-my-0.5" onClick={() => revealFile(path)}>
         {REVEAL}
-      </button>
+      </Button>
     </span>
   );
 }
@@ -138,7 +121,7 @@ function SessionSheet({ info }: { info: SessionInfo }) {
         {info.name === null ? null : <Row label="Name">{info.name}</Row>}
         <Row label="File">{info.file ? <FilePath path={info.file} /> : "Not saved yet"}</Row>
         <Row label="ID">
-          <span className="font-mono text-xs">{info.id}</span>
+          <span className="font-mono text-xs/5">{info.id}</span>
         </Row>
       </Rows>
       <Rows heading="Messages">
@@ -170,63 +153,36 @@ function SessionSheet({ info }: { info: SessionInfo }) {
   );
 }
 
-/** /settings: where pi's settings are. Tondo's own settings screen comes later. */
-function SettingsSheet({ files }: { files: readonly SettingsFile[] }) {
-  return (
-    <Sheet title="Settings">
-      <p className="text-muted-foreground">
-        Tondo has no settings screen yet. pi reads its settings from these files, and the project's
-        win over your global ones.
-      </p>
-      <Rows heading="pi's settings">
-        {files.map((file) => (
-          <Row key={file.scope} label={file.scope}>
-            {file.exists ? (
-              <FilePath path={file.path} />
-            ) : (
-              <span>
-                <span className="font-mono text-xs break-all">{file.path}</span>
-                <span className="text-muted-foreground"> doesn't exist yet</span>
-              </span>
-            )}
-          </Row>
-        ))}
-      </Rows>
-    </Sheet>
-  );
-}
-
 /** /trust: who decides whether pi trusts the project, and your answer when it's Tondo's. */
 function TrustSheet({ project, trust }: { project: string; trust: TrustInfo }) {
+  const asked = trust.decidedBy === "tondo";
   return (
-    <Sheet title="Project trust">
-      <p className="font-mono text-xs break-all text-muted-foreground">{project}</p>
-      <p className="mt-3">{trustText(trust)}</p>
-      {trust.decidedBy === "tondo" ? (
-        <>
-          <p className="mt-2 text-muted-foreground">
-            Trusting it lets pi load the project's .pi settings and resources and run its
-            extensions. Changing your answer restarts pi.
-          </p>
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              type="button"
+    <Sheet
+      title="Project trust"
+      footer={
+        asked ? (
+          <DialogFooter>
+            <Button
+              variant="outline"
               aria-pressed={trust.trusted === false}
               onClick={() => answerFromSheet(false)}
-              className="rounded-control border border-border px-3 py-1.5 hover:bg-accent hover:text-accent-foreground aria-pressed:border-ring"
             >
               Don't trust
-            </button>
-            <button
-              type="button"
-              aria-pressed={trust.trusted === true}
-              onClick={() => answerFromSheet(true)}
-              className="rounded-control bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:bg-primary/90"
-            >
+            </Button>
+            <Button aria-pressed={trust.trusted === true} onClick={() => answerFromSheet(true)}>
               Trust
-            </button>
-          </div>
-        </>
+            </Button>
+          </DialogFooter>
+        ) : null
+      }
+    >
+      <p className="font-mono text-xs break-all text-muted-foreground">{project}</p>
+      <p className="mt-3">{trustText(trust)}</p>
+      {asked ? (
+        <p className="mt-2 text-muted-foreground">
+          Trusting it lets pi load the project's .pi settings and resources and run its extensions.
+          Changing your answer restarts pi.
+        </p>
       ) : null}
     </Sheet>
   );
@@ -254,43 +210,66 @@ function trustText(trust: TrustInfo): string {
   }
 }
 
-function Keys({ children }: { children: string }) {
-  return <kbd className="font-sans whitespace-nowrap">{children}</kbd>;
+/** A fixed shortcut with this platform's modifier: ⌘1 on macOS, Ctrl+1 elsewhere. */
+function mod(key: string): string {
+  return shortcutLabel(key, isMac);
 }
 
-/** A shortcut with this platform's modifier: ⌘K on macOS, Ctrl+K elsewhere. */
-function mod(key: string, shift = false): string {
-  return shortcutLabel(key, isMac, shift);
-}
-
-/** /hotkeys: Tondo's shortcuts, and the keys in the composer and in dialogs. */
+/**
+ * /hotkeys: Tondo's shortcuts as your settings bind them, and the fixed keys in
+ * the composer and in dialogs. Each opening is a fresh mount (Sheets keys it),
+ * so a shortcut you changed since shows its new keys.
+ */
 function HotkeysSheet() {
   return (
     <Sheet title="Keyboard shortcuts">
       <Rows heading="Anywhere">
-        <Row label={<Keys>{mod("K")}</Keys>}>Search threads, projects and actions</Row>
-        <Row label={<Keys>{mod("N")}</Keys>}>New thread</Row>
-        <Row label={<Keys>{mod("O")}</Keys>}>Add a project</Row>
-        <Row label={<Keys>{mod("B")}</Keys>}>Show or hide the sidebar</Row>
-        <Row label={<Keys>{`${mod("[", true)}  ${mod("]", true)}`}</Keys>}>
-          Previous or next thread
-        </Row>
-        <Row label={<Keys>{`${mod("1")} to ${mod("9")}`}</Keys>}>
+        {SHORTCUT_COMMANDS.map((command) => {
+          const keys = shortcutLabelFor(command, isMac);
+          return (
+            <Row key={command} label={keys === null ? "None" : <Kbd>{keys}</Kbd>}>
+              {SHORTCUT_TITLES[command]}
+            </Row>
+          );
+        })}
+        <Row
+          label={
+            <>
+              <Kbd>{mod("1")}</Kbd> to <Kbd>{mod("9")}</Kbd>
+            </>
+          }
+        >
           The sidebar's first nine threads
         </Row>
       </Rows>
       <Rows heading="Composer">
-        <Row label={<Keys>Enter</Keys>}>Send, or steer pi while it works</Row>
-        <Row label={<Keys>Alt+Enter</Keys>}>Queue a follow-up</Row>
-        <Row label={<Keys>Alt+Up</Keys>}>Take queued messages back to edit</Row>
-        <Row label={<Keys>Escape</Keys>}>Stop pi</Row>
-        <Row label={<Keys>Shift+Enter</Keys>}>New line</Row>
-        <Row label={<Keys>/</Keys>}>Slash commands: Tab completes one, Enter runs it</Row>
+        <Row label={<Kbd>Enter</Kbd>}>Send, or steer pi while it works</Row>
+        <Row label={<Kbd>Alt+Enter</Kbd>}>Queue a follow-up</Row>
+        <Row label={<Kbd>Alt+Up</Kbd>}>Take queued messages back to edit</Row>
+        <Row label={<Kbd>Escape</Kbd>}>Stop pi</Row>
+        <Row label={<Kbd>Shift+Enter</Kbd>}>New line</Row>
+        <Row label={<Kbd>/</Kbd>}>Slash commands: Tab completes one, Enter runs it</Row>
       </Rows>
       <Rows heading="Extension dialogs">
-        <Row label={<Keys>↑ ↓</Keys>}>Move</Row>
-        <Row label={<Keys>Enter or 1 to 9</Keys>}>Pick or submit</Row>
-        <Row label={<Keys>Escape</Keys>}>Cancel</Row>
+        <Row
+          label={
+            <>
+              <Kbd>↑</Kbd> <Kbd>↓</Kbd>
+            </>
+          }
+        >
+          Move
+        </Row>
+        <Row
+          label={
+            <>
+              <Kbd>Enter</Kbd> or <Kbd>1</Kbd> to <Kbd>9</Kbd>
+            </>
+          }
+        >
+          Pick or submit
+        </Row>
+        <Row label={<Kbd>Escape</Kbd>}>Cancel</Row>
       </Rows>
     </Sheet>
   );

@@ -114,7 +114,7 @@ export async function waitForReply(page: Page, chars: number): Promise<void> {
 /** Pixels of content below the bottom of the timeline's viewport. */
 export function gapToEnd(page: Page): Promise<number> {
   return page.evaluate(() => {
-    // Legend List's scroll element is the timeline's only child.
+    // Legend List's scroll element is the timeline's first child.
     const scroller = document.querySelector("[data-testid=timeline]")?.firstElementChild;
     if (!scroller) throw new Error("The timeline isn't on the page");
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;

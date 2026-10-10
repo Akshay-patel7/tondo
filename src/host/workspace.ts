@@ -413,15 +413,6 @@ export class Workspace {
           this.send({ v, type: "sheet", threadId: message.threadId, sheet });
         });
         break;
-      case "settings-files":
-        this.run(async () => {
-          const { project } = this.running(message.threadId);
-          const files = await this.supervisor.settingsFiles(project);
-          for (const file of files) if (file.exists) this.offered.add(file.path);
-          const sheet = { kind: "settings", files } as const;
-          this.send({ v, type: "sheet", threadId: message.threadId, sheet });
-        });
-        break;
       case "trust-status":
         this.run(async () => {
           const thread = this.running(message.threadId);

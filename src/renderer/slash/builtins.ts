@@ -19,11 +19,11 @@ import {
   setModel,
   setThinkingLevel,
   showSessionInfo,
-  showSettingsFiles,
   showTrust,
   useHost,
 } from "../connection";
 import { openPalette } from "../palette/store";
+import { openSettings } from "../settings/store";
 import { openSheet } from "../sheets/store";
 import { addToast } from "../toasts/store";
 
@@ -95,9 +95,7 @@ const RUN: Record<RunName, (args: string) => void> = {
   reload: () => {
     if (readySession()) reloadPi();
   },
-  settings: () => {
-    if (readySession()) showSettingsFiles();
-  },
+  settings: () => openSettings("pi"),
   hotkeys: () => openSheet({ kind: "hotkeys" }),
   trust: () => {
     if (readySession()) showTrust();
@@ -118,21 +116,12 @@ function shownThread() {
   return projects.flatMap(({ threads }) => threads).find(({ id }) => id === thread?.id);
 }
 
-/**
- * Focuses the model or thinking level picker and opens its list. A page may
- * open a list only while it handles your key press or click, which is when
- * slash commands run.
- */
+/** Focuses the model or thinking level picker and opens its list, as a click on it would. */
 function openPicker(picker: "model" | "thinking"): void {
-  const select = document.querySelector<HTMLSelectElement>(`select[data-picker="${picker}"]`);
-  if (!select) return;
-  select.focus();
-  try {
-    select.showPicker();
-  } catch (error) {
-    // The picker still has focus, for the keyboard.
-    console.warn(`Tondo couldn't open the ${picker} picker:`, error);
-  }
+  const trigger = document.querySelector<HTMLElement>(`[data-picker="${picker}"]`);
+  if (!trigger) return;
+  trigger.focus();
+  trigger.click();
 }
 
 function tell(message: string): void {

@@ -28,6 +28,7 @@ import {
   waitForPi,
   waitForFileCommand,
 } from "./pi";
+import { expectPicked, pickerOptions, pickOption } from "./ui";
 
 let dir: string;
 let project: string;
@@ -92,12 +93,14 @@ async function start(responses = [bashCall("pwd | tee cwd-proof.txt"), reply("Pa
   await bringToFront(tondo);
   await addProject(tondo, project);
   await waitForPi(tondo.page);
-  await expect(tondo.page.getByLabel("Git branch")).toHaveValue("main");
+  await expectPicked(tondo.page, "Git branch", "main");
   return tondo;
 }
 
 async function submit(name: string) {
-  const dialog = tondo!.page.getByRole("dialog");
+  const { page } = tondo!;
+  // Switching branches and removing a worktree ask in an alert dialog.
+  const dialog = page.getByRole("dialog").or(page.getByRole("alertdialog"));
   await dialog.getByRole("button", { name, exact: true }).click();
   await expect(dialog).toBeHidden();
 }
@@ -128,7 +131,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await submit("Create worktree thread");
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
-  await expect(page.getByLabel("Git branch")).toHaveValue("feature/worktree");
+  await expectPicked(page, "Git branch", "feature/worktree");
   const checkout = worktreePath();
   expect(existsSync(path.join(checkout, "cwd-proof.txt"))).toBe(false);
   await send(page, "Record worktree cwd");
@@ -216,7 +219,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await page.screenshot({ path: "test-results/git-worktree-pr.png" });
   await page.reload();
   await waitForPi(page);
-  await expect(page.getByLabel("Git branch")).toHaveValue("feature/worktree");
+  await expectPicked(page, "Git branch", "feature/worktree");
   await expect(page.getByText("Path recorded.", { exact: true })).toBeVisible();
   await app.close();
   const restartDir = path.join(dir, "restart");
@@ -233,13 +236,13 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
     if (message.type() === "error") errors.push(message.text());
   });
   await waitForPi(page);
-  await expect(page.getByLabel("Git branch")).toHaveValue("feature/worktree");
+  await expectPicked(page, "Git branch", "feature/worktree");
   await expect(page.getByText("Path recorded.", { exact: true })).toBeVisible();
   const checkpoints = git(checkout, "for-each-ref", "--format=%(refname)", "refs/tondo");
   writeFileSync(path.join(checkout, "ignored"), "keep me");
   await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
   await page
-    .getByRole("dialog")
+    .getByRole("alertdialog")
     .getByRole("button", { name: "Remove worktree and forget thread", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("ignored files");
@@ -249,14 +252,16 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(existsSync(checkout)).toBe(true);
   await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
-  await page.getByLabel("Permanently delete uncommitted and ignored files too").check();
+  await page
+    .getByRole("checkbox", { name: "Permanently delete uncommitted and ignored files too" })
+    .check();
   await submit("Remove worktree and forget thread");
   expect(existsSync(checkout)).toBe(false);
   expect(existsSync(sessionFile)).toBe(true);
   expect(git(project, "branch", "--list", "feature/worktree")).toContain("feature/worktree");
   await threadRows(page).filter({ hasText: "Record local cwd" }).click();
   await waitForPi(page);
-  await expect(page.getByLabel("Git branch")).toHaveValue("main");
+  await expectPicked(page, "Git branch", "main");
   expect(errors).toEqual([]);
 });
 
@@ -270,24 +275,23 @@ test("branch changes are refused while a background local thread is mid-turn", a
   await page.getByRole("button", { name: "New thread in project", exact: true }).click();
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
-  await expect(
-    page.getByLabel("Git branch").locator("option", { hasText: "other" }),
-  ).toBeAttached();
-  await page.getByLabel("Git branch").selectOption("other");
+  await expect.poll(() => pickerOptions(page, "Git branch")).toContain("other");
+  await pickOption(page, "Git branch", "other");
   await page
-    .getByRole("dialog")
+    .getByRole("alertdialog")
     .getByRole("button", { name: "Switch branch", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("pi is starting or working");
   expect(git(project, "branch", "--show-current")).toBe("main");
   writeFileSync(release, "go");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expectPicked(page, "Git branch", "main");
   await threadRows(page).filter({ hasText: "Wait for release" }).click();
   await expect(page.getByText("Released.", { exact: true })).toBeVisible();
   await waitForIdle(page);
-  await page.getByLabel("Git branch").selectOption("other");
+  await pickOption(page, "Git branch", "other");
   await submit("Switch branch");
-  await expect(page.getByLabel("Git branch")).toHaveValue("other");
+  await expectPicked(page, "Git branch", "other");
 });
 
 test("a terminal still protects its checkout after the pool stops its thread's pi", async () => {
@@ -306,12 +310,10 @@ test("a terminal still protects its checkout after the pool stops its thread's p
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
   await expect.poll(() => piGroups(app)).not.toContain(first);
-  await expect(
-    page.getByLabel("Git branch").locator("option", { hasText: "other" }),
-  ).toBeAttached();
-  await page.getByLabel("Git branch").selectOption("other");
+  await expect.poll(() => pickerOptions(page, "Git branch")).toContain("other");
+  await pickOption(page, "Git branch", "other");
   await page
-    .getByRole("dialog")
+    .getByRole("alertdialog")
     .getByRole("button", { name: "Switch branch", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("Close terminals in this checkout");
@@ -325,7 +327,7 @@ test("a terminal still protects its checkout after the pool stops its thread's p
   await page.getByRole("button", { name: "New branch", exact: true }).click();
   await page.getByLabel("Branch name", { exact: true }).fill("created-in-toolbar");
   await submit("Create branch");
-  await expect(page.getByLabel("Git branch")).toHaveValue("created-in-toolbar");
+  await expectPicked(page, "Git branch", "created-in-toolbar");
 });
 
 test("gh login failures are shown and recover after explicit refresh", async () => {

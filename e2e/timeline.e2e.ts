@@ -152,4 +152,13 @@ test("the timeline holds its position while you read history", async () => {
     .evaluate((row) => row.getBoundingClientRect().top);
   expect(Math.abs(top - anchor.top)).toBeLessThanOrEqual(1);
   await expect(timeline).toHaveAttribute("data-following", "false");
+
+  // Jump to latest goes back to the end, where the list follows again, and
+  // leaves focus in the transcript.
+  const jump = page.getByRole("button", { name: "Jump to latest" });
+  await jump.click();
+  await expect(timeline).toHaveAttribute("data-following", "true");
+  await expect(jump).toBeHidden();
+  await expect(page.getByRole("region", { name: "Transcript" })).toBeFocused();
+  await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
 });

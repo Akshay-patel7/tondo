@@ -1,4 +1,5 @@
 import { code } from "@streamdown/code";
+import { ChevronRight } from "lucide-react";
 import { Streamdown } from "streamdown";
 import type { AssistantMessage, PiMessage, ToolResultMessage } from "../../shared/thread";
 import { outputText } from "../tools/model";
@@ -20,12 +21,16 @@ function plainText(content: UserContent): string {
     .join("\n");
 }
 
-/** `streaming` is true while pi is still writing the message. */
+/**
+ * `streaming` is true while pi is still writing the message. Each message is an
+ * article named for who wrote it. The name is an aria-label rather than text,
+ * so a row's text stays exactly what was said.
+ */
 export function MessageView({ message, streaming }: { message: PiMessage; streaming: boolean }) {
   switch (message.role) {
     case "user":
       return (
-        <div className="flex justify-end py-3">
+        <article aria-label="You" className="flex justify-end py-3">
           <div className="max-w-[80%] rounded-panel bg-message px-4 py-2 whitespace-pre-wrap text-message-foreground">
             <p>{plainText(message.content)}</p>
             {typeof message.content !== "string" &&
@@ -46,7 +51,7 @@ export function MessageView({ message, streaming }: { message: PiMessage; stream
               </div>
             ) : null}
           </div>
-        </div>
+        </article>
       );
     case "assistant":
       return <AssistantView message={message} streaming={streaming} />;
@@ -61,7 +66,7 @@ export function MessageView({ message, streaming }: { message: PiMessage; stream
 
 function AssistantView({ message, streaming }: { message: AssistantMessage; streaming: boolean }) {
   return (
-    <div className="py-3">
+    <article aria-label="pi" className="py-3">
       {message.content.map((block, index) => (
         // pi names content blocks by position (contentIndex) and only appends them.
         // oxlint-disable-next-line react/no-array-index-key
@@ -72,7 +77,7 @@ function AssistantView({ message, streaming }: { message: AssistantMessage; stre
           {message.errorMessage ?? message.stopReason}
         </p>
       ) : null}
-    </div>
+    </article>
   );
 }
 
@@ -80,8 +85,11 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
   switch (block.type) {
     case "thinking":
       return (
-        <details className="mb-2 text-sm text-muted-foreground">
-          <summary className="cursor-default select-none">Thinking</summary>
+        <details className="group mb-2 text-sm text-muted-foreground">
+          <summary className="-mx-1 flex w-fit cursor-default items-center gap-1 rounded-control px-1 outline-none select-none hover:text-foreground focus-visible:focus-ring">
+            <ChevronRight aria-hidden className="size-3.5 group-open:rotate-90" />
+            Thinking
+          </summary>
           <p className="mt-1 whitespace-pre-wrap">{block.thinking}</p>
         </details>
       );
@@ -98,17 +106,21 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
 
 function OrphanResult({ message }: { message: ToolResultMessage }) {
   return (
-    <div className="my-2 rounded-control border border-border bg-card">
+    <article
+      aria-label={`${message.toolName} result`}
+      className="my-2 rounded-control border border-border bg-card"
+    >
       <p className="px-3 py-1.5 text-sm">
         <span className="font-medium">{message.toolName}</span>{" "}
         <span className="text-muted-foreground">result</span>
       </p>
-      <div className="border-t border-border">
+      {/* Rounded like a tool card's body, so the output's inset focus ring follows the corners. */}
+      <div className="overflow-hidden rounded-b-[calc(var(--control-radius)-1px)] border-t border-border [&>:last-child]:rounded-b-[calc(var(--control-radius)-1px)]">
         <OutputView
           text={outputText(message.content)}
           tone={message.isError ? "error" : "normal"}
         />
       </div>
-    </div>
+    </article>
   );
 }

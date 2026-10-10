@@ -1,4 +1,9 @@
+import { chordLabel } from "../../shared/shortcuts";
+import { isMac } from "../platform";
 import { useThread } from "../thread/store";
+import { Kbd } from "../ui/kbd";
+
+const EDIT_QUEUE = chordLabel({ key: "arrowup", mod: false, shift: false, alt: true }, isMac);
 
 /** The messages you sent while pi works, as pi's last queue_update listed them. */
 export function QueueList() {
@@ -12,9 +17,9 @@ export function QueueList() {
   return (
     <section
       aria-label="Queued messages"
-      className="mb-2 rounded-panel border border-border px-4 py-2 text-sm"
+      className="mb-2 rounded-panel border border-border bg-card px-4 py-2.5 text-sm text-card-foreground"
     >
-      <ul>
+      <ul className="flex flex-col gap-0.5">
         {lines.map(({ kind, text }, index) => (
           // pi sends the whole queue each time, and the same text can be queued twice.
           // oxlint-disable-next-line react/no-array-index-key
@@ -23,7 +28,9 @@ export function QueueList() {
           </li>
         ))}
       </ul>
-      <p className="mt-1 text-xs text-muted-foreground">↳ Alt+Up to edit all queued messages</p>
+      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Kbd>{EDIT_QUEUE}</Kbd> to edit all queued messages
+      </p>
     </section>
   );
 }

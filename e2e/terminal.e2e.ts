@@ -5,6 +5,7 @@ import path from "node:path";
 import { bringToFront, type Tondo } from "./launch";
 import { processesIn, reportProcesses } from "./processes";
 import { addProject, composer, launchWithPi, reply, send, threadRows, waitForPi } from "./pi";
+import { pickerOptions } from "./ui";
 
 let workDir: string;
 let project: string;
@@ -132,7 +133,9 @@ test("provider sign-in runs a separate interactive pi in the isolated profile", 
     anthropic: { type: "api_key", key: "synthetic-offline-test-key" },
   });
   await page.getByRole("button", { name: "Refresh models", exact: true }).click();
-  await expect(page.getByLabel("Model").locator("option")).toContainText(["Claude"]);
+  await expect
+    .poll(async () => (await pickerOptions(page, "Model")).some((name) => name.includes("Claude")))
+    .toBe(true);
   await page.getByRole("button", { name: "Close terminal", exact: true }).click();
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
   await page.screenshot({ path: "test-results/terminal-login-closed.png" });

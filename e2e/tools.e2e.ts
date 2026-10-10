@@ -132,14 +132,19 @@ test("a running command shows its last lines under its card until it ends", asyn
   await expect(running).toHaveAttribute("data-status", "running");
   const latest = running.getByRole("log", { name: "Latest output" });
   await expect(latest).toHaveText(["line26", "line27", "line28", "line29", "line30"].join("\n"));
+  // A spinner shows only while the command runs.
+  const spinner = running.locator("[data-slot=spinner]");
+  await expect(spinner).toBeVisible();
 
   // Open, the card shows the output from its end, and stays there as the
-  // command finishes.
+  // command finishes. The header names the body it opens.
   await header(running).click();
   await expect(latest).not.toBeAttached();
-  await expect(running).toContainText("line30");
+  const body = running.locator(`[id="${await header(running).getAttribute("aria-controls")}"]`);
+  await expect(body.getByRole("region", { name: "Output" })).toContainText("line30");
   writeFileSync(release, "");
   await expect(running).toHaveAttribute("data-status", "done");
+  await expect(spinner).toHaveCount(0);
   await expect(running).toContainText("finished");
   await expect.poll(() => pixelsBelowView(running)).toBeLessThan(18);
   await expect(page.getByText("Ran it.")).toBeVisible();
@@ -185,7 +190,24 @@ test("an edit shows its diff, and a failed call its error", async () => {
   await expect(header(edited)).toHaveText("edit notes.md +1 −0");
   await header(edited).click();
   await waitForHighlighting(edited);
-  await expect(edited).toContainText("second");
+  await expect(edited.getByRole("region", { name: "Diff" })).toContainText("second");
+
+  // The diff takes the page's color scheme, and switches when it changes.
+  const scheme = () =>
+    edited
+      .locator("diffs-container")
+      .evaluate(
+        (host) =>
+          /color-scheme:\s*(\w+)/.exec(
+            [...(host.shadowRoot?.querySelectorAll("style") ?? [])]
+              .map((style) => style.textContent)
+              .join(""),
+          )?.[1],
+      );
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(scheme).toBe("light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(scheme).toBe("dark");
 
   const missing = card(page, "call_missing");
   await expect(missing).toHaveAttribute("data-status", "failed");
