@@ -23,7 +23,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 10 | Integrated terminal | M | Done |
 | 11 | Git actions: branches, worktrees, pull requests | L | Done |
 | 12 | Visual design, onboarding, polish | L | Done |
-| 13 | Packaging, signing, updates | M | Not started |
+| 13 | Packaging, signing, updates | M | Done |
 
 S is one working session, M is two to four, L is five or more. These are guesses until Stages 0 and 1 calibrate them. Each stage also notes how much code T3 has for the same area, counted as non-test TypeScript lines at the pinned commit. T3 supports more agents and features than Tondo v1 needs, so those numbers are ceilings, not targets.
 
@@ -1229,6 +1229,166 @@ Done when:
 
 Size: M. T3's `build-desktop-artifact.ts` is 3,930 lines.
 
+### Stage 13 report (2026-10-10)
+
+You started the stage with "mass ulw start phase 13" and answered my four questions:
+- There's no Apple Developer ID yet.
+- Skip the self-signed macOS update test.
+- Prove Linux in the local container now, and on GitHub's Ubuntu runner with the pull request.
+- Draw a provisional icon.
+
+I took the other calls myself. Each is under Changes to the plan, with its reason. Nothing is committed.
+
+#### Shipped
+
+- **Packaging.** `pnpm package` builds the app and runs `scripts/package.mts`, which drives electron-builder 26.15.3 through its JavaScript API.
+  - On a Mac it builds dmg and zip for arm64 and x64 in one run. One `latest-mac.yml` lists both architectures.
+  - On Linux it builds a deb and an AppImage.
+  - Flags pick the platform, architectures, targets, the `release` or `e2e` variant, the version, a test update feed, and the output folder. Output goes to `dist/`, and the e2e variant to `dist/e2e/`.
+  - The app id is `io.github.akshay-patel7.tondo`.
+- **What ships.** `app.asar` holds `out/` without sourcemaps, `package.json`, and the production `node_modules`: node-pty, electron-updater and their dependencies. That's 615 entries on a Mac. Nothing comes from `src/`, `e2e/`, `docs/`, `scripts/` or `fixtures/`.
+  - node-pty is unpacked, and only its runtime files ship. On a Mac that's five `lib/` files, `LICENSE`, `package.json`, and that architecture's own `pty.node` and `spawn-helper`. On Linux it's the same files with `build/Release/pty.node`.
+  - node-pty publishes the x64 `spawn-helper` without its execute bit, so the script sets it after packing.
+- **Fuses**, read back from every packed app after each build. Packaging fails on any mismatch.
+
+  | Fuse | Release | e2e variant |
+  |---|---|---|
+  | RunAsNode | off | off |
+  | EnableCookieEncryption | on | on |
+  | EnableNodeOptionsEnvironmentVariable | off | off |
+  | EnableNodeCliInspectArguments | off | on |
+  | EnableEmbeddedAsarIntegrityValidation | on | on |
+  | OnlyLoadAppFromAsar | on | on |
+  | LoadBrowserProcessSpecificV8Snapshot | off | off |
+  | GrantFileProtocolExtraPrivileges | off | off |
+  | WasmTrapHandlers | Electron's default (on) | Electron's default (on) |
+
+- **macOS signing.**
+  - The hardened runtime is on, and the entitlements are `allow-jit` and `disable-library-validation` (`build/entitlements.mac.plist`).
+  - With `CSC_LINK`, `CSC_NAME` or a "Developer ID Application" identity in the keychain, electron-builder signs normally. It also notarizes when an App Store Connect API key, an Apple ID app password or a keychain profile is in the environment.
+  - Otherwise the build is ad-hoc signed, so Apple silicon runs it.
+- **Linux packages.**
+  - The deb installs to `/opt/Tondo`, with `tondo` on the PATH. On a system with AppArmor its postinst installs a profile, so the Chromium sandbox works under Ubuntu 24.04's user-namespace restriction. It makes `chrome-sandbox` setuid only when user namespaces don't work.
+  - The AppImage uses electron-builder's static runtime (toolset 1.0.3).
+  - Both name the app `tondo`, which matches the window's WM class.
+- **Icon.** A provisional icon, a terracotta disc with one lighter ring on a warm off-white tile, is in `build/icon.png`. It's drawn on the macOS icon grid and needs your OK. Its source and previews are in `.dev/stage13/icon/`.
+- **Updates.** `src/main/updater.ts` uses electron-updater 6.8.9 against GitHub Releases.
+  - A packaged app with an update feed checks at launch and every 6 hours. It downloads in the background and installs when you quit. A notification, "Tondo <version> is ready", restarts into the update when clicked.
+  - `TONDO_DISABLE_UPDATES=1` turns checking off.
+  - electron-updater loads only once updates are on, so unpackaged runs, `pnpm perf` included, never load it.
+  - Main now logs "Tondo <version> is running" at startup.
+- **Packaged smoke.** `node scripts/smoke.mts --app <path>` smokes a packaged executable, `.app` or AppImage.
+  - A packaged Tondo ignores `TONDO_PI_ARGS` and would run your real pi, so the script always launches it with a scratch HOME, pi agent folder, context-mode folder and profile. It also uses a pi path that doesn't exist, a minimal PATH, `TONDO_DISABLE_UPDATES=1`, and `--use-mock-keychain` on macOS.
+  - It fails unless the renderer is sandboxed. On macOS that means the renderer carries `--seatbelt-client`. On Linux, every renderer must show `Seccomp: 2`. In both cases no process may run with `--no-sandbox`.
+  - Packaged runs get 90 s to be ready, because x64 under Rosetta takes about 21 s on its first launch.
+- **Packaged e2e.** With `TONDO_E2E_EXECUTABLE=<executable>`, the e2e suite launches a packaged e2e-variant app in the same scratch environment. `e2e/pi.ts` then gives it a pi wrapper with the faux model's arguments built in.
+- **Release workflow.** `.github/workflows/release.yml` runs on a `v*.*.*` tag. A manual run with a version builds and smokes but never publishes.
+  - It builds macOS arm64 and x64 on `macos-26`, and Linux x64 and arm64 on `ubuntu-24.04` and `ubuntu-24.04-arm`.
+  - It smokes the dmg, the zip, and the x64 zip under Rosetta. It installs the deb and smokes it with Ubuntu's AppArmor restriction on, then relaxes the restriction and smokes the AppImage.
+  - It uploads everything to a draft GitHub Release for you to publish: installers, `latest*.yml`, blockmaps, and a zip of the renderer's sourcemaps.
+  - Signing and notarization use the secrets `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_API_KEY` (the `.p8` contents), `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`. Without them the macOS build is ad-hoc signed, and the job warns.
+- **CI.** A new `package` job packages and smokes on `macos-26` and `ubuntu-24.04`, with the same AppArmor order.
+- **Hidden sourcemaps.** The renderer writes `.map` files next to its minified bundles but references none, so the page never loads them. They stay out of the package, and the release attaches them as a zip.
+- **Dependencies.** electron-updater 6.8.9 is a runtime dependency, and electron-builder 26.15.3 and @electron/fuses 2.1.3 are dev dependencies. pnpm doesn't run electron-winstaller's build script, which only serves Windows installers.
+
+#### Proofs
+
+The final runs used the finished tree. The macOS logs are in `.dev/stage13/final/mac/`. The Linux logs are in `.dev/stage13/final/linux/`, from a fresh snapshot in the local Ubuntu 24.04 arm64 container (Node 24.15.0, pnpm 12.6.0, Electron 44.4.5), run as a non-root user under xvfb.
+
+| Check | macOS | Linux arm64 container |
+|---|---|---|
+| `pnpm typecheck`, `pnpm lint`, `pnpm format:check` | exit 0 | not run there |
+| `pnpm test` | 52 files, 566 tests passed (Node 24.15.0) | not run there |
+| `pnpm build` | "React Compiler compiled 168 functions." | built by `pnpm package` |
+| `pnpm smoke` | passed, ready in 482 ms | not run there |
+| `pnpm e2e` | 80 passed, none failed, flaky or skipped (3.8 min) | not run there |
+| `pnpm package` | arm64 and x64 dmg and zip, one `latest-mac.yml`, every fuse ok, 615 asar entries, no `.map` | deb and AppImage, every fuse matches, 614 asar entries, no prebuilds |
+| Packaged smoke | dmg arm64 1631 ms, zip arm64 1567 ms, zip x64 under Rosetta 20894 ms, each with the renderer's `--seatbelt-client` | deb from `apt-get install` 727 ms, AppImage 177 ms, each with renderer `Seccomp: 2` |
+| Packaged e2e: `window.e2e.ts`, plus a real shell in `terminal.e2e.ts` | 7 passed | 7 passed |
+| `spctl -a -vv` | "rejected" (exit 3): there's no Developer ID | not applicable |
+
+Two notes on the final macOS run:
+- Its shell found Homebrew's Node 26.7.0 before the pinned 24.15.0, so Playwright's runner ran on 26.7.0. The app under test runs Electron's own Node.
+- Under Node 26.7.0, `src/host/piRpc.test.ts` fails "matches responses to commands by id, in whatever order they come". It passes under 24.15.0, and Stage 13 doesn't touch `src/host`. See Not verified.
+
+Earlier runs on this tree, with evidence under `.dev/stage13/`:
+
+| Check | Result | Evidence |
+|---|---|---|
+| Sandbox control: the arm64 app with `--no-sandbox` | the smoke fails, as it must | `mac/smoke-control-no-sandbox.log` |
+| Fuses of the e2e variant | differ from release only in the inspect fuse | `mac/fuses-diff-release-vs-e2e.txt` |
+| `ELECTRON_RUN_AS_NODE=1 Tondo -e ...` | starts as Tondo, and the script never runs | `fuses/probe-results.md` |
+| `--inspect`, `--inspect-brk`, SIGUSR1 | nothing listens; the e2e variant does, as the control | `fuses/probe-results.md` |
+| `NODE_OPTIONS=--require hook.cjs` | "NODE_OPTIONS ignored due to disabled nodeOptions fuse"; the hook never runs | `fuses/probe-results.md` |
+| One byte changed in `index.html` inside `app.asar` | dies by SIGTRAP after 1.5 s: "Failed to validate block while ending ASAR file stream" | `fuses/probe-results.md`, Correction |
+| One byte changed in the asar header | dies by SIGTRAP after 1.3 s, before main runs: "Integrity check failed for asar archive entry '<header>'" | `fuses/probe-results.md`, Correction |
+| Entitlements, each removed in turn | without `allow-jit`, V8 aborts (CodeRange); without `disable-library-validation`, dyld refuses Electron Framework ("different Team IDs"); without `allow-unsigned-executable-memory`, it runs | `mac/entitlements-trimming.txt` |
+| AppImage update from 0.0.1 to 0.0.2 against a local server | downloaded 8 changed blocks (162 KB of 117 MB), installed on quit, sha256 matches 0.0.2, the relaunch reports up to date, and the smoke passes | `updates/` |
+| deb update from 0.0.1 to 0.0.2 | installed through `sudo dpkg -i`, since the container has no pkexec; dpkg reports 0.0.2; relaunch and smoke pass | `updates/deb/` |
+| actionlint 1.7.12 on both workflows | no findings | `release/actionlint-after-review.txt` |
+| No trace of the runs | `find ~/.pi -newer <marker>` prints nothing, `~/Library/Application Support/Tondo` doesn't exist, and no "Tondo Safe Storage" keychain item appears, after every batch of launches | each log above, `teardown-receipt.txt` |
+
+The first update run caught a bug in my lazy updater import. `const { autoUpdater } = await import("electron-updater")` gave undefined in the packaged app, because Node's `import()` finds a CommonJS module's named exports by reading its source, and it can't see electron-updater's getter. `updater.ts` now reads it from the module's default export. The packaged smoke and e2e never saw the bug, because they turn updates off. The run that passed is the second one. The first one's logs are in `updates/attempt1/`.
+
+#### Screenshots
+
+Each one opened and checked:
+- `.dev/stage13/icon/previews/contact-sheet.png`: the icon from 1024 down to 16 px, on light and dark.
+- `.dev/stage13/final/mac/icon.png`: the icon rendered back from the final app's `.icns`. It's byte-identical to the one I reviewed after the polish build.
+- `.dev/stage13/e2e/packaged-screenshots/terminal.png`: the packaged app with the faux model and a working terminal.
+
+#### Perf vs budgets
+
+I didn't run `pnpm perf` again. Nothing it measures can have moved:
+- With and without the hidden sourcemaps, all 323 shipped renderer, main and preload files are byte-identical (`.dev/stage13/polish/sourcemap-identity.txt`).
+- The only other change to an unpackaged run is that main logs its version and calls `startUpdater`, which returns at once because the app isn't packaged. electron-updater never loads; `src/main/updater.test.ts` checks that, and a mutation showed the test can fail.
+
+Stage 12's results stand. If you want the numbers anyway, `pnpm perf` takes about 12 minutes and keeps the window on top.
+
+#### Changes to the plan
+
+- **Two more fuses.**
+  - OnlyLoadAppFromAsar is on, because asar integrity covers only `app.asar`. Without this fuse, an `app` folder next to it would load unchecked.
+  - GrantFileProtocolExtraPrivileges is off, because Tondo serves its pages from `tondo://`.
+- **Entitlements trimmed to two.** `allow-unsigned-executable-memory` is gone. `disable-library-validation` stays, because ad-hoc builds need it. A Developer ID build might drop it, since one Team ID would sign everything. That's unproven.
+- **The AppImage uses toolset 1.0.3.** The default runtime needs `libz.so`, which stock Ubuntu 24.04 lacks, and writes `--no-sandbox` into the AppImage's desktop entry for every launch. The plan's gotcha is right that AppRun drops to `--no-sandbox` when user namespaces are blocked.
+- **One packaging run for both macOS architectures.** T3 builds each architecture in its own job and merges the update manifests afterwards. Here, per-architecture file patterns make that unnecessary.
+- **A script instead of a config file.** It handles the variants and a test feed, and checks the fuses afterwards.
+- **electron-updater loads lazily.** The before-streaming memory limit had almost no headroom in Stage 12, and the unpackaged app now never loads electron-updater.
+- **Releases are drafts.** You publish each one.
+- **Not in the plan:** the provisional icon, and the hidden sourcemaps (a Stage 12 follow-up).
+
+#### Not verified
+
+- **Signing, notarization, `spctl` and macOS auto-update.** There's no Developer ID, and `spctl -a -vv` rejects the ad-hoc app. Squirrel.Mac installs only updates signed the same way as the running app, so macOS updates wait for the Developer ID.
+- **Ubuntu 24.04 with AppArmor on.** OrbStack's kernel has no AppArmor. So the deb's profile, and the x64 static AppImage runtime, are proven only once CI runs on the pull request.
+- **Linux x64.** Every local Linux build was arm64.
+- **A FUSE-mounted AppImage.** The container has no `/dev/fuse`, so the AppImage ran in extract-and-run mode.
+- **The deb's pkexec prompt on a desktop.** The container used `sudo`.
+- **Keychain prompts.** Tests run with `--use-mock-keychain`. How an unsigned build's cookie key behaves after an update is untested.
+- **The icon in the macOS 26 Dock and Finder.**
+- **Follow-ups:**
+  - `src/host/piRpc.test.ts` fails under Node 26.7.0 but passes under the pinned 24.15.0. To reproduce: `/opt/homebrew/Cellar/node/26.7.0/bin/node node_modules/vitest/vitest.mjs run src/host/piRpc.test.ts`.
+  - The deb pulls in 55 packages on a minimal Ubuntu, most of them through `xdg-utils`.
+  - Quitting a few hundred milliseconds into launch logs "Tondo couldn't load tondo://app/", because the page load is cancelled. That's handled and harmless.
+
+#### Proposed commits
+
+1. `build(deps): add electron-builder, electron-updater and fuses`
+2. `build(package): package macOS and Linux builds with fuses and hardened runtime`
+3. `build(package): add a provisional app icon`
+4. `build(renderer): emit hidden sourcemaps`
+5. `feat(updates): update from GitHub Releases`
+6. `test(smoke): smoke packaged builds and check the sandbox`
+7. `test(e2e): drive packaged builds`
+8. `ci: package and smoke on both systems`
+9. `ci: publish draft releases from tags`
+10. `docs: record stage 13 results`
+
+#### Next
+
+After you approve this report and the icon, the pull request's CI proves the deb's AppArmor profile and the x64 builds. Once you have a Developer ID, add the five signing secrets. Then tag the first release and check `spctl` and a macOS update from version N to N+1.
+
 ## Decisions
 
 You accepted these defaults on 2026-09-25.
@@ -1278,6 +1438,28 @@ For Stage 12 you said "Go with your recommendation" before going to bed (2026-10
 - Icons come from lucide.
 - Onboarding shows each problem where it happens. There's no first-run wizard.
 - `pnpm perf` and the real-setup pass run without asking first. The real-setup pass runs on copies that leave out credentials and sessions.
+
+For Stage 13 you answered four questions on 2026-10-10:
+
+- Apple Developer ID: "Not yet". Signing, notarization, `spctl` and macOS auto-update stay unverified.
+- A self-signed macOS update test: "Skip it".
+- Proof of the deb's AppArmor profile: "Container + PR CI".
+- App icon: "Draft one". You approved the provisional icon with the report.
+
+I took these on your behalf:
+
+- The fuses also turn OnlyLoadAppFromAsar on, because asar integrity covers only app.asar, and GrantFileProtocolExtraPrivileges off, because pages come from `tondo://`.
+- Packaging is `scripts/package.mts` on electron-builder's JS API, run by `pnpm package`, with `release` and `e2e` variants, `--version` and `--feed-url`. Output goes to the gitignored `dist/`.
+- `npmRebuild` is off. node-pty uses Node-API, and its prebuilds and Linux build load in Electron 44 as they are.
+- electron-updater is a runtime dependency, packed in the asar next to node-pty.
+- Only a packaged app with `resources/app-update.yml` checks for updates, at launch and every 6 hours. It downloads by itself, installs on quit, and raises a notification that restarts into the update. `TONDO_DISABLE_UPDATES=1` turns it off. The page gets no update UI yet.
+- Without a Developer ID, macOS builds are ad-hoc signed with the hardened runtime. Developer ID signing and notarization switch on when their secrets are set.
+- One macOS run builds arm64 and x64, so one `latest-mac.yml` lists both.
+- The release workflow publishes a draft GitHub release, and you publish it.
+- Hidden renderer sourcemaps stay out of the package and go on the release as a zip.
+- The entitlements are trimmed to `allow-jit` and `disable-library-validation`. Removing either one crashed the ad-hoc build.
+- The AppImage uses electron-builder's 1.0.3 toolset, whose static runtime starts on stock Ubuntu 24.04.
+- Main imports electron-updater only once updates are on, so unpackaged runs never load it.
 
 ## Stage report template
 

@@ -142,7 +142,8 @@ The others:
 ## Tooling
 
 - **Vite 7 with electron-vite 5.** OpenCode's desktop app uses electron-vite 5 too. electron-vite 5 accepts Vite 5 to 7. Vite 8 is out, but only electron-vite's 6.0 beta (April 2026) accepts it. Start on the stable pair, since the build is the easiest part of the stack to swap later.
-- **electron-builder 26 and electron-updater 6** for installers and auto-update. T3 Code and OpenCode both use them.
+- **electron-builder 26 and electron-updater 6** for installers and auto-update. T3 Code and OpenCode both use them. Tondo pins electron-builder 26.15.3 and electron-updater 6.8.9.
+- **@electron/fuses 2.1.3** to read each packaged app's fuses back after electron-builder sets them.
 - **TypeScript 7.0**, the native Go port, which is now `typescript@latest`. It has no compiler API until 7.1, so tools built on that API need TypeScript 6 installed alongside it.
 - **React Compiler 1.0** ([announcement](https://react.dev/blog/2025/10/07/react-compiler-1)) is a Babel plugin, so builds run Babel over React files.
 - **pnpm** for packages.
@@ -557,6 +558,49 @@ The pool keeps its defaults, 4 live pis and a 10-minute idle timeout:
 | 6 | 0.80 to 1.15 GiB | Past that envelope once each pi has done a turn. |
 
 maxLive caps the worst case, and the idle timeout only lowers the average. 5 minutes would make a return within 5 to 10 minutes wait about 1 s. 20 minutes would keep up to 0.6 GiB of off-screen pis for 10 more minutes to save that second.
+
+### Stage 13 packaging
+
+Artifacts from the final `pnpm package` runs, at version 0.0.0:
+
+| Artifact | Size |
+|---|---|
+| macOS arm64 dmg / zip | 129,743,626 / 129,663,838 bytes |
+| macOS x64 dmg / zip | 136,498,702 / 136,418,368 bytes |
+| Linux arm64 deb | 96,358,696 bytes |
+| Linux arm64 AppImage | 120,055,599 bytes |
+
+Fuses, read back from every build:
+
+| Fuse | Release | Why |
+|---|---|---|
+| RunAsNode | off | No production code runs Electron as Node. |
+| EnableCookieEncryption | on | |
+| EnableNodeOptionsEnvironmentVariable | off | |
+| EnableNodeCliInspectArguments | off | On only in the e2e variant, for Playwright. |
+| EnableEmbeddedAsarIntegrityValidation | on | |
+| OnlyLoadAppFromAsar | on | Integrity covers only app.asar. |
+| LoadBrowserProcessSpecificV8Snapshot | off | |
+| GrantFileProtocolExtraPrivileges | off | Pages come from `tondo://`. |
+
+WasmTrapHandlers stays at Electron's default. Probes on the arm64 app confirmed the fuses hold: `ELECTRON_RUN_AS_NODE`, `--inspect`, `--inspect-brk`, SIGUSR1 and `NODE_OPTIONS` were all ignored, and a single changed byte in app.asar's content or header killed the app.
+
+The ad-hoc macOS build keeps two of T3's three entitlements. Without `allow-jit`, V8 can't reserve its code range and the app aborts. Without `disable-library-validation`, dyld refuses Electron's own framework, because ad-hoc signatures have no Team ID. `allow-unsigned-executable-memory` was removed, and the app still reached ready. Whether a Developer ID build can drop `disable-library-validation` is untested.
+
+node-pty ships only its runtime files: `lib/{index,terminal,unixTerminal,utils,eventEmitter2}.js`, LICENSE and package.json, plus `prebuilds/darwin-<arch>/{pty.node,spawn-helper}` on macOS or `build/Release/pty.node` on Linux. That took app.asar from 784 entries to 615.
+
+The AppImage uses electron-builder's 1.0.3 toolset. Its runtime is static, so it starts on a stock Ubuntu 24.04 without libz.so or libfuse2. The default toolset failed there on libz.so and also wrote `--no-sandbox` into the AppImage's .desktop entry.
+
+Packaged smoke, time to ready:
+
+| Build | Ready |
+|---|---|
+| macOS arm64, dmg and zip | 1.5 to 1.7 s |
+| macOS x64 under Rosetta, first launch | 20.9 to 22.7 s |
+| Linux arm64 deb, container | 493 to 727 ms |
+| Linux arm64 AppImage, container | 177 to 743 ms |
+
+Installing the deb on a minimal Ubuntu 24.04 pulled in 55 new packages, most of them through `xdg-utils`.
 
 ## Open questions
 

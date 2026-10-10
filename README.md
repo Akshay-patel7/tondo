@@ -4,7 +4,29 @@ A fast desktop app for the [pi](https://github.com/earendil-works/pi) coding age
 
 Tondo is a GUI for pi, built from scratch. It drives the pi you already have installed, so your packages, extensions, skills, prompt templates, settings and model logins work the same way they do in the terminal.
 
-**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The TipTap composer keeps Markdown literal, completes `@` file paths, recalls prompts with Up, and accepts images by paste, drop or the attachment button. Text and image drafts stay with their thread across restarts. The Changes panel shows per-turn Git checkpoints with a file filter and highlighted diffs. Each thread also has a resizable terminal drawer. "Sign in to a provider" opens pi's interactive UI for `/login` and `/logout`, with an explicit model refresh afterward. The Git toolbar lists and switches branches, creates worktree threads, stages and commits changes, pushes branches, and creates or opens pull requests through `gh`. Light and dark themes follow your system or your choice in Settings, which also picks which pi runs, how many pi processes stay running, and the app's shortcuts. When pi is missing, too old or not signed in to a provider, the window shows how to fix it. The [Stage 12 report](docs/plan.md#stage-12-report-2026-10-10) records the redesign and its checks. [AGENTS.md](AGENTS.md) lists the commands.
+**Status:** early. You add project folders, and the sidebar lists each one's pi sessions, including ones you started in pi's own terminal interface. In any thread you can send prompts, stop, steer, queue follow-ups, and pick the model and thinking level, and a command palette finds threads, projects and actions. Each tool call shows as a card that opens to its output: a shell command's latest lines while it runs, and highlighted diffs for edits. Your extensions' dialogs, notifications, status lines and widgets show in the app, and typing `/` lists pi's commands, prompt templates and skills along with Tondo's versions of pi's built-in commands. The TipTap composer keeps Markdown literal, completes `@` file paths, recalls prompts with Up, and accepts images by paste, drop or the attachment button. Text and image drafts stay with their thread across restarts. The Changes panel shows per-turn Git checkpoints with a file filter and highlighted diffs. Each thread also has a resizable terminal drawer. "Sign in to a provider" opens pi's interactive UI for `/login` and `/logout`, with an explicit model refresh afterward. The Git toolbar lists and switches branches, creates worktree threads, stages and commits changes, pushes branches, and creates or opens pull requests through `gh`. Light and dark themes follow your system or your choice in Settings, which also picks which pi runs, how many pi processes stay running, and the app's shortcuts. When pi is missing, too old or not signed in to a provider, the window shows how to fix it. Tondo installs from a macOS dmg or zip (arm64 and x64) or a Linux deb or AppImage, and updates itself from GitHub Releases. The macOS builds aren't signed or notarized yet. The [Stage 12 report](docs/plan.md#stage-12-report-2026-10-10) records the redesign and its checks. [AGENTS.md](AGENTS.md) lists the commands.
+
+## Install
+
+Builds come from the project's GitHub Releases.
+
+**macOS.** Until Tondo has a Developer ID, its builds are ad-hoc signed, so Gatekeeper blocks a downloaded copy. After you move Tondo to Applications, this command removes the quarantine flag macOS put on the download, which lets it open:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Tondo.app
+```
+
+**Linux, deb.** It installs to `/opt/Tondo`. On Ubuntu 24.04 and later it's designed to add an AppArmor profile that keeps Chromium's sandbox on. That part hasn't been tried on a real Ubuntu host yet.
+
+**Linux, AppImage.** Ubuntu 24.04 and later block unprivileged user namespaces through AppArmor. The AppImage's launcher checks for them and, when they're blocked, starts Tondo with `--no-sandbox`. Use the deb if you want the sandbox.
+
+### Updates
+
+Tondo checks GitHub Releases at launch and every 6 hours, downloads an update in the background, and installs it when you quit. A notification offers to restart into it sooner. The check sends no usage data. Set `TONDO_DISABLE_UPDATES=1` to turn checks off.
+
+- **AppImage:** tested from 0.0.1 to 0.0.2 against a local server. It downloaded only the changed blocks (162 KB of 117 MB), replaced the file when the app quit, and the next launch reported it was up to date.
+- **deb:** tested the same way. On quit it runs `dpkg -i` through pkexec, or a similar tool, so a desktop asks for your admin password. The test ran in a container with passwordless `sudo`; the pkexec prompt is not yet verified.
+- **macOS:** auto-update needs signed builds, so it doesn't work yet.
 
 ## Goals
 
@@ -74,6 +96,8 @@ A terminal stays alive when you switch threads. Close stops its shell and the jo
 
 On Linux, no app shortcut works while the terminal has focus: Ctrl+K, Ctrl+N, Ctrl+1 to Ctrl+9 and the rest go to the shell. The macOS app menu has no Settings… item yet. Use ⌘, or the gear. Screen-reader names are checked automatically, but VoiceOver and Orca haven't been tried.
 
+macOS builds aren't signed with a Developer ID or notarized, so Gatekeeper blocks them until you clear the quarantine flag, and they can't update themselves. On Ubuntu 24.04 and later the AppImage runs without Chromium's sandbox. The app icon is provisional.
+
 ## Stack
 
 [docs/stack.md](docs/stack.md) picks the stack and shows the evidence. It uses Electron and React with React Compiler, and runs one `pi --mode rpc` process per thread from an Electron utility process. Framework benchmarks favor Solid over React, so before building any other UI, Tondo measured a 20,000-token reply streaming into a 1,000-message transcript. React stayed within every [performance budget](docs/plan.md#performance-budgets). On a real pi setup with 12 packages, each pi answered about 1.4 s after it started and held about 210 MiB once idle. Those numbers decide how many idle pi processes Tondo keeps alive.
@@ -86,7 +110,7 @@ A tondo is a circular painting or relief, a form that became popular in 15th-cen
 
 Built on [pi](https://github.com/earendil-works/pi) by Earendil Works. Performance ideas borrowed from [T3 Code](https://github.com/pingdotgg/t3code). Tondo is not affiliated with either project.
 
-Some of Tondo's code is adapted from T3 Code, which is MIT licensed, Copyright (c) 2026 T3 Tools Inc. Each adapted file says which T3 file it came from in its header comment. The composer's plain Markdown editor, prompt-history behavior, image thumbnails and enlarged preview follow T3's composer. Hidden-ref checkpoints and sparse-index handling follow T3's GitVcsDriver. Terminal history query filtering and drawer resizing follow T3's terminal manager and drawer. Git status, explicit-host GitHub requests and conservative worktree cleanup follow T3's GitVcsDriverCore, VcsStatusBroadcaster, GitHubPullRequestCli and storageCleanup. The Settings page's number field follows T3's number-field component.
+Some of Tondo's code is adapted from T3 Code, which is MIT licensed, Copyright (c) 2026 T3 Tools Inc. Each adapted file says which T3 file it came from in its header comment. The composer's plain Markdown editor, prompt-history behavior, image thumbnails and enlarged preview follow T3's composer. Hidden-ref checkpoints and sparse-index handling follow T3's GitVcsDriver. Terminal history query filtering and drawer resizing follow T3's terminal manager and drawer. Git status, explicit-host GitHub requests and conservative worktree cleanup follow T3's GitVcsDriverCore, VcsStatusBroadcaster, GitHubPullRequestCli and storageCleanup. The Settings page's number field follows T3's number-field component. Packaging follows T3's build-desktop-artifact script: node-pty's per-architecture file exclusions and electron-builder's pnpm detection. The smoke test, for both the built and the packaged app, follows T3's desktop smoke test.
 
 The components in `src/renderer/ui` are adapted from [shadcn/ui](https://github.com/shadcn-ui/ui)'s Base UI style, which is MIT licensed. They build on [Base UI](https://github.com/mui/base-ui) (MIT), and the icons are [Lucide](https://github.com/lucide-icons/lucide) (ISC). The `tondo/no-restyle` lint rule follows [@shadcn/lint](https://github.com/shadcn-ui/lint)'s `no-restyle` rule.
 
