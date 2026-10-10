@@ -22,7 +22,7 @@ T3 Code is the reference app. T3 paths below are relative to commit [`53456bc0`]
 | 9 | Per-turn diff panel | M | Done |
 | 10 | Integrated terminal | M | Done |
 | 11 | Git actions: branches, worktrees, pull requests | L | Done |
-| 12 | Visual design, onboarding, polish | L | Not started |
+| 12 | Visual design, onboarding, polish | L | Done |
 | 13 | Packaging, signing, updates | M | Not started |
 
 S is one working session, M is two to four, L is five or more. These are guesses until Stages 0 and 1 calibrate them. Each stage also notes how much code T3 has for the same area, counted as non-test TypeScript lines at the pinned commit. T3 supports more agents and features than Tondo v1 needs, so those numbers are ceilings, not targets.
@@ -276,7 +276,7 @@ Verify first:
 
 Build:
 - Environment capture: run the login shell once (`$SHELL -ilc`, 5 s deadline) and print markers around `env -0`. Keep the whole environment, not just PATH, since provider keys such as `ANTHROPIC_API_KEY` often live in shell startup files. On macOS, fall back to `launchctl getenv PATH`. Remove `ELECTRON_*` variables. On Linux, restore `XDG_CURRENT_DESKTOP` from `ORIGINAL_XDG_CURRENT_DESKTOP` ([electron#47414](https://github.com/electron/electron/issues/47414)).
-- pi discovery: a settings override wins, stored now and exposed in the UI in Stage 12. Otherwise resolve `pi` with the captured environment, follow version-manager shims to the real install, read its `package.json` (0.87.1 or newer), and spawn `<the node binary next to that install> <realpath of cli.js>` instead of `pi`.
+- pi discovery: a settings override wins. Stage 12's Settings page sets it with Choose pi…, and Use pi from PATH clears it. Otherwise resolve `pi` with the captured environment, follow version-manager shims to the real install, read its `package.json` (0.87.1 or newer), and spawn `<the node binary next to that install> <realpath of cli.js>` instead of `pi`.
 - JSONL client: split on LF only and strip a trailing CR, with no `readline`. Read stdout continuously and respect stdin backpressure. Match responses by `id`, with a deadline per command. Ignore record types it doesn't know. Keep stderr in a ring buffer for error reports, and never parse it.
 - Supervisor: each pi gets its own process group. Stopping means closing stdin, waiting, then SIGTERM to the group, then SIGKILL. The host reports every group to main.
 - Project trust: work out whether pi would need a decision (protected project files present, no saved decision in pi's `trust.json`, and pi's `defaultProjectTrust` set to `"ask"`), and pass `--approve` or `--no-approve` from the answer Tondo keeps in its own settings. Tondo reads `trust.json` and never writes it. Asking you moves to Stage 4, where you open a project.
@@ -894,6 +894,310 @@ Done when:
 
 Size: L, set mostly by how many design rounds we do.
 
+### Stage 12 report (2026-10-10)
+
+You went to bed at the start of the stage and said "Go with your recommendation." So I made every open call myself, as in Stage 5. Each one is listed under Changes to the plan below, with its reason. Nothing is committed.
+
+#### Shipped
+
+- **Components.** `src/renderer/ui` holds 25 components: alert, alert-dialog, badge, button, checkbox, combobox, context-menu, dialog, dropdown-menu, empty, input, kbd, label, number-field, popover, scroll-area, select, separator, sheet, spinner, switch, textarea, toggle, toggle-group and tooltip. They come from shadcn 4.21.4's `base-nova` style on Base UI 1.8.0, with `cn` in `src/renderer/lib/cn.ts`. Icons are lucide's. The old `ui/IconButton.tsx`, `ui/Menu.tsx` and `ui/icons.tsx` are deleted, and every screen uses the new components.
+- **Tokens.** The Warm tokens in `src/renderer/index.css` gained popover, card-foreground, secondary, input, success, info, warning-foreground and control-border. The focus ring is an outline. Reduced motion turns transitions and animations off, and switching themes suppresses transitions (544 transitions on a switch before, 0 after).
+- **No restyling.** The `tondo/no-restyle` lint rule (`scripts/lint/no-restyle.mjs`) fails any class on a ui component outside `src/renderer/ui` unless it's layout, and any className it can't read statically.
+- **Themes.** Settings offers System, Light and Dark. Main applies the choice through `nativeTheme.themeSource`, so `prefers-color-scheme` follows it. The terminal and the code views follow the theme too. Before, the terminal stayed dark in light mode. In light mode xterm's minimum contrast ratio is 4.5.
+- **Onboarding**, shown where each problem happens:
+  - pi not found: the setup card "pi isn't installed".
+  - pi too old: "Tondo needs a newer pi", naming both versions.
+  - Both cards offer Open settings, Choose pi… and Check again.
+  - No provider credentials: the model picker reads "No model" instead of `unknown/unknown`. A "Sign in to a provider" prompt opens the sign-in terminal, and closing that terminal starts a new pi.
+  - Project trust: the prompt is on the same card, with focus on "Don't trust".
+  - First launch: "Welcome to Tondo" leads to Add project… and says which pi it found.
+- **Settings page.** It replaces the main area and opens with ⌘, (Ctrl+, on Linux), the palette, `/settings`, or the gear in the sidebar. Escape or Back returns. It has four sections:
+  - Appearance: the theme.
+  - pi: version, source and path, with Choose pi…, Use pi from PATH and Check again, plus pi's global and project settings files with Show in Finder.
+  - Threads: how many pi processes run at once (1 to 12, default 4) and the idle minutes before a hidden thread's pi stops (1 to 240, default 10). Changes apply live.
+  - Shortcuts: the seven app commands can be rebound. Settings refuses conflicts, and each command has Turn off and Reset. The composer and dialog keys are listed as fixed.
+- **Saved settings.** They live in `<userData>/settings.json`. The host checks and saves every change and keeps keys it doesn't know. Pool limits apply in order: defaults, then settings, then `TONDO_POOL` in unpackaged runs. The protocol is version 10.
+- **Keyboard and screen readers.**
+  - The sidebar list is one Tab stop: arrows, Home and End move, Enter or Space opens, and Shift+F10 opens a row's menu. Removing a project asks in an alert dialog.
+  - The Git toolbar is one Tab stop that the arrows, Home and End move through.
+  - The transcript is a focusable region with a "Jump to latest" button.
+  - Escape closes the diff panel and focus goes back to Changes. Closing the terminal by any route returns focus to its opener, or to the composer.
+  - The palette opens and closes the terminal.
+  - Icon buttons have tooltips, which show the button's key when it has one. The accessibility audit below finds no control without a name.
+- **Status.** The sidebar's error status is a CircleAlert glyph. A red dot was too close in hue to the terracotta "working" dot. Reconnecting… is a warning badge.
+
+#### Keyboard-only walkthrough
+
+`e2e/keyboard.e2e.ts` walks one thread with the keyboard alone. It starts with real pi offline and a generated Git project. After every move it asserts where focus is, and that the focused element matches `:focus-visible` and draws an outline, a ring or a menu highlight. The composer shows focus as a card border in the ring color, and the terminal as xterm's focused cursor. The screenshots are in `.dev/stage12/keyboard/`. Keys are macOS's. On Linux, Ctrl takes ⌘'s place.
+
+| Step | Keys | Focus lands on | Screenshot |
+|---|---|---|---|
+| 1 | ⌘K, type "Add project" | The palette's Search box, with Add project selected | `01-palette-add-project.png` |
+| 2 | Enter, Shift+Tab until the composer, type a prompt | The composer of the new thread (main answers the folder dialog) | `02-composer.png` |
+| 3 | Enter, then Shift+Tab once the reply has landed | The Transcript region | `03-transcript.png` |
+| 4 | PageUp, then Tab | Jump to latest, which appears once the view leaves the end | `04-jump-to-latest.png` |
+| 5 | Enter, PageUp, End | Back on the transcript, at the end, with Jump to latest hidden | none |
+| 6 | Shift+Tab until Changes, Enter | Changes, pressed, with the Turn changes panel open | `05-changes-open.png` |
+| 7 | Tab until Close changes | The panel's Close changes button | `06-diff-panel.png` |
+| 8 | Escape | Changes again, with the panel gone | none |
+| 9 | Tab until the Git toolbar | The Git branch picker | `07-git-toolbar.png` |
+| 10 | →, →, ←, End | New branch, New worktree, New branch, then Refresh Git | `08-git-toolbar-end.png` |
+| 11 | Home, then Tab | The branch picker, then out of the toolbar in one press | none |
+| 12 | Shift+Tab until the thread list | The thread row | `09-sidebar-row.png` |
+| 13 | ↑, ↓, Home, End | The project header, the row, the header, the row | none |
+| 14 | Home, Tab until Project actions, Enter | The first item of the Project actions menu | `10-project-actions.png` |
+| 15 | Escape, Shift+Tab, Shift+F10, Escape | Project actions, the project header, the first item of the header's menu, the header | none |
+| 16 | ↓, Enter, Shift+F10 | The open thread's row, then the first item of Thread actions | `11-thread-actions.png` |
+| 17 | Escape, then ⌘, | The row, then the Settings page's heading | `12-settings.png` |
+| 18 | Tab until the theme, → until Dark, Enter | Dark, pressed, with the app in dark mode | `13-settings-dark.png` |
+| 19 | Escape | The thread row, with Settings closed | none |
+| 20 | ⌘K, type "Terminal" | The palette's Search box, with Open terminal selected | `14-palette-terminal.png` |
+| 21 | Enter, type `echo kb`, Enter | The terminal, which prints `kb` | `15-terminal.png` |
+| 22 | Shift+Tab until Close terminal | Close terminal | `16-close-terminal.png` |
+| 23 | Shift+Tab | The Resize terminal separator, with its grip shown | `17-resize-separator.png` |
+| 24 | Tab, Enter | Close terminal, which closes the drawer | none |
+
+The same file's audit reads Chromium's accessibility tree in 14 states and finds no control without a name. The states are first launch, a thread with an open tool card, the palette, both sidebar menus, each Settings section, the diff panel, the terminal, Create branch, and both Git alert dialogs.
+
+#### Proofs
+
+macOS logs are `.dev/stage12/logs/final-*.log`. The Linux run is `.dev/stage12/logs/linux-final.log`, with each step's log in `logs/linux-final/`, from `.dev/linux/run-tree.sh` in the local Ubuntu container. That's arm64, with Node 24.15.0, pnpm 12.6.0 and Electron 44.4.5, cloned at HEAD 146e880 plus 113 changed paths. Both ran on the final tree, with the memory fix, the narrow-column fix and the parse cache.
+
+| Check | macOS | Linux |
+|---|---|---|
+| `pnpm install` | not rerun | exit 0 |
+| `pnpm typecheck` | no errors, 7 projects | not run by run-tree |
+| `pnpm lint` | no errors, warnings forbidden | not run by run-tree |
+| `pnpm format:check` | "All matched files use the correct format." 251 files | not run by run-tree |
+| `pnpm test` | 51 files, 555 tests passed | exit 0, 51 files: 552 passed, and 3 macOS-only tests skipped |
+| `pnpm build` | passed inside smoke | exit 0 |
+| `pnpm smoke` | "Smoke test passed. The renderer was ready 255 ms after launch." | exit 0, ready 472 ms after launch |
+| `pnpm e2e` | 80 passed (3.8m) | 80 passed (3.6m) |
+| `keyboard.e2e.ts --repeat-each 3` | 6 passed (38.5s) | 6 passed (36.6s) |
+
+Run 2 had 66 e2e tests. Run 3 added settings (5), onboarding (5) and keyboard checks, and the terminal focus fix added one more. `e2e/window.e2e.ts` passes in both runs, and `src/main/securityPolicy.ts` is unchanged.
+
+Planted restyle. With `src/renderer/zz-restyle-probe.tsx` rendering `<Button className="bg-red-500"/>`, `pnpm lint` failed (`final-lint-probe.log`):
+
+```
+src/renderer/zz-restyle-probe.tsx:1:80: error tondo(no-restyle): "bg-red-500" is not allowed on <Button>: ui components own their look. Pick a variant or size, or put the class on a parent element.
+[ELIFECYCLE] Command failed with exit code 1.
+```
+
+With the probe deleted, the same command passed (`final-lint-clean.log`). Run 4 got the same pair (`run4-lint-probe-fail.log`, `run4-lint-probe-pass.log`).
+
+The React Compiler compiled 168 functions, and the build reported none unoptimized (`final-smoke.log`: "React Compiler compiled 168 functions.").
+
+Other proofs, from the stage's runs:
+
+- **Settings** (`e2e/settings.e2e.ts`, 5 tests):
+  - Light and Dark follow `matchMedia` and land in settings.json, Dark survives a relaunch, and System saves as `"system"`.
+  - A pool of 1 stops the hidden idle thread's pi at once.
+  - Settings refuses Mod+B, a key another command already has. After rebinding the palette to Mod+P, Mod+P opens the palette and Mod+K doesn't. Reset brings Mod+K back.
+  - Choose pi… saves the path and shows the version.
+  - Show in Finder reveals pi's global settings file.
+- **Onboarding** (`e2e/onboarding.e2e.ts`, 5 tests):
+  - A pi path of `/nonexistent` shows "pi isn't installed", and Choose pi… then starts pi.
+  - A fake pi 0.80.0 shows "Tondo needs a newer pi" with 0.80.0 and 0.87.1.
+  - Without the faux provider, Open sign-in terminal opens the "Provider sign-in" terminal, and closing it starts a new pi.
+  - Trust, and the welcome's pi line and its Choose pi….
+- **Terminal focus** (`e2e/terminal.e2e.ts:200`). Before the fix it failed at line 219 on both systems, with focus on the page (`linux-term-prefix.log` on Linux). After the fix it passed 18 of 18 on macOS with `--repeat-each 3`, and on Linux (`linux-term-3.log`).
+- **Linux composer race.** In the container, `composer.e2e.ts --repeat-each 10` failed `:198` in 5 of 10 runs on this tree and 4 of 10 on HEAD before Stage 12 (`linux-composer-1.log`, `linux-composer-2-head.log`). After the fix it passed 70 of 70 (`linux-composer-4-fixed.log`). On macOS, composer and images with `--repeat-each 3` passed 36 of 36.
+- **The window outside the page**, from scratch specs in `.dev/stage12/qa/` run on the final build, with screenshots in `qa/shots/`:
+  - Main's `nativeTheme` and the window's background color follow Light and Dark, and a relaunch opens in the saved theme.
+  - A relaunch with Light saved, while macOS is Dark, applied the theme at 92 to 107 ms and showed its first frame at 164 to 184 ms, in 5 launches. So the first frame is never in the wrong theme.
+  - `settings.json` held all four settings set in the page: the chosen pi path, `"theme": "dark"`, `"pool": {"maxLive": 3}` and `"shortcuts": {"palette": "mod+p"}`. Mod+P opened the palette at once.
+  - At the 840 px minimum width, the thread view doesn't scroll sideways in light or dark, with or without Changes open.
+
+#### Screenshots
+
+`.dev/design/stage12.design.ts` shot every screen in light and dark at 2x on the built-in display. The before set came from the unchanged build, and the after set from the final tree with the same scenarios. Only selectors changed.
+
+- `.dev/design/stage12/before/`: 102 PNGs, 51 states.
+- `.dev/design/stage12/after/`: 118 PNGs, 59 states. The new screens are S18f (the branch list open), S24a-e (Settings), S25a-b (the welcome) and S26 (the remove-project dialog).
+- `.dev/design/stage12/compare/`: 102 side-by-sides, before on the left. S13b-vs-S24b pairs the old settings sheet with the Settings page.
+
+Each folder has an INDEX.md. The orchestrator opened all 51 compare pairs in both themes. `.dev/stage12/c5-verdicts.md` gives a verdict for each.
+
+The fix round then changed 83 of the 118 after shots. All 83 were re-inspected on 181 hotspot crops, on 8 contact sheets in `.dev/stage12/c5-final/`. The 9 screens with no before shot were viewed as light and dark pairs.
+
+A last recapture on the final tree, `.dev/design/stage12/after-final/` (118 PNGs), was diffed against `after/`. 75 shots are pixel-identical, and 2 differ by less than 24 levels anywhere. The other 41 were opened as side-by-side crops of their changed regions. What changed is content that varies from run to run, plus a few states caught mid-change, and none of it is design:
+
+- Content: temp-folder names, session and worktree IDs, terminal timestamps, and how far the reply had streamed.
+- Rendering: anti-aliasing in the welcome's text, now that the welcome sits on one layer.
+- Mid-change: an overlay scrollbar fading (S03a), a sidebar title not yet updated (S05a light), and pi still starting (S16b).
+
+So `after/` stays the set for your approval.
+
+All 17 keyboard shots from the final e2e run (`.dev/stage12/keyboard/`) were opened. Each shows its focus ring on the expected control. `13-settings-dark.png` now shows Dark settled, since `shot()` disables animations. The acceptance perf run's `mid-stream-1.png` and `mid-stream-2.png` were opened too. Their tables, lists and code blocks render correctly through the parse cache.
+
+#### Perf vs budgets
+
+The final column is the acceptance run on the final tree, `.dev/perf/2026-10-10T16-07-39/`. All 18 checks passed, in 12.9 minutes. It ran in a visible window on the built-in 2x/120 Hz display, in Playwright's default light scheme, as Stage 11's did. The HID idle time read 206 s at its start and 983 s at its end, so no keyboard or mouse input touched it. The first run, `.dev/perf/2026-10-10T11-37-30/`, came before the memory fix and the parse cache: 17 checks passed and 1 failed. Stage 11's values are its final run, `.dev/perf/stage11-ci-terminal-2026-10-03T08-17-19-796Z/`. Values are medians of three runs.
+
+| Metric | Budget | Stage 11 final | Stage 12, first run | Stage 12, final | Result |
+|---|---|---|---|---|---|
+| Frame p95 / p99, 1,000 tok/s | 16.7 / 33 ms | 10.1 / 10.3 ms | 10.2 / 10.4 ms | 9.5 / 10.3 ms | Pass |
+| Frame p95 / p99, 200 tok/s | 16.7 / 33 ms | 10.0 / 10.3 ms | 10.0 / 10.3 ms | 10.0 / 10.3 ms | Pass |
+| Frame p95 / p99, 10 threads streaming | 16.7 / 33 ms | 10.0 / 10.3 ms | 10.0 / 10.2 ms | 10.0 / 10.3 ms | Pass |
+| Input to paint p95, the three cases | 32 ms | 32 ms | 32 ms | 24 / 32 / 32 ms | Pass, at the limit in two |
+| Long tasks at normal speed | None of 100 ms or more | None | None in streaming, diffs or terminal output | None in streaming, diffs or terminal output | Pass |
+| Longest time behind the end, three cases | 100 ms | | 17.8 / 16.0 / 16.1 ms | 21 / 20 / 13.7 ms | Pass |
+| Switch to a running thread | 100 ms | 90.3 ms | 89.7 ms | 55 ms | Pass |
+| Cold start | 1 s | 241.1 ms | 261.2 ms | 240 ms | Pass |
+| Total before streaming, 1,000 / 200 tok/s | 279.4 MiB | 270.881 / 272.256 MiB | **281.647 / 281.615 MiB**, a fail | 272.318 / 272.787 MiB | Pass |
+| Total after 1,000 tok/s | 510.4 MiB | 461.178 MiB | 423.256 MiB | 418.678 MiB | Pass |
+| Total after 200 tok/s | 522.5 MiB | 439.475 MiB | 398.694 MiB | 391.959 MiB | Pass |
+| Terminal, 50 MiB | No task of 100 ms or more | 1.892 s, none | 1.891 s, none | 1.885 s, none | Pass |
+| Terminal, 50 MiB, light theme | No task of 100 ms or more | | 1.870 s, none | not rerun | Pass |
+| Port round trip p95 | Under 1 ms | 0.10 ms | 0.10 ms | 0.10 ms | Pass |
+
+The switch fell from 89.7 ms in the first run to 55 ms. The parse cache accounts for most of that: on one build, run 5d measured the switch with test flags at 81.9 ms without it and 64.8 ms with it.
+
+The first run missed the before-streaming memory budget. The readings were 287.3, 281.4 and 281.6 MiB at 1,000 tok/s, and 281.6, 278.4 and 287.1 MiB at 200 tok/s. `getAppMetrics` doesn't count pi, so results.json splits the total into the renderer, the host and the rest (main, GPU and utility processes):
+
+- Renderer: 66.5 to 67.2 MiB, up to 69.9 to 71.3 MiB, about +4.4.
+- Host: 17.5 MiB, up to 18.0, +0.5.
+- The rest: about 186.6 MiB, up to about 192.6, +6. Two runs read about 198.
+
+The unminified renderer bundle grew from 3,282 kB in Run 2, before any screen imported a ui component, to 4,061 kB. lucide is imported by name (56 icons), and 19 Base UI subpaths are imported. The budget is fixed, and a miss stops the stage, so a fix followed.
+
+Run 5c attributed the miss against a Stage 11 build, 12 alternating runs each, by process and footprint category. The details and every sample are in [stack.md](stack.md#before-streaming-memory-fix).
+
+- **GPU process, +10.7 MiB.**
+  - The welcome screen, shown before the first thread opens, promoted two large layers where Stage 11 promoted two small ones. The GPU process still held their Metal allocations when the reading was taken.
+  - The welcome is now one promoted layer, and its look is unchanged.
+  - The ui Button's 150 ms `transition-colors` re-rasterized the hovered sidebar button's layer on every frame. It's gone, so hover colors change at once, as Stage 11's buttons did.
+- **Renderer, +4.3 MiB.** The bundle grew, and the page keeps its script source at two bytes a character. The renderer bundle is now minified, decision D8 below: 4.06 MB became 1.83 MB.
+- **Main process:** unchanged.
+- **The two renderer changes, over 24 alternating runs:** the median went from 282.29 to 278.81 MiB.
+
+The acceptance run on the final tree, with plain minification and the parse cache, put both before-streaming medians under the limit. They were 272.318 MiB (277.006, 270.725, 272.318) at 1,000 tok/s and 272.787 MiB (277.397, 271.521, 272.787) at 200 tok/s, against 279.4 MiB. Its terminal sent 50 MiB in 1,885, 1,888 and 1,883 ms, so the slowdown keepNames caused is gone.
+
+After-stream memory fell from Stage 11's 461.178 and 439.475 MiB to 418.678 and 391.959 MiB in the final run. No A/B attributes that drop, so it isn't claimed as a saving.
+
+The terminal ran in both themes on scratch specs in `.dev/stage12/perf-light/`, because the main suite runs in light only. Light took 1,866, 1,883 and 1,870 ms, and dark 1,870, 1,882 and 1,866 ms, with no task of 100 ms or more. At 4x they took 8,122 and 8,131 ms. Each spec checked that the drawer's background pixel matched `--card` in its theme. The light contrast floor costs nothing measurable.
+
+Diffs: the colored 5,000-line diff showed rows in 339 ms and colors in 2,715 ms, with a longest task of 56 ms. The uncolored 10,000-line diff showed rows in 337 ms. At informational 4x slowdown, frame p95 was 26.2 and 23.1 ms at 1,000 and 200 tok/s, and input p95 40 ms at both. The switch took 380 ms, and the colored diff had one 217 ms task.
+
+##### Real setup and the pool
+
+Run 5b ran the built app on a sanitized copy of your `~/.pi/agent` on 2026-10-10, with your 10 packages, skills and context files loaded and your seven Tondo sessions copied to a temporary folder. Streaming used the faux provider, so no prompt reached a model. Medians of 3 runs; [stack.md](stack.md#real-setup) has every sample and everything the copy left out.
+
+| | Budget | Your setup | Result |
+|---|---|---|---|
+| Cold start | 1 s | 257 ms | Pass |
+| Switch to a running thread | 100 ms | 104 ms, and 104 ms on a repeat. After the fix below, 80.6 ms, and 80.0 ms on a repeat. | Pass after the fix |
+| Frame p95 / p99 at 1,000 tok/s | 16.7 / 33 ms | 10.1 / 10.3 ms | Pass |
+| Long tasks of 100 ms or more | none | none | Pass |
+| Input to paint p95 | 32 ms | 32 ms | Pass |
+
+- **The switch miss, found and fixed (run 5d).** It reproduced at 105.5 ms, against 81.9 ms with test flags.
+  - Tondo wasn't waiting on pi, and extension UI wasn't the cost. In traces, the host's snapshot reached the page about 1 ms after the click in both setups, with no extra host message during the switch.
+  - The snapshot's render grew by about 11 ms, nearly all of it Markdown parsing. With your extensions the new thread's pi starts about a second later, so the first thread's reply had streamed further by the switch: about 25,000 characters against 21,200.
+  - Underneath was a flaw in Tondo: every switch parsed the whole reply again, including what it had already parsed while that thread was on screen.
+  - The fix, `src/renderer/timeline/reuseParses.ts`, caches each Markdown block's parse tree by its text inside Streamdown's processor. `MessageView` passes it alongside Streamdown's own default plugins. Each reuse gets its own copy of the tree, and everything after parsing, sanitizing included, runs as before.
+  - After the fix, the switch on your setup took 80.6 ms (73.4, 80.6, 80.7), and 80.0 ms on a repeat (72.9, 88.8, 80.0). With test flags it dropped from 81.9 to 64.8 ms. No keyboard or mouse input happened during those runs.
+  - Its unit tests fail against each of five deliberately broken caches.
+  - Run 5d ran every process with `HOME`, `PI_CODING_AGENT_DIR`, `CONTEXT_MODE_DATA_DIR` and Tondo's profile inside the copy, and never started pi itself. `lsof` showed each pi with its files in the copy and none under `~/.pi`, and nothing under `~/.pi` is newer than its start marker.
+
+- **pi starts faster and lighter than in Stage 3:** 0.95 s to its first answer instead of 1.42 s, and about 136 MiB idle instead of 210. After a turn it holds about 192 MiB. Tondo's own processes held 144 MiB idle, 274 MiB with the transcript open and 417 MiB after the reply.
+- **The pool keeps its defaults: 4 live pis and a 10-minute idle timeout.**
+  - Four off-screen pis hold 0.53 to 0.77 GiB, inside the 850 MiB the default was sized on. Six would hold 0.80 to 1.15 GiB once each has done a turn.
+  - Two would make moving between three threads wait about 1 s a switch: opening a thread whose pi was stopped took 998 ms.
+  - A 5-minute timeout would make returns within 5 to 10 minutes wait that second, and a 20-minute one would hold up to 0.6 GiB more to save it.
+- **One check broke the copy-only rule.** Before measuring, the lane ran the repo's pi with `--help` to check a flag, without pointing it at the copy. So pi loaded your real extensions for about a second, at 10:54 EDT.
+  - In `~/.pi/agent` only the folder's own timestamp changed. Its 39 entries kept their sizes and timestamps, and `auth.json` and your sessions are untouched.
+  - Your context-mode extension created an empty `~/.pi/context-mode/sessions/b1ef6c5bddf70d47.db`, outside `~/.pi/agent`. You chose to leave it.
+  - Nobody captured network traffic, so a request by an extension in that second isn't ruled out.
+  - Every later run pointed `PI_CODING_AGENT_DIR` and `CONTEXT_MODE_DATA_DIR` into the copy, and the after-listing shows nothing under `~/.pi` newer than that second.
+
+#### Changes to the plan
+
+The decisions I made under your delegation (`.dev/stage12/plan.md`, D1-D6):
+
+- **D1, a Settings page instead of a dialog.** It replaces the main area, as T3's settings route does. Escape or Back returns to the thread.
+- **D2, rebindable app shortcuts.** That covers the palette, a new thread, adding a project, the sidebar, the previous and next thread, and Settings. Overrides go in settings.json. The composer and dialog keys stay fixed, because they mirror pi's terminal UI.
+- **D3, lucide icons.** lucide is the default for shadcn and T3, and each icon is imported on its own.
+- **D4, onboarding in place.** Problems show where they happen, as listed under Shipped, rather than in a first-run wizard.
+- **D5, `pnpm perf` without asking.** You were asleep, so the window on top couldn't disturb you or the input timing. Stage 5 set the precedent. When you came back, you OK'd the remaining runs: "Go ahead, I'll stay off."
+- **D6, the real-setup pass on copies.** The copy of `~/.pi/agent` leaves out credentials and sessions. Streaming uses the faux provider, so no prompt reaches a model. Listings of `~/.pi` before and after each pass check that the real folder is unchanged. Run 5b's caught one slip, described under Real setup and the pool.
+
+Other calls:
+
+- **D7, a deeper light primary.** I moved the light `--primary` from `oklch(62% 0.15 42)` to `oklch(57% 0.15 42)`, so white button text reaches WCAG AA: 3.76:1 before, 4.62:1 now. The default hover mixes in the foreground, at 5.23:1 in light and 7.09:1 in dark. The focus ring reaches 4.54:1 against the page. The Warm hue and chroma are unchanged. This needs your OK.
+- **D8, a minified renderer bundle.** electron-vite left the renderer unminified. Minifying it with esbuild, Vite's default for production builds, keeps memory before streaming inside its fixed budget: the bundle went from 4.06 to 1.83 MB.
+  - esbuild's keepNames would keep function names in stack traces, but it was measured and dropped. Wrapping every named closure made 50 MiB of terminal output take 2.9 s instead of 1.9 s.
+  - So production stack traces from the renderer show minified names. Development builds are unaffected.
+  - This needs your OK.
+- **The settings sheet is gone.** `/settings` used to open a sheet that said Tondo had no settings screen yet. Now it opens the Settings page's pi section. The protocol's settings-files message and the sheet kind are removed.
+- **Alert dialogs.** Switch branch, Remove worktree and Remove project use the `alertdialog` role, which fits a confirmation. git.e2e accepts either role.
+- **Native selects became Base UI Select.** That covers the model and thinking pickers, the Git branch and the checkpoint turn. Their names stay, and e2e picks options by label through `e2e/ui.ts`. Unlike the native select, the open list can now be tested on macOS.
+- **The Linux composer race was older than Stage 12.** `composer.e2e.ts:198` failed in the container at the same rate on HEAD before Stage 12. The cause was in the test. Playwright's `fill("")` on a contenteditable selects through the DOM and then presses Delete, and Chromium can deliver that keydown before ProseMirror sees the `selectionchange`. The test now presses ControlOrMeta+A, then Delete, then waits for an empty draft. There are no sleeps, and the app is unchanged (`.dev/stage12/linux-composer.md`).
+- **A Linux keyboard failure was an app bug.** The faux reply landed in one frame, with its second row 6,984 px tall. Legend List 3.4.0 follows a growing row only within one screen of the end, so the view stayed at the top while Tondo's follow state stayed on. Now, when a row grows while the view follows and the gap is more than a screen, `Timeline.tsx` scrolls to the end. It's one comparison per row resize, so streaming gains no work. The walk also waits for PageUp's `scrollend`, because Chromium on Linux animates it.
+- **Terminal focus.** Closing the drawer other than by its own Close button dropped focus to the page: the palette's Close terminal, or ⌘1-9 to a thread without one. The drawer's cleanup now returns focus to its opener, or to the composer.
+- **Narrow columns.** At the 840 px minimum width with Changes open, the composer's pickers lost their labels and the send button stuck out of its card. The Git toolbar spilled over the panel.
+  - Stage 12 caused it, by grouping the toolbar and moving the pickers onto Base UI.
+  - Now the toolbar groups and the composer footer wrap when their column is too narrow. Wider windows are unchanged.
+  - Evidence: `.dev/stage12/qa/shots/min-width-changes-light.png` and `-fixed.png`.
+- **Smaller calls:**
+  - The Git toolbar keeps one row when there's no upstream, and Refresh is an icon. Remove worktree is a ghost button with a trash icon, and its dialog carries the red.
+  - Dark destructive buttons use dark text: Stop goes from 3.30:1 to 5.36:1.
+  - Checkboxes and switches got a control-border token: their edges went from 1.44-1.56:1 against the page to 3.49-3.92:1.
+  - A pressed toggle is a solid chip, and header buttons are muted again.
+  - The pierre-dark code background stays near-black, because it's the syntax theme's own.
+- **The lint rule is Tondo's own.** @shadcn/lint 0.2.0 works under oxlint 1.85, but it finds ui components by import alias and misses Tondo's relative imports. So `scripts/lint/no-restyle.mjs` follows its `no-restyle` rule and resolves each import.
+- **Parts of shadcn left out:**
+  - shadcn's `tailwind.css` variants are inlined, so shadcn isn't a runtime dependency.
+  - No tw-animate-css, no backdrop blur and no TooltipProvider.
+  - The palette uses Base UI's combobox instead of `command`, because `command` needs cmdk, which needs Radix.
+  - No sonner, because it needs next-themes.
+- **Dependencies.** The five new ones are exact devDependencies (see [stack.md](stack.md#libraries)). Each was published well over a day before install. But `pnpm config get minimumReleaseAge` prints `undefined`, and the repo sets no release-age gate, although AGENTS.md says pnpm installs only versions at least a day old. Stage 0 relied on pnpm's default, and no one checked that the default applies.
+- The before shots showed the remove-project confirmation inside the menu. An alert dialog replaces it.
+
+#### Not verified
+
+- **Your approval of the before and after screenshots**, which the stage's "Done when" asks for.
+- **The visual review was mine alone.** The orchestrator worked through the visual-qa skill's checklist, without the skill's two independent reviewers.
+- **Contrast calls left for you:** warning text is 4.23:1 against the page, and white on solid warning is 4.31:1. D7 itself awaits your OK.
+- **Screen readers.** The audit reads Chromium's accessibility tree. No one has tried VoiceOver or Orca.
+- **CI.** The Linux results come from the local arm64 container, not GitHub's x64 runner. CI runs on the pull request.
+- **Not captured:** the before shots couldn't show the native select's open list (S18), and no capture shows the timed dialog's countdown.
+- **Not unit-tested:** live pool limits and restarting pi after Check again. The e2e tests cover the pool limit and rediscovery through Choose pi….
+- **Unseen:** Check again may flash the thread view before the setup card returns.
+- **Follow-ups:**
+  - There's no macOS app menu with "Settings…", only Electron's default menu (J1).
+  - The composer, the palette's search and the diff filter show only a placeholder, as chat and search fields usually do. Each has an accessible name (C7).
+  - While a Git action runs, every toolbar control is disabled, so a keyboard user who pressed Refresh can lose focus to the page until it ends.
+  - A new thread doesn't focus the composer. The walk reaches it with Shift+Tab.
+  - After a host kill, the sidebar title can lag behind the header. The before shots show it too.
+  - On Linux, no app shortcut works while the terminal has focus. Ctrl+K, Ctrl+N, Ctrl+1-9 and the rest go to the shell.
+  - The minified renderer ships no sourcemaps, so its stack traces show minified names. Hidden sourcemaps belong with Stage 13's packaging.
+  - The comment atop `src/host/pool.ts` still sizes the pool on Stage 3's 212 MiB per pi. Stage 12 measured about 136 MiB idle and 192 MiB after a turn, which keeps the default inside its envelope.
+
+#### Proposed commits
+
+1. `build(deps): add base ui, lucide and class utilities`
+2. `feat(ui): add shadcn components on base ui with design tokens`
+3. `build(lint): forbid restyling ui components`
+4. `feat(settings): store theme, pool, shortcuts and pi path in the host`
+5. `feat(settings): add the settings page`
+6. `feat(onboarding): guide pi setup, provider sign-in and trust`
+7. `feat(ui): move every screen onto the component layer`. Each screen's keyboard paths and names come with it, because the screen lanes built them together.
+8. `feat(palette): open and close the terminal from the palette`
+9. `fix(timeline): follow a row that grows past a screen`
+10. `fix(terminal): return focus when the drawer closes`
+11. `test(composer): clear the draft through the editor`
+12. `test(e2e): walk the app by keyboard and audit control names`
+13. `perf(renderer): keep the welcome on one layer and drop button hover fades`
+14. `perf(timeline): reuse Markdown parses when a message remounts`
+15. `build(renderer): minify the renderer bundle`
+16. `docs: record stage 12 results`
+
+#### Next
+
+After you approve this report and the screenshots, and Stage 12 lands, Stage 13 starts by reading T3's `scripts/build-desktop-artifact.ts` at the pinned commit. Signing and notarization still need your Apple Developer ID.
+
 ## Stage 13: Packaging, signing, updates
 
 Goal: installable macOS and Linux builds that keep the Chromium sandbox wherever the platform allows, with fuses set and auto-update working.
@@ -940,16 +1244,16 @@ You accepted these defaults on 2026-09-25.
 - No telemetry and no crash-reporting service. Logs stay local.
 - Reverting a turn waits until after v1. T3 can do it, and T3's own code warns that restoring a shared folder "can erase a sibling's work".
 
-At the Stage 4 design checkpoint on 2026-09-27 you picked the Warm direction over Neutral (T3 Code's values) and Terminal (monospace, sharp corners). Its tokens are in `src/renderer/index.css`: warm off-white and charcoal neutrals, a terracotta primary (`oklch(62% 0.15 42)` light, `oklch(70% 0.14 45)` dark), 12 px corners on controls and 20 px on panels, and the system sans font. Stage 12 builds its shadcn components on them.
+At the Stage 4 design checkpoint on 2026-09-27 you picked the Warm direction over Neutral (T3 Code's values) and Terminal (monospace, sharp corners). Its tokens are in `src/renderer/index.css`: warm off-white and charcoal neutrals, a terracotta primary (`oklch(57% 0.15 42)` light, `oklch(70% 0.14 45)` dark), 12 px corners on controls and 20 px on panels, and the system sans font. Stage 12 builds its shadcn components on them. It also deepened the light primary from `oklch(62% 0.15 42)` so white button text reaches WCAG AA (4.62:1, was 3.76:1), keeping the hue and chroma (D7 in the [Stage 12 report](#stage-12-report-2026-10-10), which awaits your OK).
 
 For Stage 5 you let me take my recommended option on each open question (2026-09-28). These are the ones you'll notice:
 
-- The pool keeps at most 4 pi processes running, and a hidden thread's pi stops after 10 idle minutes. Stage 3 measured an idle pi on your setup at about 210 MiB, so 4 come to about 840 MiB. The thread on screen and busy threads are never stopped, so 10 threads streaming at once run 10 pi processes.
+- The pool keeps at most 4 pi processes running, and a hidden thread's pi stops after 10 idle minutes. Since Stage 12 both can be changed in Settings. Stage 3 measured an idle pi on your setup at about 210 MiB, so 4 come to about 840 MiB. The thread on screen and busy threads are never stopped, so 10 threads streaming at once run 10 pi processes.
 - Projects are folders you add, as in T3. Each lists the pi sessions started in its folder, including ones from pi's terminal UI. Tondo doesn't add a project for every folder pi has sessions for.
 - Projects stay in the order you added them. T3 sorts them by latest activity, which moves them while you work.
 - Archiving a thread doesn't ask. The command palette lists archived threads, and choosing one brings it back. Removing a project asks first, and it never deletes pi's session files.
 - A new thread you leave before sending a message or typing a draft disappears, as T3's draft threads do, so Cmd+N doesn't leave empty rows behind.
-- The shortcuts take T3's defaults for the palette, the sidebar, a new thread and moving between threads, and add Cmd+O to add a project. They can't be changed yet.
+- The shortcuts take T3's defaults for the palette, the sidebar, a new thread and moving between threads, and add Cmd+O to add a project. Since Stage 12 they can be changed in Settings, and Cmd+, opens Settings.
 - Rename appears once a thread has a reply. pi saves a session only after the first reply, so a name set before then would be lost if pi stopped.
 
 For Stage 6 you took my recommended option on each question (2026-09-28):
@@ -966,6 +1270,14 @@ For Stage 7 you took my recommended option on each question (2026-09-29):
 - A dialog raises an OS notification when its thread isn't on screen or Tondo's window isn't focused. Clicking the notification opens the thread.
 - The slash menu lists the built-ins Tondo can't run yet after everything else, dimmed, with the reason.
 - The files /settings and /export name get a Show in Finder button. The host shows only files it offered.
+
+For Stage 12 you said "Go with your recommendation" before going to bed (2026-10-10), so I took the recommended option on each open question. The [Stage 12 report](#stage-12-report-2026-10-10) gives the reasons:
+
+- Settings is a full page that replaces the main area, not a dialog.
+- Tondo's app shortcuts can be rebound. The composer and dialog keys stay fixed.
+- Icons come from lucide.
+- Onboarding shows each problem where it happens. There's no first-run wizard.
+- `pnpm perf` and the real-setup pass run without asking first. The real-setup pass runs on copies that leave out credentials and sessions.
 
 ## Stage report template
 

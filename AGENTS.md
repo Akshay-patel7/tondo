@@ -41,15 +41,18 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 - The preload hands the page a MessagePort and nothing else. Sandboxed preloads can't use ESM and get only a few Node modules, so it's CommonJS and fully bundled.
 - Every IPC handler checks its sender.
 - Main, preload and host build as CommonJS, and the renderer as ESM. Don't add `"type": "module"` to package.json: electron-vite would then emit the preload as `.mjs`, which a sandboxed preload can't load.
+- `src/renderer/ui` owns its look. Outside it, pick a component's variant or size and pass only layout classes. For a new look, add a variant in the ui file. The `tondo/no-restyle` rule (`scripts/lint/no-restyle.mjs`) fails lint on any other class, or on a className it can't read statically.
 - The window stays locked down: context isolation and the sandbox on, Node integration off, pages served from `tondo://` with the CSP in `src/main/securityPolicy.ts`, and navigation, new windows and permission requests denied. `e2e/window.e2e.ts` tests all of it except context isolation and the sandbox, so keep it passing.
 
 ## App data and your pi setup
 
 - Unpackaged runs keep app data in `.dev/userData`, with one running instance per profile. `TONDO_USER_DATA_DIR` overrides the folder, and smoke and e2e point it at temporary folders. Never run against `~/Library/Application Support/Tondo`.
 - Leave `~/.pi/agent` alone. Unpackaged runs give pi `<userData>/pi-agent` as its `PI_CODING_AGENT_DIR`, and `TONDO_PI_ARGS`, a JSON array, adds arguments to every pi, which is how e2e runs the faux provider. Runs against the real `~/.pi/agent` happen only at the plan's measurement points, and only after asking.
+- Those measurement passes use a sanitized copy of `~/.pi/agent`, never `~/.pi` itself. Every process they start gets `HOME`, `PI_CODING_AGENT_DIR` and `CONTEXT_MODE_DATA_DIR` inside the copy, because some extensions write under `~/.pi` whatever the agent folder is. Never start pi directly for them, not even with `--help`, and check `find ~/.pi -newer <marker>` before and after.
 - Integrated shells inherit the same scratch `PI_CODING_AGENT_DIR`. Provider sign-in runs a separate interactive pi with `--no-session`; test login with synthetic credentials in a temporary profile, never with the real auth file.
 - Managed worktrees live under `<userData>/worktrees/<thread-id>`. The host's ownership ledger survives interrupted creation so cleanup never scans arbitrary folders. Route pi, terminals, file completion, session discovery and checkpoints through the thread's checkout, not the sidebar project's path. Never automatically force-remove a worktree or delete its branch.
 - Main writes its own log and the host's to `<userData>/logs/`, as `main.log` and `host.log`.
+- Tondo's settings (theme, pool, shortcuts, pi path, project trust) live in `<userData>/settings.json`. The host checks and saves every change and keeps keys it doesn't know. e2e seeds the file with `launchTondo({ settings })`. In unpackaged runs `TONDO_POOL` overrides the pool settings.
 - Stop only processes you started, by the PID or process group you captured. Never kill by name or pattern. macOS has no `timeout` command, so scripts use Node deadlines.
 
 ## Verifying
@@ -57,7 +60,7 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 - Tests wait for events, never for time. T3's AGENTS.md puts it plainly: "A test that needs a timeout to pass is wrong."
 - Tests that need pi run the real pi offline with pi-ai's faux provider. docs/plan.md's "Test layers" section has the command.
 - Git tests use generated repositories and bare remotes. PR tests put a recording `gh` stub on PATH, with a test login shell that preserves it. Keep both fetch and push operations local; never test against a real remote or use live GitHub credentials.
-- UI claims come with screenshots you open and look at.
+- UI claims come with screenshots you open and look at. `.dev/design/stage12.design.ts` (local, gitignored) shoots every screen in light and dark at 2x. `.dev/design/stage12/README.md` has the command. The gallery is in `.dev/design/stage12/`: `before/`, `after/` and `compare/`, each with an INDEX.md.
 - The build fails if the React Compiler skips a function or compiles nothing. Fix the code rather than loosening `panicThreshold`.
 - The performance budgets in docs/plan.md are fixed. Missing one stops the stage. Don't lower the bar to finish.
 
