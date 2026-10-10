@@ -21,7 +21,9 @@ import {
   type DialogAnswer,
   type HostMessage,
   type OpenThread,
+  type PiDiscovery,
   type PiStatus,
+  type SettingsFile,
   type SidebarProject,
   type StreamingBehavior,
   type ThinkingLevel,
@@ -32,6 +34,7 @@ import { closeSheet, openSheet } from "./sheets/store";
 import { keepUnchanged } from "./sidebar/model";
 import { receiveEvents, showThread } from "./thread/store";
 import { addToast } from "./toasts/store";
+import type { AppSettings, SettingsPatch } from "../shared/settings";
 import type { TerminalCommand, TerminalKind } from "../shared/terminal";
 import { receiveTerminal, resetTerminals, useTerminals } from "./terminal/store";
 
@@ -45,12 +48,24 @@ export const useHost = create<{
   sidebarHidden: boolean;
   /** Errors the host reported, oldest first, until you dismiss them. */
   errors: readonly string[];
+  /** Tondo's settings, or null until the host sends them. */
+  settings: AppSettings | null;
+  /** Why the host refused the last settings change, or null if it took it. */
+  settingsError: string | null;
+  /** The pi Tondo would run, or null until the host has looked. */
+  piEnv: PiDiscovery | null;
+  /** pi's config files, or null until requestPiConfigFiles is answered. */
+  piConfigFiles: readonly SettingsFile[] | null;
 }>()(() => ({
   connection: "connecting",
   thread: null,
   projects: [],
   sidebarHidden: false,
   errors: [],
+  settings: null,
+  settingsError: null,
+  piEnv: null,
+  piConfigFiles: null,
 }));
 
 export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => ({
@@ -273,6 +288,15 @@ function receive(message: HostMessage): void {
     }
     case "sheet":
       if (message.threadId === shownId()) openSheet(message.sheet);
+      break;
+    case "settings":
+      useHost.setState({ settings: message.settings, settingsError: message.error });
+      break;
+    case "pi-env":
+      useHost.setState({ piEnv: message.pi });
+      break;
+    case "pi-config-files":
+      useHost.setState({ piConfigFiles: message.files });
       break;
     case "pong":
       break;
@@ -514,6 +538,26 @@ export function showTrust(): void {
 
 export function reloadPi(): void {
   send({ v, type: "reload", threadId: requireShownId() });
+}
+
+/** Asks the host to change Tondo's settings. It answers with the settings it keeps. */
+export function updateSettings(patch: SettingsPatch): void {
+  send({ v, type: "set-settings", patch });
+}
+
+/** Shows the file dialog for picking the pi program. */
+export function choosePiPath(): void {
+  send({ v, type: "choose-pi-path" });
+}
+
+/** Looks for pi again, after you install or update it. */
+export function retryPi(): void {
+  send({ v, type: "retry-pi" });
+}
+
+/** Asks for pi's config files: the global ones, and the shown thread's project's. */
+export function requestPiConfigFiles(): void {
+  send({ v, type: "get-pi-config-files", threadId: shownId() ?? null });
 }
 
 /** Shows a file the host offered in Finder. */

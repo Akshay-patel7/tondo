@@ -14,9 +14,20 @@ import type { TerminalCommand, TerminalEvent } from "./terminal";
 import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
+import {
+  isPoolValue,
+  isShortcutCommand,
+  isThemeSetting,
+  type AppSettings,
+  type PoolSettings,
+  type SettingsPatch,
+  type ShortcutCommand,
+  type ThemeSetting,
+} from "./settings";
+import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -55,15 +66,48 @@ export interface PiSession {
   readonly context: ContextUsage | null;
   /** What the slash menu offers from pi, read once when pi starts. */
   readonly commands: readonly SlashCommand[];
+  /** Whether pi has a model you have credentials for. pi reads credentials when it starts. */
+  readonly signedIn: boolean;
 }
+
+/** Why Tondo can't run pi. `error` in an exited PiStatus says the same in words. */
+export type PiProblem =
+  /** No pi on PATH, or nothing at the pi path you chose. */
+  | { readonly kind: "not-found"; readonly detail: string }
+  /** `command` is pi `version`, and Tondo needs `required` or newer. */
+  | {
+      readonly kind: "too-old";
+      readonly version: string;
+      readonly required: string;
+      readonly command: string;
+    }
+  /** Not pi's package, a package with no pi command, or no node next to pi. */
+  | { readonly kind: "invalid"; readonly detail: string };
+
+/** The pi Tondo would run, found on PATH or at the path in the settings. */
+export type PiDiscovery =
+  | {
+      readonly state: "found";
+      readonly version: string;
+      readonly command: string;
+      readonly source: "path" | "setting";
+    }
+  | {
+      readonly state: "missing";
+      readonly source: "path" | "setting";
+      readonly problem: PiProblem;
+    };
 
 export type PiStatus =
   /** Tondo is waiting for your answer about trusting the project before it starts pi. */
   | { readonly state: "stopped" }
   | { readonly state: "starting" }
   | { readonly state: "ready"; readonly session: PiSession }
-  /** pi exited or couldn't start, for the reason in `error`. You can restart it. */
-  | { readonly state: "exited"; readonly error: string };
+  /**
+   * pi exited or couldn't start, for the reason in `error`. You can restart
+   * it. `problem` is set when Tondo couldn't find a pi it can run.
+   */
+  | { readonly state: "exited"; readonly error: string; readonly problem?: PiProblem };
 
 /** What pi is doing in a thread, as the sidebar shows it. "waiting": an extension waits for your answer. */
 export type ThreadActivity = "idle" | "starting" | "working" | "waiting" | "error";
@@ -263,6 +307,14 @@ export type ClientMessage = Versioned<
   /** Show a file in Finder. Only a file the host offered, such as an export. */
   | { type: "reveal"; path: string }
   | { type: "ping"; id: number }
+  /** Change Tondo's settings. The host answers with settings, whose error says why it refused. */
+  | { type: "set-settings"; patch: SettingsPatch }
+  /** Show a file dialog to choose the pi to run. */
+  | { type: "choose-pi-path" }
+  /** Look for pi again, and start again every thread whose pi Tondo couldn't find. */
+  | { type: "retry-pi" }
+  /** Answered with pi-config-files: pi's global files, and the thread's project's if it names one. */
+  | { type: "get-pi-config-files"; threadId: string | null }
 >;
 
 /** What the host sends the page. */
@@ -316,6 +368,14 @@ export type HostMessage = Versioned<
   | { type: "sheet"; threadId: string; sheet: Sheet }
   | { type: "pong"; id: number }
   | { type: "error"; message: string }
+  /**
+   * Tondo's settings, sent to each new port and after every set-settings.
+   * `error` says why the last change wasn't saved, or why the file can't be read.
+   */
+  | { type: "settings"; settings: AppSettings; error: string | null }
+  /** The pi Tondo runs, sent to each new port and whenever Tondo looks for pi again. */
+  | { type: "pi-env"; pi: PiDiscovery }
+  | { type: "pi-config-files"; files: readonly SettingsFile[] }
 >;
 
 /**
@@ -328,6 +388,8 @@ export type MainToHostMessage =
   | { type: "stop-terminals" }
   /** The folder you picked in the dialog `choose-project` asked for, or null if you cancelled. */
   | { type: "project-chosen"; folder: string | null }
+  /** The file you picked in the dialog `choose-pi` asked for, or null if you cancelled. */
+  | { type: "pi-chosen"; file: string | null }
   /** You clicked the notification about a thread. */
   | { type: "open-thread"; threadId: string };
 
@@ -362,6 +424,10 @@ export type HostToMainMessage =
   | { type: "terminals-stopped" }
   /** Show the folder dialog and answer with project-chosen. */
   | { type: "choose-project" }
+  /** Show the file dialog for pi and answer with pi-chosen. */
+  | { type: "choose-pi" }
+  /** The theme your settings ask for, which main applies to the window. */
+  | { type: "theme"; theme: ThemeSetting }
   /**
    * An extension in the thread waits for your answer. Main raises a
    * notification unless the thread is on screen in the focused window.
@@ -676,6 +742,21 @@ export function parseClientMessage(data: unknown): ParseResult {
       }
       return exactly(message, { v, type, id: id as number });
     }
+    case "set-settings": {
+      const patch = parsePatch(message.patch);
+      if (typeof patch === "string") return invalid(`set-settings: ${patch}`);
+      return exactly(message, { v, type, patch });
+    }
+    case "choose-pi-path":
+    case "retry-pi":
+      return exactly(message, { v, type });
+    case "get-pi-config-files": {
+      if (threadId !== null) {
+        const bad = badThreadId(type, threadId);
+        if (bad) return invalid(`${bad} or null`);
+      }
+      return exactly(message, { v, type, threadId: threadId as string | null });
+    }
     default:
       return invalid(`unknown message type ${describe(type)}`);
   }
@@ -742,6 +823,76 @@ function parseAnswer(answer: unknown): DialogAnswer | undefined {
   if (fields[0] === "confirmed" && typeof confirmed === "boolean") return { confirmed };
   if (fields[0] === "cancelled" && cancelled === true) return { cancelled };
   return undefined;
+}
+
+/** Longer than any path a file dialog gives. */
+const MAX_PATH = 4096;
+
+/**
+ * A fresh copy of a settings change, or why it isn't one. The host still
+ * checks that a pi path is absolute and runs, and that shortcuts don't clash.
+ */
+function parsePatch(patch: unknown): SettingsPatch | string {
+  if (!isRecord(patch)) return `patch must be an object, not ${describe(patch)}`;
+  const extra = Object.keys(patch).find(
+    (key) => !["theme", "pool", "shortcuts", "piPath"].includes(key),
+  );
+  if (extra !== undefined) return `patch has an unexpected field ${describe(extra)}`;
+  const { theme, pool, shortcuts, piPath } = patch;
+  const parsed: {
+    theme?: ThemeSetting;
+    pool?: Partial<PoolSettings>;
+    shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
+    piPath?: string | null;
+  } = {};
+  if (theme !== undefined) {
+    if (!isThemeSetting(theme))
+      return `theme must be "system", "light" or "dark", not ${describe(theme)}`;
+    parsed.theme = theme;
+  }
+  if (pool !== undefined) {
+    if (!isRecord(pool)) return `pool must be an object, not ${describe(pool)}`;
+    const copy: { maxLive?: number; idleMinutes?: number } = {};
+    for (const [key, value] of Object.entries(pool)) {
+      if (key !== "maxLive" && key !== "idleMinutes")
+        return `pool has an unexpected field ${describe(key)}`;
+      if (!isPoolValue(key, value)) return `pool.${key} is out of range: ${describe(value)}`;
+      copy[key] = value;
+    }
+    parsed.pool = copy;
+  }
+  if (shortcuts !== undefined) {
+    if (!isRecord(shortcuts)) return `shortcuts must be an object, not ${describe(shortcuts)}`;
+    const copy: Partial<Record<ShortcutCommand, string | null>> = {};
+    for (const [command, text] of Object.entries(shortcuts)) {
+      if (!isShortcutCommand(command))
+        return `shortcuts has an unknown command ${describe(command)}`;
+      if (
+        text !== null &&
+        !(
+          typeof text === "string" &&
+          text.length <= 100 &&
+          (text === "default" || parseChord(text))
+        )
+      )
+        return `shortcuts.${command} must be a shortcut, null or "default", not ${describe(text)}`;
+      copy[command] = text;
+    }
+    parsed.shortcuts = copy;
+  }
+  if (piPath !== undefined) {
+    if (
+      piPath !== null &&
+      !(typeof piPath === "string" && piPath.length > 0 && piPath.length <= MAX_PATH)
+    )
+      return `piPath must be a path or null, not ${describe(piPath)}`;
+    parsed.piPath = piPath;
+  }
+  return parsed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Why `projectId` isn't one, or undefined if it is. The host still checks that the project exists. */

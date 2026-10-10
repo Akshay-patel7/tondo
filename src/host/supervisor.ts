@@ -3,15 +3,16 @@
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HostConfig, SettingsFile, TrustInfo } from "../shared/protocol";
-import { findPi } from "./findPi";
+import type { HostConfig, PiDiscovery, SettingsFile, TrustInfo } from "../shared/protocol";
+import type { SettingsPatch } from "../shared/settings";
+import { findPi, PiNotFoundError } from "./findPi";
 import type { TerminalKind } from "../shared/terminal";
 import type { TerminalLaunch } from "./terminals";
 import { captureLoginEnv } from "./loginEnv";
 import { startPi, type PiLaunch, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
 import { sessionFolder, type SessionFolder } from "./sessionFolder";
-import { readSettings, saveTrustAnswer, type Settings } from "./settings";
+import { readSettings, saveTrustAnswer, updateSettings, type Settings } from "./settings";
 import { canonical, needsTrustDecision, piAgentDir, piTrust, trustArgs } from "./trust";
 
 /** A thread's pi session: its id, and the file pi keeps it in once pi has said where. */
@@ -128,6 +129,43 @@ export class Supervisor {
     return projectTrust[canonical(cwd)] === undefined && needsTrustDecision(cwd, env);
   }
 
+  /** Tondo's settings, read afresh. It throws if settings.json is invalid. */
+  settings(): Settings {
+    return readSettings(this.settingsFile);
+  }
+
+  /** Saves a change to the settings and returns them. An invalid change throws and saves nothing. */
+  updateSettings(patch: SettingsPatch): Settings {
+    return updateSettings(this.settingsFile, patch);
+  }
+
+  /** The pi the next start runs, or why there's none. */
+  async discover(): Promise<PiDiscovery> {
+    const env = piEnv(await this.captureLoginEnv(), this.config);
+    let source: "path" | "setting" = "path";
+    try {
+      const { piPath } = this.settings();
+      if (piPath !== null) source = "setting";
+      const { version, command } = findPi(env, piPath);
+      return { state: "found", version, command, source };
+    } catch (error) {
+      const problem =
+        error instanceof PiNotFoundError
+          ? error.problem
+          : { kind: "invalid" as const, detail: (error as Error).message };
+      return { state: "missing", source, problem };
+    }
+  }
+
+  /** Throws a PiNotFoundError unless `command`, an absolute path, runs a pi Tondo can use. */
+  async checkPi(command: string): Promise<void> {
+    if (!path.isAbsolute(command)) {
+      const message = `${command} isn't an absolute path`;
+      throw new PiNotFoundError(message, { kind: "not-found", detail: message });
+    }
+    findPi(piEnv(await this.captureLoginEnv(), this.config), command);
+  }
+
   /** Remembers whether you trust the project in `cwd`, for every pi started there later. */
   saveTrustAnswer(cwd: string, trusted: boolean): void {
     saveTrustAnswer(this.settingsFile, cwd, trusted);
@@ -141,13 +179,17 @@ export class Supervisor {
     return { decidedBy: "tondo", trusted: answer ?? null };
   }
 
-  /** The files pi in `cwd` reads its settings from: your global one and the project's. */
-  async settingsFiles(cwd: string): Promise<SettingsFile[]> {
+  /**
+   * The files pi in `cwd` reads its settings from: your global one and the
+   * project's. With no `cwd`, only the global one.
+   */
+  async settingsFiles(cwd: string | null): Promise<SettingsFile[]> {
     const env = piEnv(await this.captureLoginEnv(), this.config);
-    const agentDir = piAgentDir(cwd, env, env.HOME || os.homedir());
-    const files: [scope: string, file: string][] = [
+    const home = env.HOME || os.homedir();
+    const agentDir = piAgentDir(cwd ?? home, env, home);
+    const files: (readonly [scope: string, file: string])[] = [
       ["Global", path.join(agentDir, "settings.json")],
-      ["Project", path.join(cwd, ".pi", "settings.json")],
+      ...(cwd === null ? [] : [["Project", path.join(cwd, ".pi", "settings.json")] as const]),
     ];
     return files.map(([scope, file]) => ({ scope, path: file, exists: existsSync(file) }));
   }

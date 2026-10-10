@@ -30,6 +30,7 @@ import {
   type ThreadState,
 } from "../shared/thread";
 import { applyUiRequest, readUiRequest, responseTo, withoutDialog } from "./extensionUi";
+import { PiNotFoundError } from "./findPi";
 import { PiExitError, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
 import type { Supervisor, ThreadSession } from "./supervisor";
@@ -548,7 +549,11 @@ export class LiveThread {
       this.pi = undefined;
       void pi?.stop();
       console.error(`Tondo Host couldn't start pi in ${this.project}:`, error);
-      this.setStatus({ state: "exited", error: messageOf(error) });
+      this.setStatus({
+        state: "exited",
+        error: messageOf(error),
+        ...(error instanceof PiNotFoundError ? { problem: error.problem } : {}),
+      });
     }
   }
 
@@ -750,6 +755,7 @@ export class LiveThread {
         context: stats.contextUsage ?? null,
         // start() reads them once. A refresh keeps what it read.
         commands: this.piStatus.state === "ready" ? this.piStatus.session.commands : [],
+        signedIn: available.length > 0,
       },
       name: state.sessionName?.trim() || undefined,
       // pi gives the file relative to the project when its session folder setting is relative.

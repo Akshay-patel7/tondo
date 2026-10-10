@@ -1,12 +1,14 @@
 import { BrowserWindow, nativeTheme, type BrowserWindowConstructorOptions } from "electron";
 
-// Matches the renderer's title bar: h-10 is 40px, and the colors are
-// Tailwind's white / neutral-900 backgrounds with neutral-900 / neutral-100 text.
+// Matches the renderer's title bar: h-10 is 40px. The colors are the Warm
+// theme's --background and --foreground from src/renderer/index.css, converted
+// from oklch to sRGB hex: light oklch(98.4% 0.005 85) and oklch(26% 0.012 60),
+// dark oklch(21.5% 0.006 60) and oklch(93% 0.01 80). Change them together.
 const TITLE_BAR_HEIGHT = 40;
 const MACOS_TRAFFIC_LIGHT_RADIUS = 7;
 const THEME = {
-  light: { background: "#ffffff", symbol: "#171717" },
-  dark: { background: "#171717", symbol: "#f5f5f5" },
+  light: { background: "#fbfaf6", symbol: "#29231e" },
+  dark: { background: "#1c1917", symbol: "#ebe7e1" },
 };
 
 function currentTheme() {

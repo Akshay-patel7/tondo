@@ -5,9 +5,10 @@ import { PORT_MESSAGE, type HostConfig } from "../shared/protocol";
 import { startHost, type HostOptions } from "./host";
 import { stopProcessGroups } from "./processGroups";
 
-const electron = vi.hoisted(() => ({ fork: vi.fn() }));
+const electron = vi.hoisted(() => ({ fork: vi.fn(), nativeTheme: { themeSource: "system" } }));
 vi.mock("electron", () => ({
   utilityProcess: { fork: electron.fork },
+  nativeTheme: electron.nativeTheme,
   MessageChannelMain: class {
     port1 = "host's end";
     port2 = "page's end";
@@ -51,6 +52,7 @@ describe("startHost", () => {
       entry: "host.js",
       config,
       chooseFolder: vi.fn().mockResolvedValue(null),
+      choosePiFile: vi.fn().mockResolvedValue(null),
       attention: vi.fn(),
       copy: vi.fn(),
       reveal: vi.fn(),
@@ -228,6 +230,47 @@ describe("startHost", () => {
       "Tondo couldn't show the folder dialog:",
       new Error("No window"),
     );
+  });
+
+  it("shows the file dialog when the host asks for pi, and answers with the file", async () => {
+    options.choosePiFile = vi.fn().mockResolvedValue("/opt/pi/bin/pi");
+    startHost(options);
+    latest().ready();
+    const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+
+    latest().emit("message", { type: "choose-pi" });
+    await expect(answered).resolves.toEqual({ type: "pi-chosen", file: "/opt/pi/bin/pi" });
+  });
+
+  it("answers with no pi file when you cancel the dialog", async () => {
+    startHost(options);
+    latest().ready();
+    const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+
+    latest().emit("message", { type: "choose-pi" });
+    await expect(answered).resolves.toEqual({ type: "pi-chosen", file: null });
+  });
+
+  it("answers with no pi file when the dialog fails", async () => {
+    options.choosePiFile = vi.fn().mockRejectedValue(new Error("No window"));
+    startHost(options);
+    latest().ready();
+    const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+
+    latest().emit("message", { type: "choose-pi" });
+    await expect(answered).resolves.toEqual({ type: "pi-chosen", file: null });
+    expect(console.error).toHaveBeenCalledWith(
+      "Tondo couldn't show the file dialog for pi:",
+      new Error("No window"),
+    );
+  });
+
+  it("applies the theme the host sends, even before it's ready", () => {
+    startHost(options);
+    latest().emit("message", { type: "theme", theme: "dark" });
+    expect(electron.nativeTheme.themeSource).toBe("dark");
+    latest().emit("message", { type: "theme", theme: "light" });
+    expect(electron.nativeTheme.themeSource).toBe("light");
   });
 
   it("raises notifications, copies and shows files in Finder for the host", () => {

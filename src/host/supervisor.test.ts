@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HostConfig } from "../shared/protocol";
+import { DEFAULT_SETTINGS } from "../shared/settings";
 import { piLaunch } from "./supervisor";
 
 const piPackage = path.resolve(
@@ -41,7 +42,7 @@ function create(file: string, content = ""): void {
 describe("piLaunch", () => {
   it("runs the node beside pi on pi's cli.js, in RPC mode on the session, with the extra arguments last", () => {
     const loginEnv = { HOME: path.join(root, "home"), PI_CODING_AGENT_DIR: "/yours" };
-    const settings = { piPath: path.join(bin, "pi"), projectTrust: {} };
+    const settings = { ...DEFAULT_SETTINGS, piPath: path.join(bin, "pi"), projectTrust: {} };
     expect(piLaunch(project, { id: "session-1" }, loginEnv, config, settings)).toEqual({
       command: path.join(bin, "node"),
       args: [cli, "--mode", "rpc", "--session-id", "session-1", "-e", "faux-ext.ts"],
@@ -52,7 +53,7 @@ describe("piLaunch", () => {
 
   it("opens a session pi saved by its file", () => {
     const loginEnv = { HOME: path.join(root, "home") };
-    const settings = { piPath: path.join(bin, "pi"), projectTrust: {} };
+    const settings = { ...DEFAULT_SETTINGS, piPath: path.join(bin, "pi"), projectTrust: {} };
     const file = path.join(root, "agent/sessions/--x--/2026_thread.jsonl");
     expect(piLaunch(project, { file }, loginEnv, config, settings).args).toEqual([
       cli,
@@ -67,7 +68,7 @@ describe("piLaunch", () => {
 
   it("keeps your PI_CODING_AGENT_DIR when the config sets none", () => {
     const loginEnv = { HOME: path.join(root, "home"), PI_CODING_AGENT_DIR: "/yours" };
-    const settings = { piPath: path.join(bin, "pi"), projectTrust: {} };
+    const settings = { ...DEFAULT_SETTINGS, piPath: path.join(bin, "pi"), projectTrust: {} };
     const packaged = { userData: config.userData, piArgs: [] };
     expect(piLaunch(project, { id: "session-1" }, loginEnv, packaged, settings).env).toEqual(
       loginEnv,
@@ -82,7 +83,11 @@ describe("piLaunch", () => {
       HOME: path.join(root, "home"),
       PI_CODING_AGENT_DIR: path.join(root, "yours"),
     };
-    const settings = { piPath: path.join(bin, "pi"), projectTrust: { [project]: false } };
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      piPath: path.join(bin, "pi"),
+      projectTrust: { [project]: false },
+    };
     expect(piLaunch(project, { id: "session-1" }, loginEnv, config, settings).args).toEqual([
       cli,
       "--mode",
