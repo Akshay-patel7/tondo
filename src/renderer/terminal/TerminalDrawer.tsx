@@ -100,6 +100,7 @@ export default function TerminalDrawer({
   const [height, setHeight] = useState(280);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const opener = useRef<Element | null>(null);
+  const region = useRef<HTMLElement>(null);
   const project = useHost((host) => host.thread?.project);
   const pi = useHost((host) => host.thread?.pi);
   const busy = useHost((host) =>
@@ -113,6 +114,22 @@ export default function TerminalDrawer({
   // Terminal button, or the composer that ran /login.
   useLayoutEffect(() => {
     opener.current = document.activeElement;
+    const element = region.current;
+    // The palette's Close terminal or a thread switch can remove the drawer
+    // while it has focus. This cleanup runs before React removes the drawer, so
+    // it still sees that focus. The opener or composer may be swapped in the
+    // same commit, so focus moves once the commit is done.
+    return () => {
+      if (!element?.contains(document.activeElement)) return;
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        const target =
+          opener.current instanceof HTMLElement && opener.current.isConnected
+            ? opener.current
+            : document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]');
+        target?.focus();
+      });
+    };
   }, []);
   useEffect(() => {
     const resize = () => setHeight((current) => clampHeight(current));
@@ -127,6 +144,7 @@ export default function TerminalDrawer({
   };
   return (
     <section
+      ref={region}
       aria-label="Terminal"
       className="relative flex shrink-0 flex-col border-t border-border bg-card"
       style={{ height }}

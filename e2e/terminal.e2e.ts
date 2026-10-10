@@ -197,6 +197,51 @@ test("switching threads retains each shell, and clipboard paste reaches the term
   }
 });
 
+test("focus goes back to the Terminal button when the drawer closes or leaves with focus", async () => {
+  const { page } = tondo;
+  const isMac = process.platform === "darwin";
+  const opener = page.getByRole("button", { name: "Terminal", exact: true });
+  const drawer = page.getByRole("region", { name: "Terminal", exact: true });
+  const input = page.locator(".xterm-helper-textarea");
+  await opener.click();
+  await command("printf 'FOCUS_%s\\n' READY");
+  await expect(output()).toContainText("FOCUS_READY");
+  // On Linux, Ctrl+K inside xterm belongs to the shell, so the palette opens
+  // from the drawer's resize grip there.
+  const inside = isMac ? input : page.getByRole("separator", { name: "Resize terminal" });
+  await inside.focus();
+  await page.keyboard.press("ControlOrMeta+k");
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  await expect(palette.getByRole("combobox", { name: "Search" })).toBeFocused();
+  await page.keyboard.type("Close terminal");
+  await expect(palette.getByRole("option", { selected: true })).toContainText("Close terminal");
+  await page.keyboard.press("Enter");
+  await expect(drawer).toBeHidden();
+  await expect(opener).toBeFocused();
+
+  // A draft keeps this thread from being forgotten as unused when Mod+N leaves it.
+  await composer(page).pressSequentially("keep");
+  await page.keyboard.press("ControlOrMeta+n");
+  await expect(threadRows(page)).toHaveCount(2);
+  await waitForPi(page);
+  await opener.click();
+  await command("printf 'JUMP_%s\\n' READY");
+  await expect(output()).toContainText("JUMP_READY");
+  const other = await threadRows(page).evaluateAll((rows) =>
+    rows.findIndex((row) => !row.hasAttribute("aria-current")),
+  );
+  await input.focus();
+  await page.keyboard.press(`ControlOrMeta+${other + 1}`);
+  if (isMac) {
+    await expect(drawer).toBeHidden();
+    await expect(opener).toBeFocused();
+  } else {
+    // Linux leaves Ctrl+1..9 to the shell, so the terminal keeps focus.
+    await expect(input).toBeFocused();
+    await expect(drawer).toBeVisible();
+  }
+});
+
 test("the terminal still works when WebGL is unavailable", async () => {
   const { page } = tondo;
   await page.addInitScript(() => {
