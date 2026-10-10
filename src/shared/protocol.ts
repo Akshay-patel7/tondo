@@ -53,6 +53,12 @@ export interface SlashCommand {
   readonly source: SlashCommandSource;
 }
 
+/** A sign-in saved in pi's auth.json. Only the provider and the kind, never a token or key. */
+export interface PiAccount {
+  readonly provider: string;
+  readonly type: "oauth" | "api_key";
+}
+
 /** A terminal command as the page sends it. A login terminal can name the provider pi signs in to. */
 export type TerminalRequest =
   | Exclude<TerminalCommand, { type: "terminal-open" }>
@@ -325,6 +331,8 @@ export type ClientMessage = Versioned<
   | { type: "retry-pi" }
   /** Answered with pi-config-files: pi's global files, and the thread's project's if it names one. */
   | { type: "get-pi-config-files"; threadId: string | null }
+  /** Answered with pi-accounts: the sign-ins in pi's auth.json. */
+  | { type: "get-pi-accounts" }
 >;
 
 /** What the host sends the page. */
@@ -386,6 +394,8 @@ export type HostMessage = Versioned<
   /** The pi Tondo runs, sent to each new port and whenever Tondo looks for pi again. */
   | { type: "pi-env"; pi: PiDiscovery }
   | { type: "pi-config-files"; files: readonly SettingsFile[] }
+  /** `error` says why Tondo couldn't read pi's auth.json. It never quotes the file. */
+  | { type: "pi-accounts"; accounts: readonly PiAccount[]; error: string | null }
 >;
 
 /**
@@ -758,6 +768,7 @@ export function parseClientMessage(data: unknown): ParseResult {
     }
     case "choose-pi-path":
     case "retry-pi":
+    case "get-pi-accounts":
       return exactly(message, { v, type });
     case "get-pi-config-files": {
       if (threadId !== null) {

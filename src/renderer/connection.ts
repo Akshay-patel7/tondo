@@ -21,6 +21,7 @@ import {
   type DialogAnswer,
   type HostMessage,
   type OpenThread,
+  type PiAccount,
   type PiDiscovery,
   type PiStatus,
   type SettingsFile,
@@ -56,6 +57,12 @@ export const useHost = create<{
   piEnv: PiDiscovery | null;
   /** pi's config files, or null until requestPiConfigFiles is answered. */
   piConfigFiles: readonly SettingsFile[] | null;
+  /** The sign-ins in pi's auth.json, or null until requestPiAccounts is answered. */
+  piAccounts: {
+    readonly accounts: readonly PiAccount[];
+    /** Why the host couldn't read them. */
+    readonly error: string | null;
+  } | null;
 }>()(() => ({
   connection: "connecting",
   thread: null,
@@ -66,6 +73,7 @@ export const useHost = create<{
   settingsError: null,
   piEnv: null,
   piConfigFiles: null,
+  piAccounts: null,
 }));
 
 export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => ({
@@ -304,6 +312,9 @@ function receive(message: HostMessage): void {
       break;
     case "pi-config-files":
       useHost.setState({ piConfigFiles: message.files });
+      break;
+    case "pi-accounts":
+      useHost.setState({ piAccounts: { accounts: message.accounts, error: message.error } });
       break;
     case "pong":
       break;
@@ -561,6 +572,12 @@ export function retryPi(): void {
 /** Asks for pi's config files: the global ones, and the shown thread's project's. */
 export function requestPiConfigFiles(): void {
   send({ v, type: "get-pi-config-files", threadId: shownId() ?? null });
+}
+
+/** Asks for the sign-ins in pi's auth.json. They read as loading until the host answers. */
+export function requestPiAccounts(): void {
+  useHost.setState({ piAccounts: null });
+  send({ v, type: "get-pi-accounts" });
 }
 
 /** Shows a file the host offered in Finder. */

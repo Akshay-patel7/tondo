@@ -77,6 +77,7 @@ describe("parseClientMessage", () => {
       { v, type: "retry-pi" },
       { v, type: "get-pi-config-files", threadId: null },
       { v, type: "get-pi-config-files", threadId },
+      { v, type: "get-pi-accounts" },
       { v, type: "terminal-open", threadId, kind: "login", provider: "anthropic" },
       { v, type: "terminal-open", threadId, kind: "login", provider: "GitHub Copilot" },
     ]) {
@@ -365,8 +366,14 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 11, which added login providers", () => {
+  it("speaks version 11, which added accounts and login providers", () => {
     expect(PROTOCOL_VERSION).toBe(11);
+  });
+
+  it("rejects get-pi-accounts with any field besides its type", () => {
+    expect(rejection({ v, type: "get-pi-accounts", threadId: "t" })).toBe(
+      'get-pi-accounts: unexpected field "threadId"',
+    );
   });
 
   it("takes a provider only for a login terminal, and only a plain provider name", () => {

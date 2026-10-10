@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HostConfig, PiDiscovery, SettingsFile, TrustInfo } from "../shared/protocol";
 import type { SettingsPatch } from "../shared/settings";
+import { readPiAccounts, type PiAccounts } from "./accounts";
 import { findPi, PiNotFoundError } from "./findPi";
 import type { TerminalKind } from "../shared/terminal";
 import type { TerminalLaunch } from "./terminals";
@@ -192,6 +193,13 @@ export class Supervisor {
       ...(cwd === null ? [] : [["Project", path.join(cwd, ".pi", "settings.json")] as const]),
     ];
     return files.map(([scope, file]) => ({ scope, path: file, exists: existsSync(file) }));
+  }
+
+  /** The sign-ins in the auth.json of the pi agent folder login terminals use. */
+  async piAccounts(): Promise<PiAccounts> {
+    const env = piEnv(await this.captureLoginEnv(), this.config);
+    const home = env.HOME || os.homedir();
+    return readPiAccounts(piAgentDir(home, env, home));
   }
 
   private get settingsFile(): string {

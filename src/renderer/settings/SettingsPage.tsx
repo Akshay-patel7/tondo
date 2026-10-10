@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Cpu,
   Keyboard,
+  KeyRound,
   Monitor,
   Moon,
   SquareTerminal,
@@ -32,6 +33,7 @@ import {
 } from "../ui/number-field";
 import { ScrollArea } from "../ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { AccountsSettings } from "./AccountsSettings";
 import { PiSettings } from "./PiSettings";
 import { Loading, SectionHeading, SettingsGroup, SettingsRow } from "./rows";
 import { ShortcutSettings } from "./ShortcutSettings";
@@ -44,6 +46,7 @@ const SECTIONS: readonly {
 }[] = [
   { id: "appearance", label: "Appearance", icon: SunMoon },
   { id: "pi", label: "pi", icon: SquareTerminal },
+  { id: "accounts", label: "Accounts", icon: KeyRound },
   { id: "threads", label: "Threads", icon: Cpu },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
 ];
@@ -160,6 +163,8 @@ function Section({ section }: { section: SettingsSection }) {
       return <AppearanceSettings />;
     case "pi":
       return <PiSettings />;
+    case "accounts":
+      return <AccountsSettings />;
     case "threads":
       return <ThreadSettings />;
     case "shortcuts":
