@@ -1,5 +1,6 @@
 import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { READY_MARK } from "../src/shared/ready";
@@ -7,7 +8,19 @@ import { READY_MARK } from "../src/shared/ready";
 const repoRoot = path.resolve(__dirname, "..");
 // A dev server URL would make the app skip the build under test, and
 // ELECTRON_RUN_AS_NODE would start Electron as plain Node.
-const UNSET_VARIABLES = new Set(["ELECTRON_RENDERER_URL", "ELECTRON_RUN_AS_NODE"]);
+const UNSET_VARIABLES = new Set(["ELECTRON_RENDERER_URL", "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"]);
+
+/**
+ * A packaged executable to test instead of `electron .`, such as
+ * dist/e2e/mac-arm64/Tondo.app/Contents/MacOS/Tondo. A packaged app would
+ * otherwise find your real pi, so it runs with a scratch HOME and agent folder.
+ */
+const PACKAGED_EXECUTABLE = process.env.TONDO_E2E_EXECUTABLE || undefined;
+
+/** Where `settings.json` points pi when a packaged test sets no `piPath`: a file that doesn't exist. */
+function missingPi(scratch: string): string {
+  return path.join(scratch, "no-pi", "pi");
+}
 
 export interface Tondo {
   app: ElectronApplication;
@@ -42,17 +55,42 @@ export async function launchTondo({
   profileDir: savedProfile,
 }: LaunchOptions = {}): Promise<Tondo> {
   const profileDir = savedProfile ?? (await mkdtemp(path.join(tmpdir(), "tondo-e2e-")));
-  if (settings) await writeFile(path.join(profileDir, "settings.json"), JSON.stringify(settings));
+  const scratch = PACKAGED_EXECUTABLE ? await mkdtemp(path.join(tmpdir(), "tondo-e2e-run-")) : "";
+  const settingsFile = path.join(profileDir, "settings.json");
+  if (PACKAGED_EXECUTABLE && (settings || !existsSync(settingsFile))) {
+    await writeFile(settingsFile, JSON.stringify({ piPath: missingPi(scratch), ...settings }));
+  } else if (settings) {
+    await writeFile(settingsFile, JSON.stringify(settings));
+  }
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !UNSET_VARIABLES.has(name)) env[name] = value;
+  }
+  if (PACKAGED_EXECUTABLE) {
+    await mkdir(path.join(scratch, "home"));
+    Object.assign(env, {
+      HOME: path.join(scratch, "home"),
+      PI_CODING_AGENT_DIR: path.join(scratch, "pi-agent"),
+      CONTEXT_MODE_DATA_DIR: path.join(scratch, "context-mode"),
+      TONDO_DISABLE_UPDATES: "1",
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      ELECTRON_ENABLE_LOGGING: "1",
+    });
   }
   Object.assign(env, extraEnv);
   env.TONDO_USER_DATA_DIR = profileDir;
 
   const launchedAt = Date.now();
-  const args = exposeGc ? ["--js-flags=--expose-gc", "."] : ["."];
-  const app = await electron.launch({ args, cwd: repoRoot, env });
+  const flags = exposeGc ? ["--js-flags=--expose-gc"] : [];
+  // Without this, the cookie-encryption fuse adds "Tondo Safe Storage" to your login keychain.
+  const packagedFlags = process.platform === "darwin" ? ["--use-mock-keychain"] : [];
+  const app = PACKAGED_EXECUTABLE
+    ? await electron.launch({
+        executablePath: PACKAGED_EXECUTABLE,
+        args: [...packagedFlags, ...flags],
+        env,
+      })
+    : await electron.launch({ args: [...flags, "."], cwd: repoRoot, env });
   const page = await app.firstWindow();
   await page.waitForFunction((mark) => performance.getEntriesByName(mark).length > 0, READY_MARK);
 
@@ -65,6 +103,7 @@ export async function launchTondo({
     close() {
       closing ??= (async () => {
         await app.close();
+        if (scratch) await rm(scratch, { recursive: true, force: true });
         if (savedProfile === undefined) await rm(profileDir, { recursive: true, force: true });
       })();
       return closing;
