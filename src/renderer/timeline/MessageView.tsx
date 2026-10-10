@@ -6,6 +6,7 @@ import { outputText } from "../tools/model";
 import { OutputView } from "../tools/OutputView";
 import { ToolCard } from "../tools/ToolCard";
 import { ImagePreview } from "../composer/ImagePreview";
+import { REMARK_PLUGINS } from "./reuseParses";
 
 /** Code blocks are highlighted by Shiki with its JavaScript regex engine, so no WASM. */
 const MARKDOWN_PLUGINS = { code };
@@ -95,7 +96,11 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
       );
     case "text":
       return (
-        <Streamdown plugins={MARKDOWN_PLUGINS} isAnimating={streaming}>
+        <Streamdown
+          plugins={MARKDOWN_PLUGINS}
+          remarkPlugins={REMARK_PLUGINS}
+          isAnimating={streaming}
+        >
           {block.text}
         </Streamdown>
       );
