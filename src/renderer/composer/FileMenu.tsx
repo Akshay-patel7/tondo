@@ -51,7 +51,7 @@ export function FileMenu({
           onPointerMove={() => onHighlight(row)}
           onClick={() => onPick(path)}
           title={path}
-          className={`truncate rounded-control px-2.5 py-1 text-sm ${row === highlighted ? "bg-accent text-accent-foreground" : ""}`}
+          className="truncate rounded-control px-2.5 py-1 text-sm aria-selected:bg-accent aria-selected:text-accent-foreground"
         >
           {path}
         </div>

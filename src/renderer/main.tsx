@@ -27,3 +27,18 @@ requestAnimationFrame(() => {
     console.info(READY_MARK);
   }, 0);
 });
+
+// Main switches the theme through the page's color scheme. The change event
+// comes before the frame that restyles the page, so theme-switching (index.css)
+// is on for that frame and comes off in the next one, as T3 Code's applyTheme
+// does. A second switch before then keeps it on.
+let themeSwitchFrame = 0;
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  document.documentElement.classList.add("theme-switching");
+  cancelAnimationFrame(themeSwitchFrame);
+  themeSwitchFrame = requestAnimationFrame(() => {
+    themeSwitchFrame = requestAnimationFrame(() => {
+      document.documentElement.classList.remove("theme-switching");
+    });
+  });
+});

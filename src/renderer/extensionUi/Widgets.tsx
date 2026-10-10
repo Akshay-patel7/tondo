@@ -12,7 +12,7 @@ export function Widgets({ placement }: { placement: WidgetPlacement }) {
   return (
     <div
       aria-label={placement === "aboveEditor" ? "Extension widgets" : "Extension widgets below"}
-      className={`flex max-h-48 flex-col gap-1.5 overflow-auto rounded-control border border-border bg-muted px-3 py-2 font-mono text-xs whitespace-pre text-muted-foreground ${
+      className={`flex max-h-48 flex-col gap-1.5 overflow-auto rounded-control border border-border bg-muted px-4 py-2 font-mono text-xs whitespace-pre text-muted-foreground ${
         placement === "aboveEditor" ? "mb-2" : "mt-2"
       }`}
     >

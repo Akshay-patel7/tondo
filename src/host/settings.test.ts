@@ -11,7 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readSettings, saveTrustAnswer } from "./settings";
+import { DEFAULT_SETTINGS } from "../shared/settings";
+import { readSettings, saveTrustAnswer, updateSettings } from "./settings";
+
+const DEFAULTS = { ...DEFAULT_SETTINGS, projectTrust: {} };
 
 let dir: string;
 let file: string;
@@ -23,22 +26,39 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("readSettings", () => {
   it("holds the defaults when the file doesn't exist", () => {
-    expect(readSettings(file)).toEqual({ projectTrust: {} });
+    expect(readSettings(file)).toEqual({
+      piPath: null,
+      theme: "system",
+      pool: { maxLive: 4, idleMinutes: 10 },
+      shortcuts: {},
+      projectTrust: {},
+    });
   });
 
-  it("reads the pi path and your trust answers, and ignores keys it doesn't know", () => {
+  it("reads every setting, and ignores keys it doesn't know", () => {
     writeFileSync(
       file,
       JSON.stringify({
         piPath: "/opt/pi/bin/pi",
+        theme: "dark",
+        pool: { maxLive: 12, idleMinutes: 240 },
+        shortcuts: { palette: "mod+shift+p", settings: null },
         projectTrust: { "/work/a": true, "/work/b": false },
         later: 1,
       }),
     );
     expect(readSettings(file)).toEqual({
       piPath: "/opt/pi/bin/pi",
+      theme: "dark",
+      pool: { maxLive: 12, idleMinutes: 240 },
+      shortcuts: { palette: "mod+shift+p", settings: null },
       projectTrust: { "/work/a": true, "/work/b": false },
     });
+  });
+
+  it("fills in a pool setting the file leaves out", () => {
+    writeFileSync(file, JSON.stringify({ pool: { maxLive: 1 } }));
+    expect(readSettings(file).pool).toEqual({ maxLive: 1, idleMinutes: 10 });
   });
 
   it.each([
@@ -51,6 +71,23 @@ describe("readSettings", () => {
       "has a projectTrust that isn't an object of true and false answers",
     ],
     ['{"projectTrust":[]}', "has a projectTrust that isn't an object of true and false answers"],
+    ['{"theme":"blue"}', `has a theme that isn't system, light or dark: "blue"`],
+    ['{"pool":4}', "has a pool that isn't an object"],
+    ['{"pool":{"maxLive":0}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 0"],
+    ['{"pool":{"maxLive":13}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 13"],
+    ['{"pool":{"maxLive":2.5}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 2.5"],
+    [
+      '{"pool":{"idleMinutes":0}}',
+      "has a pool.idleMinutes that isn't a whole number from 1 to 240: 0",
+    ],
+    [
+      '{"pool":{"idleMinutes":241}}',
+      "has a pool.idleMinutes that isn't a whole number from 1 to 240: 241",
+    ],
+    ['{"shortcuts":[]}', "has shortcuts that aren't an object"],
+    ['{"shortcuts":{"quit":"mod+q"}}', `has a shortcut for "quit", which isn't a command`],
+    ['{"shortcuts":{"palette":"mod+"}}', `has a palette shortcut that isn't one: "mod+"`],
+    ['{"shortcuts":{"palette":5}}', "has a palette shortcut that isn't one: 5"],
   ])("names the file and the problem for %s", (content, problem) => {
     writeFileSync(file, content);
     expect(() => readSettings(file)).toThrow(`Tondo's settings file ${file} ${problem}`);
@@ -59,6 +96,70 @@ describe("readSettings", () => {
   it("passes on errors other than a missing file", () => {
     mkdirSync(file);
     expect(() => readSettings(file)).toThrow(/EISDIR/);
+  });
+});
+
+describe("updateSettings", () => {
+  it("keeps keys it doesn't know and your trust answers", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({ projectTrust: { "/work/a": true }, later: { kept: 1 }, pool: { extra: 2 } }),
+    );
+
+    const settings = updateSettings(file, { theme: "light", pool: { maxLive: 2 } });
+
+    expect(settings).toEqual({
+      ...DEFAULTS,
+      theme: "light",
+      pool: { maxLive: 2, idleMinutes: 10 },
+      projectTrust: { "/work/a": true },
+    });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      projectTrust: { "/work/a": true },
+      later: { kept: 1 },
+      pool: { extra: 2, maxLive: 2 },
+      theme: "light",
+    });
+    expect(readdirSync(dir)).toEqual(["settings.json"]);
+  });
+
+  it("saves a shortcut in canonical form, disables one with null, and restores the default", () => {
+    updateSettings(file, { shortcuts: { palette: "shift+mod+p", settings: null } });
+    expect(readSettings(file).shortcuts).toEqual({ palette: "mod+shift+p", settings: null });
+
+    updateSettings(file, { shortcuts: { palette: "default", settings: "default" } });
+    expect(readSettings(file).shortcuts).toEqual({});
+  });
+
+  it("sets the pi path, and removes the key when you set it to null", () => {
+    writeFileSync(file, JSON.stringify({ theme: "dark" }));
+    updateSettings(file, { piPath: "/opt/pi/bin/pi" });
+    expect(readSettings(file).piPath).toBe("/opt/pi/bin/pi");
+
+    updateSettings(file, { piPath: null });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ theme: "dark" });
+  });
+
+  it.each([
+    [{ piPath: "bin/pi" }, `has a piPath that isn't an absolute path: "bin/pi"`],
+    [{ pool: { idleMinutes: 0 } }, "has a pool.idleMinutes that isn't a whole number"],
+    [{ shortcuts: { palette: "mod+nope" } }, `has a palette shortcut that isn't one`],
+  ])("refuses %j and leaves the file byte for byte as it was", (patch, problem) => {
+    const content = '{ "theme": "dark",\n"later": true }';
+    writeFileSync(file, content);
+
+    expect(() => updateSettings(file, patch)).toThrow(
+      `Tondo didn't save that change. It ${problem}`,
+    );
+    expect(readFileSync(file, "utf8")).toBe(content);
+    expect(readdirSync(dir)).toEqual(["settings.json"]);
+  });
+
+  it("names the file when it was already invalid", () => {
+    writeFileSync(file, '{"theme":"blue"}');
+    expect(() => updateSettings(file, { pool: { maxLive: 2 } })).toThrow(
+      `Tondo's settings file ${file} has a theme that isn't system, light or dark`,
+    );
   });
 });
 
@@ -72,7 +173,7 @@ describe("saveTrustAnswer", () => {
 
     saveTrustAnswer(file, link, true);
 
-    expect(readSettings(file)).toEqual({ projectTrust: { [project]: true } });
+    expect(readSettings(file)).toEqual({ ...DEFAULTS, projectTrust: { [project]: true } });
   });
 
   it("keeps the rest of the file, keys it doesn't know included", () => {

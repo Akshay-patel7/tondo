@@ -16,16 +16,18 @@ const PADDING_Y = 8;
  * of any length costs the same to draw. Lines don't wrap. With `follow`, the view opens at
  * the end and stays there as the text grows, until you scroll up. It keeps
  * following after `follow` turns off, so the last update of a finished
- * command still shows.
+ * command still shows. `label` names the box for screen readers.
  */
 export function OutputView({
   text,
   follow = false,
   tone = "normal",
+  label = "Output",
 }: {
   text: string;
   follow?: boolean;
   tone?: "normal" | "error";
+  label?: string;
 }) {
   const lines = displayLines(text);
   const widest = lines.reduce((max, line) => Math.max(max, line.length), 0);
@@ -50,8 +52,12 @@ export function OutputView({
   });
 
   return (
+    // The focus ring is inset, like ScrollArea's, so the card's body can clip
+    // to the card's rounded corners without cutting it off.
     <div
       ref={scroller}
+      role="region"
+      aria-label={label}
       tabIndex={0}
       onScroll={(event) => {
         const element = event.currentTarget;
@@ -60,7 +66,7 @@ export function OutputView({
         setScrollTop(element.scrollTop);
       }}
       style={{ height: viewHeight + 2 * PADDING_Y }}
-      className={`overflow-auto px-3 py-2 font-mono text-xs leading-[18px] outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`overflow-auto px-3 py-2 font-mono text-xs leading-[18px] outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset ${
         tone === "error" ? "text-destructive" : ""
       }`}
     >

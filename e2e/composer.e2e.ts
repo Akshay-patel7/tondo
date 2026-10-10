@@ -204,7 +204,11 @@ test("reopening file completion reads new files, and a non-Git project says why 
   await expect(menu).toBeHidden();
   execFileSync("git", ["init", "-q"], { cwd: project });
   writeFileSync(path.join(project, "new.txt"), "");
-  await composer(page).fill("");
+  // fill("") selects the DOM and presses Delete, which can reach ProseMirror
+  // before the selectionchange event and delete nothing. Select in the editor.
+  await composer(page).press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await expectDraft(page, "");
   await composer(page).press("Shift+Enter");
   await page.keyboard.type("@new");
   await expect(menu.getByRole("option")).toHaveText(["new.txt"]);

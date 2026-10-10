@@ -58,11 +58,25 @@ describe("parseClientMessage", () => {
       { v, type: "export", threadId, path: "" },
       { v, type: "export", threadId, path: "notes/thread.html" },
       { v, type: "session-info", threadId },
-      { v, type: "settings-files", threadId },
       { v, type: "trust-status", threadId },
       { v, type: "reload", threadId },
       { v, type: "reveal", path: "/tmp/pi-session.html" },
       { v, type: "ping", id: 0 },
+      { v, type: "set-settings", patch: {} },
+      { v, type: "set-settings", patch: { theme: "dark" } },
+      { v, type: "set-settings", patch: { pool: { maxLive: 1, idleMinutes: 240 } } },
+      { v, type: "set-settings", patch: { pool: { maxLive: 12 } } },
+      {
+        v,
+        type: "set-settings",
+        patch: { shortcuts: { palette: "mod+shift+p", settings: null, "new-thread": "default" } },
+      },
+      { v, type: "set-settings", patch: { piPath: "/opt/pi/bin/pi" } },
+      { v, type: "set-settings", patch: { piPath: null } },
+      { v, type: "choose-pi-path" },
+      { v, type: "retry-pi" },
+      { v, type: "get-pi-config-files", threadId: null },
+      { v, type: "get-pi-config-files", threadId },
     ]) {
       const result = parseClientMessage(message);
       expect(result).toEqual({ ok: true, message });
@@ -129,7 +143,6 @@ describe("parseClientMessage", () => {
         "restart",
         "copy-reply",
         "session-info",
-        "settings-files",
         "trust-status",
         "reload",
       ]) {
@@ -307,6 +320,46 @@ describe("parseClientMessage", () => {
     );
     expect(rejection({ v, type: "add-project", folder: "/etc" })).toBe(
       'add-project: unexpected field "folder"',
+    );
+  });
+
+  it("copies a settings patch rather than passing the page's object on", () => {
+    const pool = { maxLive: 3 };
+    const result = parseClientMessage({ v, type: "set-settings", patch: { pool } });
+    if (!result.ok || result.message.type !== "set-settings") throw new Error("rejected");
+    expect(result.message.patch.pool).toEqual(pool);
+    expect(result.message.patch.pool).not.toBe(pool);
+  });
+
+  it.each([
+    [{ patch: null }, "set-settings: patch must be an object"],
+    [{ patch: [] }, "set-settings: patch must be an object"],
+    [{ patch: { language: "en" } }, 'set-settings: patch has an unexpected field "language"'],
+    [{ patch: { theme: "blue" } }, "set-settings: theme must be"],
+    [{ patch: { pool: 4 } }, "set-settings: pool must be an object"],
+    [{ patch: { pool: { maxLive: 0 } } }, "set-settings: pool.maxLive is out of range: 0"],
+    [{ patch: { pool: { maxLive: 13 } } }, "set-settings: pool.maxLive is out of range: 13"],
+    [{ patch: { pool: { maxLive: 1.5 } } }, "set-settings: pool.maxLive is out of range"],
+    [{ patch: { pool: { idleMinutes: 0 } } }, "set-settings: pool.idleMinutes is out of range"],
+    [{ patch: { pool: { idleMinutes: 241 } } }, "set-settings: pool.idleMinutes is out of range"],
+    [{ patch: { pool: { idleMs: 5 } } }, 'set-settings: pool has an unexpected field "idleMs"'],
+    [{ patch: { shortcuts: [] } }, "set-settings: shortcuts must be an object"],
+    [{ patch: { shortcuts: { quit: "mod+q" } } }, "set-settings: shortcuts has an unknown command"],
+    [{ patch: { shortcuts: { palette: "mod+" } } }, "set-settings: shortcuts.palette must be"],
+    [{ patch: { shortcuts: { palette: 5 } } }, "set-settings: shortcuts.palette must be"],
+    [{ patch: { piPath: "" } }, "set-settings: piPath must be a path or null"],
+    [{ patch: { piPath: 5 } }, "set-settings: piPath must be a path or null"],
+    [{ patch: {}, extra: 1 }, 'set-settings: unexpected field "extra"'],
+  ])("rejects the settings change %j", (fields, error) => {
+    expect(rejection({ v, type: "set-settings", ...fields })).toContain(error);
+  });
+
+  it("rejects pi messages with fields they don't have or a bad thread id", () => {
+    expect(rejection({ v, type: "choose-pi-path", path: "/x" })).toContain("unexpected field");
+    expect(rejection({ v, type: "retry-pi", threadId: "t" })).toContain("unexpected field");
+    expect(rejection({ v, type: "get-pi-config-files" })).toContain("threadId must be");
+    expect(rejection({ v, type: "get-pi-config-files", threadId: 5 })).toContain(
+      "threadId must be",
     );
   });
 

@@ -12,7 +12,6 @@ import {
   type HostToMainMessage,
   type MainToHostMessage,
 } from "../shared/protocol";
-import { POOL_LIMITS } from "./pool";
 import { watchCheckpointGroups } from "./checkpoints";
 import { Store } from "./store";
 import { Supervisor } from "./supervisor";
@@ -97,9 +96,11 @@ function start(): void {
     },
     store,
     supervisor,
-    limits: { ...POOL_LIMITS, ...config.pool },
+    poolOverride: config.pool ?? {},
     send,
     chooseFolder: () => tellMain({ type: "choose-project" }),
+    choosePi: () => tellMain({ type: "choose-pi" }),
+    setTheme: (theme) => tellMain({ type: "theme", theme }),
     attention: (attention) => tellMain({ type: "attention", ...attention }),
     copy: (text) => tellMain({ type: "copy", text }),
     reveal: (file) => tellMain({ type: "reveal", path: file }),
@@ -119,6 +120,9 @@ function start(): void {
       }
       case "project-chosen":
         workspace.projectChosen(message.folder);
+        break;
+      case "pi-chosen":
+        workspace.piChosen(message.file);
         break;
       case "open-thread":
         workspace.openThread(message.threadId);
@@ -144,6 +148,8 @@ function start(): void {
         break;
     }
   });
+  // The pool and the window's theme follow the settings before any page connects.
+  workspace.applySettings();
   tellMain({ type: "ready" });
   void workspace.start();
 }

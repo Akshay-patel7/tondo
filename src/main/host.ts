@@ -8,6 +8,7 @@
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import {
   MessageChannelMain,
+  nativeTheme,
   utilityProcess,
   type UtilityProcess,
   type WebContents,
@@ -30,6 +31,8 @@ export interface HostOptions {
   config: HostConfig;
   /** Shows the folder dialog. Resolves with the folder, or null if you cancel. */
   chooseFolder: () => Promise<string | null>;
+  /** Shows the file dialog for pi. Resolves with the file, or null if you cancel. */
+  choosePiFile: () => Promise<string | null>;
   /** Raises a notification about a thread that needs you. */
   attention: (attention: Attention) => void;
   /** Puts text on the clipboard. */
@@ -57,7 +60,7 @@ export interface Host {
 }
 
 export function startHost(options: HostOptions): Host {
-  const { entry, config, chooseFolder, onOutput } = options;
+  const { entry, config, chooseFolder, choosePiFile, onOutput } = options;
   let child: UtilityProcess | undefined;
   let ready = false;
   let page: WebContents | undefined;
@@ -125,6 +128,19 @@ export function startHost(options: HostOptions): Host {
             if (child !== current) return;
             current.postMessage({ type: "project-chosen", folder } satisfies MainToHostMessage);
           });
+      } else if (message.type === "choose-pi") {
+        void choosePiFile()
+          .catch((error: unknown) => {
+            console.error("Tondo couldn't show the file dialog for pi:", error);
+            return null;
+          })
+          .then((file) => {
+            if (child !== current) return;
+            current.postMessage({ type: "pi-chosen", file } satisfies MainToHostMessage);
+          });
+      } else if (message.type === "theme") {
+        // Electron then sets prefers-color-scheme in the page and tells the window.
+        nativeTheme.themeSource = message.theme;
       }
     });
     current.once("exit", (code) => {

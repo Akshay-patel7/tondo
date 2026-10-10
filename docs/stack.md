@@ -117,6 +117,24 @@ The others:
 - **@pierre/diffs 1.5** for diffs. T3 Code uses it. Its worker pool (`@pierre/diffs/worker`) runs syntax highlighting for diffs and files in web workers, off the UI thread. Tondo runs 1.5.1, published 2026-09-25, with a pool of 2 workers on Shiki's JavaScript regex engine, the pool's default. The page loads @pierre/diffs and starts the pool only when a tool card first shows a diff or a file, and the pool stops 30 s after the last one closes. 1.5.1 accepts `@shikijs/transformers` 3 or 4, and 4.4.3 brought a second copy of Shiki's core, so an override in `pnpm-workspace.yaml` pins it to 3.23.0. It builds each diff's rows as HTML with style attributes for token colors and puts its theme in a `<style>` element in the diff's shadow root. Tondo's CSP blocked both until Stage 6 allowed inline styles (`style-src 'self' 'unsafe-inline'`), and the workers need `worker-src 'self'`.
 - **TipTap 3** for the composer. Stage 8 pins 3.31.4 and follows T3's plain mode: one paragraph per literal newline, with Document, Paragraph, Text and UndoRedo only. File and slash completion insert text rather than hiding it in rich-text chips. Images live outside the editor document, and a separate SQLite table keeps their bytes out of text-draft saves and sidebar reads.
 - **Base UI 1.8, shadcn 4.21 and Tailwind CSS 4.3** for components and styling. T3 Code uses Base UI and Tailwind, and shadcn can generate its components on Base UI. Install `@base-ui/react`. `@base-ui-components/react` is the deprecated old name.
+- **Stage 12's component layer.** The 25 components in `src/renderer/ui` are adapted from shadcn 4.21.4's `base-nova` output, which was generated in a scratch folder. shadcn itself isn't installed. The new devDependencies are exact versions, each published well over a day before install:
+
+  | Package | Version | Published | Used for |
+  |---|---|---|---|
+  | @base-ui/react | 1.8.0 | 2026-09-04 | The unstyled primitives under every ui component. 1.9.0 came out 2026-10-09, too new. |
+  | class-variance-authority | 0.7.1 | 2024-11-26 | Variants and sizes. |
+  | clsx | 2.1.1 | 2024-04-23 | `cn` in `src/renderer/lib/cn.ts`. |
+  | tailwind-merge | 3.7.0 | 2026-09-12 | `cn`, extended with Tondo's token names so conflicting classes resolve. |
+  | lucide-react | 1.52.0 | 2026-10-04 | Icons, imported by name. |
+
+  Some parts of shadcn are left out:
+
+  - The `shadcn/tailwind.css` import, which would make shadcn a runtime dependency. Its variants are inlined in `index.css`.
+  - tw-animate-css, backdrop blur and the TooltipProvider.
+  - `command`, which needs cmdk and Radix. The palette uses Base UI's combobox.
+  - `sonner`, which needs next-themes.
+
+  The lint rule `tondo/no-restyle` (`scripts/lint/no-restyle.mjs`) follows `@shadcn/lint`'s `no-restyle`. @shadcn/lint 0.2.0 runs under oxlint 1.85's JS plugins, but it finds ui components by import alias and misses Tondo's relative imports.
 - **zustand 5** for state. T3 Code uses it. Its stores also work outside React, so the MessagePort handler can write to them directly. Streamed text should be buffered and committed once per animation frame.
 - **@xterm/xterm 6.0.0 and node-pty 1.1.0** for the integrated terminal. Stage 10 uses Fit 0.11.0 and WebGL 0.19.0; both ran under Tondo's unchanged CSP. WebGL falls back to xterm's DOM renderer if it is unavailable or loses its context. The host loads node-pty only when a terminal opens, and the renderer loads xterm only for an open drawer. node-pty uses Node-API. Its macOS prebuild spawned and resized a shell inside Electron 44.4.5's utility process without a rebuild. Linux builds it with node-gyp. The 1.1.0 package ships its macOS `spawn-helper` without the execute bit ([node-pty#850](https://github.com/microsoft/node-pty/issues/850)); Tondo's `scripts/prepare-pty.mjs` fixes it at install time. node-pty is a runtime dependency so electron-vite leaves its native binary external to the host bundle.
 - **Avoid @virtuoso.dev/message-list.** Its license is commercial. react-virtuoso itself is MIT.
@@ -372,6 +390,173 @@ After-stream total samples, in MiB:
 An exact two-sided permutation test over all 2,704,156 partitions gave p=0.000186 for the median total-after difference. All twelve fixed-build before and after readings passed their limits. Frame p95/p99 medians stayed at 10.1/10.3 ms, and input p95 stayed at 32 ms in every run. This reduces an existing Markdown rendering cost; it does not establish that Stage 11 introduced the original 1.106 MiB excess.
 
 Raw observations, footprint categories and layer captures are in `.dev/stage11-fix/`. Diagnostic changes were removed from both trees. The memory gate now asserts the existing single-thread total limits against unrounded medians. Replaying the original failed Stage 11 results through that assertion correctly failed at 511.506 MiB against 510.4 MiB. The [follow-up report](plan.md#stage-11-ci-and-memory-follow-up-2026-10-03) records both passing full performance runs and the CI fixes. The final run, after fixing late terminal exit events, is `.dev/perf/stage11-ci-terminal-2026-10-03T08-17-19-796Z/`. Its total-after medians are 461.178 MiB at 1,000 tok/s and 439.475 MiB at 200 tok/s, below 510.4 and 522.5 MiB. All eighteen checks passed, with memory compared before rounding. Input p95 is 32 ms in each streaming case, at its limit.
+
+### Stage 12 measurements
+
+The acceptance run on the final tree, `.dev/perf/2026-10-10T16-07-39/`, passed all 18 checks in 12.9 minutes. It ran in a visible window on the built-in 2x/120 Hz display, in Playwright's default light scheme, with no keyboard or mouse input during it. Medians of three runs, with the runs in brackets where a limit is close:
+
+| Metric | 1,000 tok/s | 200 tok/s | 10 streaming threads |
+|---|---|---|---|
+| Frame p95 / p99 | 9.5 / 10.3 ms | 10.0 / 10.3 ms | 10.0 / 10.3 ms |
+| Input-to-paint p95 | 24 ms (24, 24, 32) | 32 ms | 32 ms |
+| Longest time behind the end | 21 ms | 20 ms | 13.7 ms |
+| Total footprint before | 272.318 MiB (277.006, 270.725, 272.318) | 272.787 MiB (277.397, 271.521, 272.787) | 352.068 MiB |
+| Total footprint after | 418.678 MiB | 391.959 MiB | 424.803 MiB |
+| Renderer footprint before / after | 65 / 143 MiB | 66 / 136 MiB | 88 / 131 MiB |
+
+Switching to a thread whose pi is running took 55 ms (57, 54, 55), cold start 240 ms and opening a project 223 ms. The port round-trip p95 was 0.10 ms, and the 1,000- and 5,000-message snapshots took 1.5 and 6.6 ms. Terminal output sent 50 MiB in 1,885, 1,888 and 1,883 ms with no task of 100 ms or more, and in 8,125 ms at 4x. The colored 5,000-line diff showed rows in 331 ms and colors in 2,706 ms, with a longest task of 55 ms. The uncolored 10,000-line diff showed rows in 339 ms. At informational 4x slowdown, frame p95 was 25 and 17.7 ms at 1,000 and 200 tok/s, input p95 40 ms at both, and the switch 237 ms. The colored diff had one 216 ms task at 4x.
+
+The switch fell from 89.7 ms in the first run to 55 ms. The parse cache accounts for most of that: on one build, run 5d measured the switch with test flags at 81.9 ms without it and 64.8 ms with it. "The switch miss" under Real setup below has the details.
+
+The first full run, `.dev/perf/2026-10-10T11-37-30/`, came before the memory fix and the parse cache. It passed 17 checks and failed 1, in 13.0 minutes, in the same window and scheme. Medians of three runs:
+
+| Metric | 1,000 tok/s | 200 tok/s | 10 streaming threads |
+|---|---|---|---|
+| Frame p95 / p99 | 10.2 / 10.4 ms | 10.0 / 10.3 ms | 10.0 / 10.2 ms |
+| Input-to-paint p95 | 32 ms | 32 ms | 32 ms |
+| Longest time behind the end | 17.8 ms | 16.0 ms | 16.1 ms |
+| Total footprint before / after | 281.647 / 423.256 MiB | 281.615 / 398.694 MiB | 351 / 442 MiB |
+| Renderer footprint before / after | 71 / 145 MiB | 71 / 143 MiB | 94 / 147 MiB |
+
+The before-streaming medians miss the fixed 279.4 MiB limit, at both rates. The readings were 287.3, 281.4 and 281.6 MiB at 1,000 tok/s, and 281.6, 278.4 and 287.1 MiB at 200 tok/s. Stage 11's final run read 270.881 and 272.256 MiB. Against Stage 11:
+
+- The renderer rose from 66.5-67.2 to 69.9-71.3 MiB.
+- The host rose from 17.5 to 18.0 MiB.
+- The rest (main, GPU and utility processes) rose from about 186.6 to about 192.6 MiB. Two runs read about 198.
+
+The unminified renderer bundle grew from 3,282 kB to 4,061 kB. The after-stream medians fell from Stage 11's 461.178 and 439.475 MiB, but no A/B attributes that fall.
+
+#### Before-streaming memory fix
+
+Run 5c attributed the first run's miss against a Stage 11 build (146e880), with the raw data in `.dev/stage12/memory/`.
+
+- Both trees had frozen installs and their own builds.
+- Scratch copies carried byte-identical temporary footprint-category capture in `e2e/perf.ts`. The repo's copy never changed, and `git diff 146e880` over the measurement harness is empty.
+- Builds alternated in blocks of three launches, with the order reversed each round, on the built-in 2x/120 Hz display.
+
+| Before streaming, MiB | Stage 11 median | Stage 12 median | Stage 11 range | Stage 12 range |
+|---|---|---|---|---|
+| Total | 271.04 | 286.03 | 267.46–279.46 | 278.80–288.16 |
+| Renderer | 66.45 | 70.74 | 65.52–67.02 | 70.42–71.72 |
+| GPU | 138.62 | 149.31 | 135.80–146.58 | 141.50–150.75 |
+| GPU IOAccelerator (graphics) | 13.70 | 20.80 | 11.61–18.39 | 13.73–20.81 |
+| GPU IOSurface | 25.70 | 28.22 | 25.69–28.75 | 27.84–28.59 |
+| Host | 17.52 | 17.97 | 17.45–17.56 | 17.86–18.08 |
+| Main | 43.09 | 43.08 | 42.63–43.33 | 42.86–43.49 |
+
+Each column has n=12. A permutation test gave p=1.5e-4 for the difference in total medians. The main and network processes didn't move. There were two causes.
+
+- **GPU, +10.7 MiB.**
+  - The welcome screen promoted two large layers, 535x222 and 768x132 px, where Stage 11 promoted two small ones.
+  - Those layers left ANGLE Metal allocations in steps of about 2.35 MiB. The GPU process holds them for about 12 s, past the reading.
+  - The thread view's composited layers were identical in both builds.
+  - One promoted wrapper around the whole welcome brought the steps back to Stage 11's level: 0.94 to 0.22 mean steps, n=18.
+  - Playwright's click leaves the pointer on the sidebar's Add project button. Its 150 ms `transition-colors` re-rasterized the button's layer on 17 frames. Dropping that transition from the ui Button lowered GPU IOSurface in every run: 28.22 to 27.06 MiB, n=18.
+- **Renderer, +4.3 MiB: V8 +2.6, PartitionAlloc +2.0.**
+  - The unminified bundle grew from 3.28 to 4.06 MB, and the CSS from 51 to 96 kB.
+  - The page keeps its script source at two bytes a character. The bundle carries about 2,970 distinct code points above U+00FF, already in Stage 11.
+  - esbuild's `charset: 'ascii'` didn't help. Comments and regex literals kept 531 non-ASCII bytes, so the source stayed 16-bit.
+  - Minification did help. Whitespace and syntax alone lowered the renderer by 2.4 MiB.
+
+The two renderer changes together ("fixed") ran against unfixed Stage 12 over 24 alternating runs.
+
+- **Medians:** 278.81 MiB (275.47–283.74) against 282.29.
+- **p-values:** 0.001 in the Y rounds and 0.064 in the X rounds.
+- **With whitespace-only minification on top:** 276.84 MiB (273.76–279.47), p=3.0e-4.
+
+Before-streaming total samples, in MiB:
+
+- Stage 12, Y rounds: 287.51, 286.87, 287.51, 280.79, 287.47, 282.43, 279.19, 282.15, 281.41, 285.62, 284.62, 279.97.
+- Fixed, Y rounds: 283.74, 278.99, 277.58, 278.04, 280.91, 278.47, 277.94, 276.08, 278.96, 281.51, 276.40, 277.13.
+- Stage 12, X rounds: 278.63, 280.99, 279.94, 280.85, 286.66, 281.32, 287.02, 281.22, 285.52, 287.13, 277.76, 288.05.
+- Fixed, X rounds: 280.76, 281.24, 279.05, 279.24, 282.65, 281.01, 281.46, 276.65, 275.47, 276.19, 276.07, 278.66.
+
+The renderer is now minified with esbuild, decision D8. esbuild's `keepNames` was measured first and dropped: wrapping every named closure made 50 MiB of terminal output take 2.9 s instead of 1.9 s. The table shows `e2e/terminal.perf.ts` on the same tree with each renderer config, 50 MiB per run:
+
+| Renderer build | Index bundle | 1x runs | 4x |
+|---|---|---|---|
+| esbuild minify (shipped) | 1,826,676 bytes | 1,895, 1,861, 1,891 ms | 8,115 ms |
+| esbuild minify with keepNames | 1,944,201 bytes | 2,898, 2,868, 2,899 ms | 11,202 ms |
+| Whitespace and syntax only | 2,891,531 bytes | 1,864, 1,887, 1,888 ms | 8,116 ms |
+| Unminified | 4,061,164 bytes | 1,900, 1,890, 1,887 ms | 8,128 ms |
+
+In the first run, switching to a running thread took 89.7 ms, cold start 261.2 ms and opening a project 231 ms. The port round-trip p95 was 0.10 ms, and the 1,000- and 5,000-message snapshots took 1.6 and 6.8 ms. The colored 5,000-line diff showed rows in 339 ms and colors in 2,715 ms, with a longest task of 56 ms. The uncolored 10,000-line diff showed rows in 337 ms. Terminal output sent 50 MiB in 1,897, 1,888 and 1,891 ms, with no task of 100 ms or more.
+
+Scratch specs in `.dev/stage12/perf-light/` reran the terminal in each theme and checked that the drawer's background matched `--card`. In light, where xterm enforces a 4.5:1 minimum contrast, 50 MiB took 1,866, 1,883 and 1,870 ms. In dark it took 1,870, 1,882 and 1,866 ms. Neither had a task of 100 ms or more, and the 4x runs took 8,122 and 8,131 ms.
+
+At informational 4x slowdown in the first run:
+
+- Frame p95 was 26.2 and 23.1 ms at 1,000 and 200 tok/s, and p99 34.2 and 26.6 ms.
+- Input p95 was 40 ms at both, and the longest task 51 and 50 ms.
+- Switching took 380 ms.
+- The colored diff had one 217 ms task.
+
+#### Real setup
+
+On 2026-10-10 run 5b ran the built app on a sanitized copy of `~/.pi/agent`, on the same Mac (Apple M5, 24 GiB) in Dark appearance, on the built-in Retina at 2x and 120 Hz. pi was the repo's 0.87.1 with the copy's 10 packages, skills and context files loaded, and the working folder was this repo. Its seven Tondo sessions were copied into a temporary folder. Streaming used the faux provider, so no prompt reached a model. Each figure is the median of 3 runs, with the runs in brackets. `.dev/stage12/realsetup/report.md` has the full record.
+
+The copy left out:
+
+- `auth.json`, `mcp-auth.json` and `mcp-oauth/`
+- `sessions/`, `backups/`, `memory-backups/`, `crashes.json` and `tmp/`
+- every name containing `token`, `secret`, `credential` or `oauth` in any case, or `.bak`: 60 files and folders outside `npm/`. The rule also caught 110 library files in `npm/node_modules`, which were copied back so the packages could load.
+- two browser captures under `chrome-connector/har/` that held tokens, and pi-hermes-memory's lock databases
+
+In what it kept, 905 credential-like values were blanked, among them the GitHub headers, the Figma OAuth entry and the AWS env in `mcp.json` and `mcp-adapter.json`. `blanked-keys.txt` lists every key path, with no values. Three files that named `~/.pi/agent` by absolute path were rewritten to point into the copy. context-mode writes to `~/.pi/context-mode` whatever the agent folder is, so every run set `CONTEXT_MODE_DATA_DIR` inside the copy. No stdio MCP server started, and every MCP credential was blank.
+
+pi itself, started the way the host starts it and sent only `get_state`, as in Stage 3:
+
+| | Fresh session | Resumed 7.2 MB session | Stage 3 |
+|---|---|---|---|
+| Spawn to the first `get_state` reply | 963 ms (3,705, 963, 932) | 948 ms (962, 948, 943) | 1.42 s |
+| Footprint at that reply | 180 MiB (644, 178, 180) | 215 MiB (219, 215, 213) | 337 to 356 MiB |
+| Footprint after 10 s idle | 131 MiB (191, 130, 131) | 147 MiB (147, 144, 148) | 210 to 213 MiB |
+| Exit after stdin closed | 7 ms, code 0 | 22 ms, code 0 | 8 to 20 ms |
+
+As in Stage 3, the first start after copying did one-time package work, taking 3.7 s and reaching 644 MiB.
+
+The built app on the copy:
+
+| | Real setup | Budget |
+|---|---|---|
+| Cold start, launch to the window interactive | 257 ms (257, 270, 254) | 1 s |
+| Add this repo, click to its 7 sessions listed | 172 ms (169, 173, 172) | |
+| Same click to a new thread's pi ready | 1,508 ms (1,512, 1,508, 1,508) | |
+| Switch to a thread whose pi is running | 104 ms (104, 104, 108). A repeat gave 104 (104, 108, 104). | 100 ms |
+| Same, with test flags | 80 ms (80, 82, 74) | 100 ms |
+| Switch to a thread whose pi was stopped (`maxLive: 1`) | 998 ms (998, 998, 1,049) | |
+| Streaming at 1,000 tok/s, frame p95 / p99 | 10.1 / 10.3 ms | 16.7 / 33 ms |
+| Longest frame | 10.8 ms (10.4, 10.8, 17.0) | |
+| Long tasks of 100 ms or more | none, and none over 50 ms | none |
+| Input to paint p95, about 238 keys | 32 ms | 32 ms |
+| Longest time more than 40 px behind the end | 15 ms (16, 15, 13) | 100 ms |
+| Tondo's processes: new thread idle, transcript open, after the reply | 144, 274, 417 MiB | |
+| Each live pi: idle, transcript open, after a turn | 136, 191, 192 MiB | |
+
+**The switch miss.** Run 5d reproduced it at 105.5 ms (105.7, 105.5, 105.2), against 81.9 ms (81.9, 80.9, 81.9) with test flags. Traces of the switch showed the host's snapshot reaching the page about 1 ms after the click in both setups, with no extra host message or pi round trip. What grew was the snapshot's render task, 82 to 87 ms against 71 to 73 ms, nearly all of it micromark parsing Markdown. With the real extensions the new thread's pi starts about a second later, so the streaming reply was longer when the harness switched back to it. Streamdown parses every block of a message again whenever the message mounts, so each switch re-parsed the whole reply, including the part already parsed on screen.
+
+`src/renderer/timeline/reuseParses.ts` wraps the parser of Streamdown's processor in a cache from block text to its parse tree. Streamdown keeps one processor per plugin set, so the cache survives a remount. Each use gets a `structuredClone` of the kept tree, so a plugin that edits its tree can't change the kept one. A streaming block keeps one entry rather than one per frame, and the cache holds at most 2,000 blocks. A Node prototype on the fixture measured 1.2 ms to clone 96 blocks' trees, against 9.7 ms to parse them warm.
+
+| | Before the fix | After it |
+|---|---|---|
+| Switch to a running thread, real setup | 105.5 ms (105.7, 105.5, 105.2) | 80.6 ms (73.4, 80.6, 80.7). A repeat gave 80.0 (72.9, 88.8, 80.0). |
+| Same, with test flags | 81.9 ms (81.9, 80.9, 81.9) | 64.8 ms (64.8, 57.3, 65.3) |
+| Reply length at the switch, real setup | 24,919 to 25,116 characters | 24,908 to 25,400 |
+| Same, with test flags | 21,176 to 21,466 characters | 20,963 to 21,437 |
+
+No keyboard or mouse input happened during the after blocks, judging by the HID idle time logged around each. Run 5d also set `HOME` inside the copy and never started pi itself. Nothing under `~/.pi` was newer than its start marker afterwards. `.dev/stage12/realsetup2/report.md` has the traces and every block.
+
+Tondo's own memory stays under the plain harness's single-thread budgets, 279.4 MiB before streaming and 510.4 MiB after. pi is lighter than Stage 3 measured: about 136 MiB idle instead of 210.
+
+The pool keeps its defaults, 4 live pis and a 10-minute idle timeout:
+
+| maxLive | Off-screen pis hold | What it costs |
+|---|---|---|
+| 2 | 0.27 to 0.38 GiB | A rotation over 3 threads waits about 1 s per switch. |
+| 4 | 0.53 to 0.77 GiB | Fits the 850 MiB envelope the default was sized on, 4 x 212 MiB. |
+| 6 | 0.80 to 1.15 GiB | Past that envelope once each pi has done a turn. |
+
+maxLive caps the worst case, and the idle timeout only lowers the average. 5 minutes would make a return within 5 to 10 minutes wait about 1 s. 20 minutes would keep up to 0.6 GiB of off-screen pis for 10 more minutes to save that second.
 
 ## Open questions
 

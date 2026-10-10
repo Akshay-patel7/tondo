@@ -23,6 +23,7 @@ import {
   words,
 } from "./pi";
 import { piGroup } from "./processes";
+import { expectPicked, pickOption } from "./ui";
 
 test.describe.configure({ timeout: 60_000 });
 
@@ -190,25 +191,24 @@ test("Alt+Up and Escape take queued messages back into the composer", async () =
 
 test("a model you pick is the one pi reports", async () => {
   const page = await start({ responses: [reply("Hello from Faux 2.")] });
-  const model = page.getByLabel("Model");
-  await expect(model).toHaveValue("faux/faux-1");
+  await expectPicked(page, "Model", "faux/faux-1");
   await expect(page.getByLabel("Thinking level")).toBeVisible();
 
-  await model.selectOption("faux/faux-2");
+  await pickOption(page, "Model", "Faux 2");
   // pi's get_state names the model, and pi offers no thinking levels for a
   // model without reasoning. Its context window is Faux 2's.
-  await expect(model).toHaveValue("faux/faux-2");
+  await expectPicked(page, "Model", "faux/faux-2");
   await expect(page.getByLabel("Thinking level")).toBeHidden();
   const meter = page.getByRole("img", { name: /^Context window/ });
-  await expect(meter).toHaveAttribute("title", /\b200k token/);
+  await expect(meter).toHaveAccessibleDescription(/\b200k token/);
 
   await send(page, "Hello?");
   await expect(row(page, 1)).toHaveText("Hello from Faux 2.");
-  await expect(meter).toHaveAttribute("title", /of 200k tokens/);
+  await expect(meter).toHaveAccessibleDescription(/of 200k tokens/);
 
   // A new page gets the model from the host's copy of pi's state.
   await page.reload();
-  await expect(page.getByLabel("Model")).toHaveValue("faux/faux-2");
+  await expectPicked(page, "Model", "faux/faux-2");
 });
 
 test("a failed request shows pi's retry, then the reply", async () => {
@@ -242,18 +242,22 @@ test("a project that needs trust asks first, and Tondo remembers the answer", as
 
   await question.getByRole("button", { name: "Trust", exact: true }).click();
   await waitForPi(page);
-  const thinking = page.getByLabel("Thinking level");
-  await expect(thinking).toHaveValue("low");
+  await expectPicked(page, "Thinking level", "low");
   const settings = JSON.parse(readFileSync(path.join(tondo!.profileDir, "settings.json"), "utf8"));
   expect(settings.projectTrust).toEqual({ [project]: true });
 
   // A new thread in the project starts a new pi without asking. A level you
   // pick lasts only as long as its pi, so "low" again comes from the new pi,
   // which didn't wait for an answer and still trusts the project.
-  await thinking.selectOption("high");
-  await expect(thinking).toHaveValue("high");
+  await pickOption(page, "Thinking level", "High thinking");
+  await expectPicked(page, "Thinking level", "high");
   await page.keyboard.press("ControlOrMeta+n");
-  await expect(thinking).toHaveValue("low", { timeout: PI_START_TIMEOUT_MS });
+  // expectPicked's wait, made long enough for the new pi to start.
+  await expect(page.getByRole("combobox", { name: "Thinking level", exact: true })).toHaveAttribute(
+    "data-value",
+    "low",
+    { timeout: PI_START_TIMEOUT_MS },
+  );
   await expect(question).not.toBeAttached();
 });
 

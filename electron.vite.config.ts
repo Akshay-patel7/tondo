@@ -76,5 +76,11 @@ export default defineConfig({
     // import, for pools that ask for it. Only an ES module worker can split
     // that into a chunk of its own.
     worker: { format: "es" },
+    // Chromium keeps the page's script source in memory, at two bytes a
+    // character here, so a minified bundle keeps the before-streaming footprint
+    // inside its budget (docs/stack.md, "Stage 12 measurements"). Not with
+    // esbuild's keepNames: wrapping every named closure cost the terminal a
+    // third of its throughput.
+    build: { minify: "esbuild" },
   },
 });

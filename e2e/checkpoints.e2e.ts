@@ -27,6 +27,7 @@ import {
   waitForPi,
 } from "./pi";
 import { piGroups, processesIn } from "./processes";
+import { pickerOptions, pickOption } from "./ui";
 
 test.describe.configure({ timeout: 60_000 });
 let workDir: string;
@@ -118,7 +119,7 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   await send(page, "Change it once more.");
   await expect(page.getByText("Second turn finished.")).toBeVisible();
   await expect(code).toContainText("export const answer = 43;");
-  await panel.getByLabel("Checkpoint turn").selectOption("1");
+  await pickOption(panel, "Checkpoint turn", "Turn 1");
   await panel.getByRole("button", { name: "Show diff for src/answer.ts" }).click();
   await expect(code).toContainText("export const answer = 41;");
   await expect(code).not.toContainText("export const answer = 43;");
@@ -127,16 +128,21 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   const previousHost = await hostPid(tondo.app);
   process.kill(previousHost, "SIGKILL");
   await expect.poll(() => hostPid(tondo!.app).catch(() => previousHost)).not.toBe(previousHost);
-  await expect(panel.getByLabel("Checkpoint turn").locator("option")).toHaveCount(3);
-  await panel.getByLabel("Checkpoint turn").selectOption("2");
+  await expect.poll(() => pickerOptions(panel, "Checkpoint turn")).toHaveLength(3);
+  await pickOption(panel, "Checkpoint turn", "Turn 2");
   await expect(code).toContainText("export const answer = 43;");
   await page.reload();
   await waitForPi(page);
   await page.getByRole("button", { name: "Changes", exact: true }).click();
-  await expect(panel.getByLabel("Checkpoint turn").locator("option")).toHaveCount(3);
+  await expect.poll(() => pickerOptions(panel, "Checkpoint turn")).toHaveLength(3);
   await expect(code).toContainText("export const answer = 43;");
   await panel.getByRole("button", { name: "Close changes" }).click();
   await expect(panel).toHaveCount(0);
+  // Escape inside the panel closes it and hands focus back to the button that opened it.
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await panel.getByRole("textbox", { name: "Filter changed files" }).press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Changes", exact: true })).toBeFocused();
   expect(errors).toEqual([]);
 
   // Forgetting the project removes its checkpoint refs, not the worktree or HEAD.
@@ -147,7 +153,10 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   await page.getByRole("button", { name: "project", exact: true }).hover();
   await page.getByRole("button", { name: "Project actions" }).click();
   await page.getByRole("menuitem", { name: "Remove project…" }).click();
-  await page.getByRole("menuitem", { name: "Remove project", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Remove project", exact: true })
+    .click();
   await expect.poll(() => git("for-each-ref", "--format=%(refname)", "refs/tondo")).toBe("");
   expect(git("rev-parse", "HEAD")).toBe(head);
   expect(readFileSync(path.join(project, "src/answer.ts"), "utf8")).toContain("43");
@@ -187,14 +196,14 @@ test("queued work shares one checkpoint turn and an aborted turn keeps its edits
   await waitForIdle(page);
   await expect(page.getByText("Followed up.", { exact: true })).toBeVisible();
   await expect(panel.locator("diffs-container")).toContainText("after");
-  await expect(panel.getByLabel("Checkpoint turn").locator("option")).toHaveCount(2);
+  await expect.poll(() => pickerOptions(panel, "Checkpoint turn")).toHaveLength(2);
   await send(page, "Make a change, then stop.");
   await expect.poll(() => existsSync(path.join(project, "aborted.txt"))).toBe(true);
   await composer(page).press("Escape");
   await waitForIdle(page);
   await expect(panel.getByRole("button", { name: "Show diff for aborted.txt" })).toBeVisible();
   await expect(panel.locator("diffs-container")).toContainText("kept");
-  await expect(panel.getByLabel("Checkpoint turn").locator("option")).toHaveCount(3);
+  await expect.poll(() => pickerOptions(panel, "Checkpoint turn")).toHaveLength(3);
 });
 
 /** A real clean filter, held by a file-system event rather than a sleep. */

@@ -3,13 +3,18 @@
 // threads, then projects. Tondo's matches words anywhere in an item's label
 // or detail, which is enough until the list outgrows it.
 import type { OpenThread, SidebarProject, SidebarThread } from "../../shared/protocol";
+import type { ShortcutCommand } from "../../shared/settings";
 import { folderName } from "../format";
-import { shortcutLabel } from "../shortcuts";
+import { shortcutLabelFor } from "../shortcuts";
+import { useTerminals } from "../terminal/store";
 
 export type PaletteAction =
   | { readonly type: "new-thread"; readonly projectId: number }
   | { readonly type: "add-project" }
   | { readonly type: "toggle-sidebar" }
+  | { readonly type: "settings" }
+  /** Opens the open thread's terminal, or closes it. */
+  | { readonly type: "terminal"; readonly open: boolean }
   | { readonly type: "rename-thread"; readonly threadId: string }
   | { readonly type: "pin-thread"; readonly threadId: string; readonly pinned: boolean }
   | { readonly type: "archive-thread"; readonly threadId: string; readonly archived: boolean }
@@ -46,6 +51,7 @@ export function paletteItems({
   isMac,
 }: PaletteInput): PaletteItem[] {
   const items: PaletteItem[] = [];
+  const keys = (command: ShortcutCommand) => shortcutLabelFor(command, isMac) ?? "";
   const action = (
     key: string,
     label: string,
@@ -56,19 +62,30 @@ export function paletteItems({
 
   const here = open ? { id: open.projectId, path: open.project } : projects[0];
   if (here) {
-    action("new-thread", "New thread", folderName(here.path), shortcutLabel("N", isMac), {
+    action("new-thread", "New thread", folderName(here.path), keys("new-thread"), {
       type: "new-thread",
       projectId: here.id,
     });
   }
-  action("add-project", "Add project…", "", shortcutLabel("O", isMac), { type: "add-project" });
+  action("add-project", "Add project…", "", keys("add-project"), { type: "add-project" });
   action(
     "toggle-sidebar",
     sidebarHidden ? "Show sidebar" : "Hide sidebar",
     "",
-    shortcutLabel("B", isMac),
+    keys("toggle-sidebar"),
     { type: "toggle-sidebar" },
   );
+  action("settings", "Settings", "", keys("settings"), { type: "settings" });
+  // The header's Terminal button opens it, and no shortcut does. A thread that
+  // asks whether to trust its folder can't have one. Like the shortcuts, the
+  // terminal's state is read from its store as the palette lists it.
+  if (open && !open.askingTrust) {
+    const terminalOpen = useTerminals.getState().has(open.id);
+    action("terminal", terminalOpen ? "Close terminal" : "Open terminal", "", "", {
+      type: "terminal",
+      open: !terminalOpen,
+    });
+  }
   const shown = open && projects.flatMap(({ threads }) => threads).find((t) => t.id === open.id);
   if (shown) {
     const threadId = shown.id;

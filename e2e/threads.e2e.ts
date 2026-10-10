@@ -206,6 +206,76 @@ test("a thread's menu closes on Escape or on a click outside the sidebar", async
   await expect(menu).not.toBeAttached();
 });
 
+test("the keyboard moves through the sidebar, opens threads and their menu, and the palette", async () => {
+  const { page } = await startThread("Alpha.", "Done.");
+  await page.keyboard.press("ControlOrMeta+n");
+  await expect(heading(page)).toHaveText("New thread");
+  await waitForPi(page);
+  await ask(page, "Beta.", "Done.");
+  await expect.poll(() => threadTitles(page)).toEqual(["Beta.", "Alpha."]);
+  const header = threads(page).getByRole("button", { name: "project", exact: true });
+  const alpha = threadRow(page, "Alpha.");
+  const beta = threadRow(page, "Beta.");
+
+  // The list is one Tab stop, which starts at the open thread.
+  await threads(page).getByRole("button", { name: "Add project", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(beta).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(alpha).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(beta).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(header).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(alpha).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(header).toBeFocused();
+
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(heading(page)).toHaveText("Alpha.");
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  await expect(alpha).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Space");
+  await expect(heading(page)).toHaveText("Beta.");
+  await expect(beta).toBeFocused();
+
+  const menu = page.getByRole("menu", { name: "Thread actions" });
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).not.toBeAttached();
+  await expect(beta).toBeFocused();
+
+  // Past the row's own button, Tab leaves the list.
+  await page.keyboard.press("Tab");
+  await expect(rowActions(page, "Beta.")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Changes", exact: true })).toBeFocused();
+
+  // The palette takes focus, and gives it back when Escape closes it.
+  await beta.focus();
+  await page.keyboard.press("ControlOrMeta+k");
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  await expect(palette.getByRole("combobox", { name: "Search" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(palette).not.toBeAttached();
+  await expect(beta).toBeFocused();
+
+  // Archiving the focused thread from its menu moves focus to the row beside it.
+  await page.keyboard.press("ArrowDown");
+  await expect(alpha).toBeFocused();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(menu.getByRole("menuitem", { name: "Archive", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => threadTitles(page)).toEqual(["Beta."]);
+  await expect(beta).toBeFocused();
+});
+
 test("drafts stay with their threads, and Tondo's store keeps them through a host restart", async () => {
   const { app, page } = await startThread("Remember this.", "Noted.");
   await chooseThreadAction(page, "Remember this.", "Pin");
@@ -281,6 +351,14 @@ async function ask(page: Page, question: string, answer: string): Promise<void> 
 /** The sidebar row of the thread titled `title`. */
 function threadRow(page: Page, title: string) {
   return threads(page).getByTitle(title, { exact: true });
+}
+
+/** The "Thread actions" button beside the row of the thread titled `title`. */
+function rowActions(page: Page, title: string) {
+  return threads(page)
+    .getByRole("listitem")
+    .filter({ has: page.getByTitle(title, { exact: true }) })
+    .getByRole("button", { name: "Thread actions" });
 }
 
 /** Right-clicks the row of the thread titled `title`, and chooses `action` in its menu. */

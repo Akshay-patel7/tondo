@@ -133,6 +133,25 @@ describe("terminal sessions", () => {
     await terminals.close(session.threadId);
   });
 
+  it("tells the workspace when a terminal's process exits, unless Tondo is stopping", async () => {
+    const ended = vi.fn();
+    const terminals = new Terminals(
+      async () => launch,
+      () => {},
+      vi.fn(),
+      ended,
+    );
+    await terminals.handle({ type: "terminal-open", threadId: "thread", kind: "login" });
+    fake.exit({ exitCode: 0 });
+    expect(ended).toHaveBeenCalledExactlyOnceWith("thread", "login");
+
+    await terminals.handle({ type: "terminal-open", threadId: "other", kind: "login" });
+    const stopping = terminals.closeAll();
+    fake.exit({ exitCode: 0 });
+    await stopping;
+    expect(ended).toHaveBeenCalledOnce();
+  });
+
   it("cancels a pending launch when closed before environment capture finishes", async () => {
     const gate = Promise.withResolvers<typeof launch>();
     const { terminals, messages } = setup(() => gate.promise);

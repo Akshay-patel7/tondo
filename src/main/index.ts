@@ -59,6 +59,15 @@ if (!app.requestSingleInstanceLock()) {
       : await dialog.showOpenDialog(options);
     return canceled ? null : (filePaths[0] ?? null);
   };
+  /** e2e replaces dialog.showOpenDialog, so it's looked up on every call. */
+  const choosePiFile = async (): Promise<string | null> => {
+    const options: OpenDialogOptions = { properties: ["openFile", "showHiddenFiles"] };
+    const window = mainWindow?.isDestroyed() === false ? mainWindow : undefined;
+    const { canceled, filePaths } = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return canceled ? null : (filePaths[0] ?? null);
+  };
   /** Set once the host and every process group it reported are gone. */
   let hostStopped = false;
   const openMainWindow = () => {
@@ -123,6 +132,7 @@ if (!app.requestSingleInstanceLock()) {
         entry: path.join(__dirname, "host.js"),
         config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs, pool }) },
         chooseFolder,
+        choosePiFile,
         attention: notify,
         // The page is denied the clipboard, so /copy goes through main.
         copy: (text) => clipboard.writeText(text),

@@ -1,6 +1,7 @@
 // The send and stop buttons follow T3 Code's
 // apps/web/src/components/chat/ComposerPrimaryActions.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
+import { ArrowUp, Plus, Square } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/protocol";
 import { builtinIn } from "../../shared/slashCommands";
@@ -24,6 +25,9 @@ import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
 import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
 import { useThread } from "../thread/store";
+import { Button } from "../ui/button";
+import { Kbd } from "../ui/kbd";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ContextMeter } from "./ContextMeter";
 import { useDraft, useDraftImages } from "./draft";
 import { FileMenu, fileOptionId } from "./FileMenu";
@@ -304,19 +308,19 @@ export function Composer({ hidden }: { hidden: boolean }) {
         />
       ) : null}
       {images.length > 0 ? (
-        <div aria-label="Attached images" className="flex flex-wrap gap-3 px-4 pt-3">
+        <div role="group" aria-label="Attached images" className="flex flex-wrap gap-3 px-4 pt-3">
           {images.map((image) => (
             <div key={image.id} className="flex flex-col gap-1">
               <ImagePreview data={image.data} mimeType={image.mimeType} name={image.name} />
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="xs"
                 aria-label={`Remove ${image.name}`}
                 disabled={sendingImages}
                 onClick={() => editImages(images.filter((item) => item.id !== image.id))}
-                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30"
               >
                 Remove
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -345,7 +349,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
         onKeyDown={onKeyDown}
         placeholder={placeholder(pi, working)}
       />
-      <div className="flex items-center gap-1 px-2 pb-2">
+      <div className="flex flex-wrap items-center gap-1 px-2 pb-2">
         <input
           ref={fileInput}
           type="file"
@@ -358,16 +362,22 @@ export function Composer({ hidden }: { hidden: boolean }) {
             event.currentTarget.value = "";
           }}
         />
-        <button
-          type="button"
-          aria-label="Attach images"
-          title="Attach PNG, JPEG, GIF or WebP images"
-          disabled={locked || images.length >= IMAGE_COUNT}
-          onClick={() => fileInput.current?.click()}
-          className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted disabled:opacity-30"
-        >
-          +
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Attach images"
+                disabled={locked || images.length >= IMAGE_COUNT}
+                onClick={() => fileInput.current?.click()}
+              />
+            }
+          >
+            <Plus aria-hidden />
+          </TooltipTrigger>
+          <TooltipContent>Attach PNG, JPEG, GIF or WebP images</TooltipContent>
+        </Tooltip>
         {pi.state === "ready" ? (
           <>
             <ModelPicker session={pi.session} />
@@ -379,38 +389,43 @@ export function Composer({ hidden }: { hidden: boolean }) {
             <ContextMeter context={pi.session.context} />
           ) : null}
           {working ? (
-            <button
-              type="button"
-              aria-label="Stop pi"
-              title="Stop pi (Escape)"
-              onClick={stop}
-              className="flex size-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              <svg viewBox="0 0 8 8" aria-hidden="true" className="size-2.5">
-                <rect width="8" height="8" rx="1.5" fill="currentColor" />
-              </svg>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="destructive"
+                    size="icon-round"
+                    aria-label="Stop pi"
+                    onClick={stop}
+                  />
+                }
+              >
+                <Square aria-hidden className="size-3 fill-current" />
+              </TooltipTrigger>
+              <TooltipContent>
+                Stop pi <Kbd>Esc</Kbd>
+              </TooltipContent>
+            </Tooltip>
           ) : null}
           {working && text === "" && images.length === 0 ? null : (
-            <button
-              type="button"
-              aria-label="Send message"
-              title={working ? "Steer pi (Enter)" : "Send (Enter)"}
-              disabled={!canSend}
-              onClick={() => send("steer")}
-              className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30"
-            >
-              <svg viewBox="0 0 14 14" aria-hidden="true" className="size-3.5">
-                <path
-                  d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="default"
+                    size="icon-round"
+                    aria-label="Send message"
+                    disabled={!canSend}
+                    onClick={() => send("steer")}
+                  />
+                }
+              >
+                <ArrowUp aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>
+                {working ? "Steer pi" : "Send"} <Kbd>Enter</Kbd>
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>

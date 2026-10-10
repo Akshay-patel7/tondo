@@ -15,6 +15,11 @@ import {
 } from "react";
 import type { DialogAnswer, ExtensionDialog } from "../../shared/protocol";
 import { answerDialog } from "../connection";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Kbd } from "../ui/kbd";
+import { Textarea } from "../ui/textarea";
 import { useExtensionUi } from "./store";
 
 /** The oldest dialog waiting for an answer, or nothing. */
@@ -28,17 +33,22 @@ export function DialogPanel() {
 
 function Dialog({ dialog, waiting }: { dialog: ExtensionDialog; waiting: number }) {
   const titleId = useId();
+  const messageId = useId();
   const secondsLeft = useSecondsLeft(dialog.expiresAt);
   const answer = (value: DialogAnswer) => answerDialog(dialog.id, value);
   const cancel = () => answer({ cancelled: true });
+  const message = dialog.method === "confirm" ? dialog.message : "";
   return (
+    // The card gets its own raster layer, like the composer card it stands in for.
     <section
       role="dialog"
       aria-labelledby={titleId}
+      aria-describedby={message ? messageId : undefined}
       data-dialog={dialog.method}
-      className="rounded-panel border border-border bg-card px-4 pt-3 pb-2.5 shadow-composer focus-within:border-ring"
+      className="rounded-panel border border-border bg-card px-4 pt-3.5 pb-3 shadow-composer will-change-transform"
     >
       <div className="flex items-start gap-3">
+        {/* The countdown is part of the title, so the dialog's name says the time left. */}
         <h2 id={titleId} className="min-w-0 flex-1 font-medium break-words whitespace-pre-line">
           {dialog.title}
           {secondsLeft === null ? null : (
@@ -49,24 +59,27 @@ function Dialog({ dialog, waiting }: { dialog: ExtensionDialog; waiting: number 
           )}
         </h2>
         {waiting > 1 ? (
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">1/{waiting}</span>
+          <span className="tabular-nums">
+            <Badge variant="secondary">1/{waiting}</Badge>
+          </span>
         ) : null}
       </div>
+      {message ? (
+        <p
+          id={messageId}
+          className="mt-1 text-sm break-words whitespace-pre-line text-muted-foreground"
+        >
+          {message}
+        </p>
+      ) : null}
       {dialog.method === "select" ? (
         <Choices options={dialog.options} onPick={(value) => answer({ value })} onCancel={cancel} />
       ) : dialog.method === "confirm" ? (
-        <>
-          {dialog.message ? (
-            <p className="mt-1 text-sm break-words whitespace-pre-line text-muted-foreground">
-              {dialog.message}
-            </p>
-          ) : null}
-          <Choices
-            options={["Yes", "No"]}
-            onPick={(value) => answer({ confirmed: value === "Yes" })}
-            onCancel={cancel}
-          />
-        </>
+        <Choices
+          options={["Yes", "No"]}
+          onPick={(value) => answer({ confirmed: value === "Yes" })}
+          onCancel={cancel}
+        />
       ) : (
         <TextAnswer
           multiline={dialog.method === "editor"}
@@ -128,7 +141,7 @@ function Choices({
         aria-label="Options"
         aria-activedescendant={`${id}-${highlighted}`}
         onKeyDown={onKeyDown}
-        className="mt-2 max-h-64 overflow-y-auto rounded-control outline-none"
+        className="mt-2 max-h-64 overflow-y-auto rounded-control outline-none focus-visible:focus-ring"
       >
         {options.map((option, index) => (
           <div
@@ -144,17 +157,22 @@ function Choices({
               index === highlighted ? "bg-accent text-accent-foreground" : ""
             }`}
           >
-            <span
-              aria-hidden="true"
-              className="w-3 shrink-0 text-xs text-muted-foreground tabular-nums"
-            >
-              {index < 9 ? index + 1 : ""}
-            </span>
+            {/* The number is the key that picks the option, not part of its name. */}
+            {index < 9 ? (
+              <Kbd aria-hidden="true">{index + 1}</Kbd>
+            ) : (
+              <span aria-hidden="true" className="w-5 shrink-0" />
+            )}
             <span className="min-w-0 flex-1 break-words whitespace-pre-line">{option}</span>
           </div>
         ))}
       </div>
-      <Hint>↑↓ to move · Enter or a number to pick · Esc to cancel</Hint>
+      <div className="mt-2.5">
+        <Hint>
+          <Kbd>↑</Kbd> <Kbd>↓</Kbd> to move · <Kbd>Enter</Kbd> or a number to pick · <Kbd>Esc</Kbd>{" "}
+          to cancel
+        </Hint>
+      </div>
     </>
   );
 }
@@ -197,47 +215,51 @@ function TextAnswer({
     }
   };
 
-  const shared = {
-    "aria-label": label,
-    value,
-    placeholder,
-    onKeyDown,
-    className:
-      "mt-2 block w-full rounded-control border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground",
-  };
   return (
     <>
       {multiline ? (
-        <textarea
-          {...shared}
-          ref={area}
-          rows={Math.min(12, Math.max(4, value.split("\n").length + 1))}
-          onChange={(event) => setValue(event.target.value)}
-          className={`${shared.className} max-h-80 resize-none font-mono`}
-        />
+        // An editor's text is monospace, as in pi's terminal UI, so the
+        // wrapper sets the font the field inherits. It grows with its text,
+        // from four lines to fifteen.
+        <div className="mt-2 font-mono">
+          <Textarea
+            ref={area}
+            aria-label={label}
+            value={value}
+            onKeyDown={onKeyDown}
+            onChange={(event) => setValue(event.target.value)}
+            className="max-h-80 min-h-24 resize-none"
+          />
+        </div>
       ) : (
-        <input {...shared} autoFocus onChange={(event) => setValue(event.target.value)} />
+        <Input
+          aria-label={label}
+          value={value}
+          placeholder={placeholder}
+          autoFocus
+          onKeyDown={onKeyDown}
+          onValueChange={(next) => setValue(next)}
+          className="mt-2"
+        />
       )}
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-2.5 flex items-center gap-2">
         <Hint>
-          {multiline ? "Enter to submit · Shift+Enter for a new line" : "Enter to submit"} · Esc to
-          cancel
+          <Kbd>Enter</Kbd> to submit
+          {multiline ? (
+            <>
+              {" "}
+              · <Kbd>Shift+Enter</Kbd> for a new line
+            </>
+          ) : null}{" "}
+          · <Kbd>Esc</Kbd> to cancel
         </Hint>
-        <div className="ml-auto flex gap-1.5">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-control border border-border px-2.5 py-1 text-xs hover:bg-accent hover:text-accent-foreground"
-          >
+        <div className="ml-auto flex shrink-0 gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onSubmit(value)}
-            className="rounded-control bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-          >
+          </Button>
+          <Button size="sm" onClick={() => onSubmit(value)}>
             Submit
-          </button>
+          </Button>
         </div>
       </div>
     </>
@@ -245,7 +267,7 @@ function TextAnswer({
 }
 
 function Hint({ children }: { children: ReactNode }) {
-  return <p className="mt-1.5 text-xs text-muted-foreground">{children}</p>;
+  return <p className="text-xs text-muted-foreground">{children}</p>;
 }
 
 /**

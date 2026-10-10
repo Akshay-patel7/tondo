@@ -1,7 +1,8 @@
 // Drawer resizing follows ThreadTerminalDrawer.tsx in T3 Code at 53456bc0.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { RefreshCw, SquareTerminal, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
@@ -11,7 +12,72 @@ import {
   type TerminalState,
 } from "../../shared/terminal";
 import { reloadPi, terminalCommand, useHost } from "../connection";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { readTerminal } from "./store";
+
+type ThemeColor = Exclude<keyof ITheme, "extendedAnsi">;
+
+// xterm takes colors, not classes, so the theme names the tokens in index.css
+// and terminalTheme resolves them. Magenta and cyan have no token: they turn
+// info's and addition's lightness and chroma to their own hue. light-dark()
+// keeps black dark and white pale in both themes, as programs expect.
+const TERMINAL_COLORS: Partial<Record<ThemeColor, string>> = {
+  background: "var(--card)",
+  foreground: "var(--card-foreground)",
+  cursor: "var(--primary)",
+  cursorAccent: "var(--primary-foreground)",
+  selectionBackground: "color-mix(in oklab, var(--primary) 30%, transparent)",
+  black: "light-dark(var(--foreground), var(--accent))",
+  red: "var(--deletion)",
+  green: "var(--addition)",
+  yellow: "var(--warning)",
+  blue: "var(--info)",
+  magenta: "oklch(from var(--info) l c 320)",
+  cyan: "oklch(from var(--addition) l c 195)",
+  white: "light-dark(var(--muted-foreground), var(--card-foreground))",
+  brightBlack: "var(--muted-foreground)",
+  brightRed: "var(--deletion)",
+  brightGreen: "var(--addition)",
+  brightYellow: "var(--warning)",
+  brightBlue: "var(--info)",
+  brightMagenta: "oklch(from var(--info) l c 320)",
+  brightCyan: "oklch(from var(--addition) l c 195)",
+  brightWhite: "light-dark(var(--control-border), var(--accent-foreground))",
+};
+
+/**
+ * TERMINAL_COLORS as hex. CSS computes each color, then a canvas converts it
+ * to sRGB, as terminalThemeFromApp does in T3 Code's ThreadTerminalDrawer.tsx.
+ */
+function terminalTheme(): ITheme {
+  const probe = document.createElement("span");
+  probe.hidden = true;
+  document.body.append(probe);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  const theme: ITheme = {};
+  for (const [name, color] of Object.entries(TERMINAL_COLORS) as [ThemeColor, string][]) {
+    probe.style.color = color;
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = getComputedStyle(probe).color;
+    context.fillRect(0, 0, 1, 1);
+    const rgba = context.getImageData(0, 0, 1, 1).data;
+    const bytes = rgba[3] === 255 ? rgba.subarray(0, 3) : rgba;
+    theme[name] = `#${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  }
+  probe.remove();
+  return theme;
+}
+
+// Programs such as pi's own interface pick colors for a dark background unless
+// told otherwise. On the light theme xterm darkens any text below 4.5:1.
+function minimumContrast(dark: MediaQueryList): number {
+  return dark.matches ? 1 : 4.5;
+}
 
 function clampHeight(height: number): number {
   return Math.max(160, Math.min(height, window.innerHeight * 0.65));
@@ -33,6 +99,8 @@ export default function TerminalDrawer({
 }) {
   const [height, setHeight] = useState(280);
   const drag = useRef<{ y: number; height: number } | null>(null);
+  const opener = useRef<Element | null>(null);
+  const region = useRef<HTMLElement>(null);
   const project = useHost((host) => host.thread?.project);
   const pi = useHost((host) => host.thread?.pi);
   const busy = useHost((host) =>
@@ -42,15 +110,43 @@ export default function TerminalDrawer({
       ),
     ),
   );
+  // Close gives focus back to whatever had it when the drawer opened: the
+  // Terminal button, or the composer that ran /login.
+  useLayoutEffect(() => {
+    opener.current = document.activeElement;
+    const element = region.current;
+    // The palette's Close terminal or a thread switch can remove the drawer
+    // while it has focus. This cleanup runs before React removes the drawer, so
+    // it still sees that focus. The opener or composer may be swapped in the
+    // same commit, so focus moves once the commit is done.
+    return () => {
+      if (!element?.contains(document.activeElement)) return;
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        const target =
+          opener.current instanceof HTMLElement && opener.current.isConnected
+            ? opener.current
+            : document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]');
+        target?.focus();
+      });
+    };
+  }, []);
   useEffect(() => {
     const resize = () => setHeight((current) => clampHeight(current));
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
+  const status = statusLabel(session);
+  const failed = session.status === "exited" && session.exitCode !== null && session.exitCode !== 0;
+  const close = () => {
+    if (opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus();
+    terminalCommand({ type: "terminal-close", threadId, terminalId: session.id });
+  };
   return (
     <section
+      ref={region}
       aria-label="Terminal"
-      className="relative flex shrink-0 flex-col border-t border-border bg-panel"
+      className="relative flex shrink-0 flex-col border-t border-border bg-card"
       style={{ height }}
     >
       <div
@@ -61,7 +157,7 @@ export default function TerminalDrawer({
         aria-valuemin={160}
         aria-valuemax={Math.round(window.innerHeight * 0.65)}
         tabIndex={0}
-        className="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize focus:bg-primary/30"
+        className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center justify-center focus-visible:focus-ring"
         onKeyDown={(event) => {
           if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
           event.preventDefault();
@@ -84,48 +180,60 @@ export default function TerminalDrawer({
         onPointerCancel={() => {
           drag.current = null;
         }}
-      />
-      <div className="flex h-9 shrink-0 items-center gap-3 px-4 text-xs">
-        <h2 className="font-medium">
+      >
+        <span
+          aria-hidden
+          className="h-1 w-8 rounded-full bg-control-border opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+        />
+      </div>
+      <div className="flex h-9 shrink-0 items-center gap-2 ps-4 pe-2 text-xs">
+        <SquareTerminal aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <h2 className="shrink-0 font-medium">
           {session.kind === "login" ? "Provider sign-in" : "Terminal"}
         </h2>
         <span className="min-w-0 truncate text-muted-foreground" title={project}>
           {project}
         </span>
-        <span className="ml-auto text-muted-foreground" role="status">
-          {statusLabel(session)}
+        <span role="status" className="ml-auto flex shrink-0 items-center">
+          {status ? <Badge variant={failed ? "destructive" : "secondary"}>{status}</Badge> : null}
         </span>
-        <button
-          type="button"
-          aria-label="Close terminal"
-          title="Stop this terminal and its commands"
-          disabled={session.status === "closing"}
-          className="rounded-control px-2 py-1 hover:bg-accent disabled:opacity-50"
-          onClick={() =>
-            terminalCommand({ type: "terminal-close", threadId, terminalId: session.id })
-          }
-        >
-          Close
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-label="Close terminal"
+                disabled={session.status === "closing"}
+                onClick={close}
+              />
+            }
+          >
+            <X aria-hidden />
+            Close
+          </TooltipTrigger>
+          <TooltipContent>Stop this terminal and its commands</TooltipContent>
+        </Tooltip>
       </div>
       {session.kind === "login" ? (
         <div className="flex shrink-0 items-center gap-3 px-4 pb-2 text-xs text-muted-foreground">
-          <span>
+          <span className="min-w-0 flex-1">
             Run /login or /logout here. Then refresh this thread's models. Other open threads need
             /reload too.
           </span>
-          <button
-            type="button"
-            className="shrink-0 rounded-control border border-border px-2 py-1 disabled:opacity-50"
+          <Button
+            variant="outline"
+            size="xs"
             disabled={pi?.state !== "ready" || busy}
             onClick={reloadPi}
           >
+            <RefreshCw aria-hidden />
             Refresh models
-          </button>
+          </Button>
         </div>
       ) : null}
       {session.error ? (
-        <p role="alert" className="px-4 text-sm text-destructive">
+        <p role="alert" className="px-4 pb-2 text-sm text-destructive">
           {session.error}
         </p>
       ) : null}
@@ -145,6 +253,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     let disposed = false;
     let writing = false;
     const queue: Extract<TerminalEvent, { type: "terminal-output" }>[] = [];
+    const dark = window.matchMedia("(prefers-color-scheme: dark)");
     const terminal = new Terminal({
       cursorBlink: false,
       fontSize: 13,
@@ -152,12 +261,8 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       scrollback: 1_000,
       screenReaderMode: true,
       allowProposedApi: false,
-      theme: {
-        background: "#20201e",
-        foreground: "#eeece6",
-        cursor: "#d49374",
-        selectionBackground: "#655044",
-      },
+      theme: terminalTheme(),
+      minimumContrastRatio: minimumContrast(dark),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -178,6 +283,11 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       element.dataset.renderer = "dom";
       console.warn("WebGL terminal unavailable; using xterm's DOM renderer.", error);
     }
+    const retheme = () => {
+      terminal.options.theme = terminalTheme();
+      terminal.options.minimumContrastRatio = minimumContrast(dark);
+    };
+    dark.addEventListener("change", retheme);
     const resize = () => {
       if (disposed || element.clientWidth === 0 || element.clientHeight === 0) return;
       const dimensions = fit.proposeDimensions();
@@ -244,6 +354,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     terminal.focus();
     return () => {
       disposed = true;
+      dark.removeEventListener("change", retheme);
       unread();
       observer.disconnect();
       input.dispose();
@@ -254,7 +365,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     };
   }, [threadId, terminalId]);
   return (
-    <div className="min-h-0 flex-1 overflow-hidden bg-[#20201e] p-2">
+    <div className="min-h-0 flex-1 overflow-hidden bg-card p-2">
       {/* FitAddon measures this parent's full size, so its padding stays outside. */}
       <div ref={mount} data-terminal-view className="h-full w-full" />
     </div>

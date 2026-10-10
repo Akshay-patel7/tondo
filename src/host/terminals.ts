@@ -48,15 +48,19 @@ export class Terminals {
   private readonly launch: (threadId: string, kind: TerminalKind) => Promise<TerminalLaunch>;
   private readonly send: (message: HostMessage) => void;
   private readonly reportGroups: (pgids: number[]) => void;
+  private readonly ended: ((threadId: string, kind: TerminalKind) => void) | undefined;
 
+  /** `ended` hears of each terminal whose process exits, unless Tondo is stopping its terminals. */
   constructor(
     launch: (threadId: string, kind: TerminalKind) => Promise<TerminalLaunch>,
     send: (message: HostMessage) => void,
     reportGroups: (pgids: number[]) => void,
+    ended?: (threadId: string, kind: TerminalKind) => void,
   ) {
     this.launch = launch;
     this.send = send;
     this.reportGroups = reportGroups;
+    this.ended = ended;
   }
 
   has(threadId: string): boolean {
@@ -161,6 +165,7 @@ export class Terminals {
         // A shell can leave children in its group when it exits on its own.
         void this.cleanup(session).catch((error: unknown) => this.problem(session, error));
         this.publish(session);
+        if (!this.stopping) this.ended?.(session.threadId, session.state.kind);
       });
       session.state = { ...session.state, status: "running" };
       this.publish(session);

@@ -1,5 +1,15 @@
-import { describe, expect, test } from "vitest";
-import { appCommand, shortcutLabel, type KeyChord } from "./shortcuts";
+import { afterEach, describe, expect, test } from "vitest";
+import { DEFAULT_SETTINGS, type AppSettings } from "../shared/settings";
+import { useHost } from "./connection";
+import { appCommand, shortcutLabel, shortcutLabelFor, type KeyChord } from "./shortcuts";
+
+function bind(shortcuts: AppSettings["shortcuts"]): void {
+  useHost.setState({ settings: { ...DEFAULT_SETTINGS, shortcuts } });
+}
+
+afterEach(() => {
+  useHost.setState({ settings: null });
+});
 
 function press(key: string, code: string, keys: Partial<KeyChord> = {}): KeyChord {
   return { key, code, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...keys };
@@ -57,6 +67,41 @@ describe("appCommand", () => {
     expect(appCommand(press("k", "KeyK"), mac)).toBeNull();
     expect(appCommand(press("k", "KeyK", { metaKey: true, altKey: true }), mac)).toBeNull();
     expect(appCommand(press("k", "KeyK", { metaKey: true, ctrlKey: true }), mac)).toBeNull();
+  });
+
+  test("opens the settings with mod and the comma", () => {
+    expect(appCommand(press(",", "Comma", { metaKey: true }), mac)).toEqual({ type: "settings" });
+  });
+
+  test("follows a binding you set, and frees the default", () => {
+    bind({ palette: "mod+shift+p" });
+    expect(appCommand(press("P", "KeyP", { metaKey: true, shiftKey: true }), mac)).toEqual({
+      type: "palette",
+    });
+    expect(appCommand(press("k", "KeyK", { metaKey: true }), mac)).toBeNull();
+  });
+
+  test("ignores a disabled shortcut", () => {
+    bind({ "toggle-sidebar": null });
+    expect(appCommand(press("b", "KeyB", { metaKey: true }), mac)).toBeNull();
+  });
+
+  test("keeps the thread jumps when a binding takes their keys", () => {
+    bind({ settings: "mod+digit1" });
+    expect(appCommand(press("1", "Digit1", { metaKey: true }), mac)).toEqual({
+      type: "jump-to-thread",
+      index: 0,
+    });
+  });
+});
+
+describe("shortcutLabelFor", () => {
+  test("labels the default, your binding, or nothing when disabled", () => {
+    expect(shortcutLabelFor("settings", mac)).toBe("⌘,");
+    expect(shortcutLabelFor("previous-thread", !mac)).toBe("Ctrl+Shift+[");
+    bind({ palette: "mod+shift+p", settings: null });
+    expect(shortcutLabelFor("palette", mac)).toBe("⌘⇧P");
+    expect(shortcutLabelFor("settings", mac)).toBeNull();
   });
 });
 

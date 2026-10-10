@@ -23,6 +23,14 @@ import {
   type ThreadActivity,
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
+import {
+  DEFAULT_SETTINGS,
+  type AppSettings,
+  type SettingsPatch,
+  type ThemeSetting,
+} from "../shared/settings";
+import { shortcutProblems } from "../shared/shortcuts";
+import type { Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
 import { TurnCheckpoints } from "./turnCheckpoints";
@@ -30,7 +38,7 @@ import type { DraftImage } from "../shared/images";
 import { LiveThread, type ThreadListener } from "./liveThread";
 import { PiExitError } from "./piProcess";
 import { PiCommandError } from "./piRpc";
-import { choosePiToStop, type PoolLimits } from "./pool";
+import { choosePiToStop, POOL_LIMITS, type PoolLimits } from "./pool";
 import { messageTitle, SessionIndex, type SessionSummary } from "./sessionIndex";
 import type { Store, StoredProject, StoredThread } from "./store";
 import type { Supervisor } from "./supervisor";
@@ -65,11 +73,16 @@ export interface WorkspaceOptions {
   readonly gitGroups: (pgids: number[]) => void;
   readonly store: Store;
   readonly supervisor: Supervisor;
-  readonly limits: PoolLimits;
+  /** Pool limits that win over the settings, as TONDO_POOL sets for tests. */
+  readonly poolOverride: Partial<PoolLimits>;
   /** Sends a message to the page, if one is connected. */
   readonly send: (message: HostMessage) => void;
   /** Asks main to show the folder dialog. Main answers through projectChosen. */
   readonly chooseFolder: () => void;
+  /** Asks main to show the file dialog for pi. Main answers through piChosen. */
+  readonly choosePi: () => void;
+  /** Tells main the theme the settings ask for. */
+  readonly setTheme: (theme: ThemeSetting) => void;
   /** Asks main to raise a notification about a thread. */
   readonly attention: (attention: Attention) => void;
   /** Asks main to put text on the clipboard. */
@@ -82,9 +95,13 @@ export interface WorkspaceOptions {
 export class Workspace {
   private readonly store: Store;
   private readonly supervisor: Supervisor;
-  private readonly limits: PoolLimits;
+  private readonly poolOverride: Partial<PoolLimits>;
+  private limits: PoolLimits;
   private readonly send: (message: HostMessage) => void;
   private readonly chooseFolder: () => void;
+  private readonly choosePi: () => void;
+  private readonly setTheme: (theme: ThemeSetting) => void;
+  private choosingPi = false;
   private readonly attention: (attention: Attention) => void;
   private readonly copy: (text: string) => void;
   private readonly reveal: (file: string) => void;
@@ -122,9 +139,12 @@ export class Workspace {
   constructor(options: WorkspaceOptions) {
     this.store = options.store;
     this.supervisor = options.supervisor;
-    this.limits = options.limits;
+    this.poolOverride = options.poolOverride;
+    this.limits = { ...POOL_LIMITS, ...options.poolOverride };
     this.send = options.send;
     this.chooseFolder = options.chooseFolder;
+    this.choosePi = options.choosePi;
+    this.setTheme = options.setTheme;
     this.attention = options.attention;
     this.copy = options.copy;
     this.reveal = options.reveal;
@@ -141,7 +161,37 @@ export class Workspace {
       },
       this.send,
       options.terminalGroups,
+      (threadId, kind) => {
+        if (kind === "login") this.signedInOrOut(threadId);
+      },
     );
+  }
+
+  /**
+   * Applies the saved settings' pool limits and theme. The host calls it once
+   * as it starts, before any page connects.
+   */
+  applySettings(): void {
+    let settings: AppSettings = DEFAULT_SETTINGS;
+    try {
+      settings = this.supervisor.settings();
+    } catch (error) {
+      console.error(`Tondo Host uses the default settings: ${messageOf(error)}`);
+    }
+    this.setLimits(this.poolLimits(settings));
+    this.setTheme(settings.theme);
+  }
+
+  /** Changes the pool's limits, and stops the pi processes they no longer allow. */
+  setLimits(limits: PoolLimits): void {
+    this.limits = limits;
+    this.checkPool();
+  }
+
+  /** The file you picked in the pi dialog, or null if you cancelled. */
+  piChosen(file: string | null): void {
+    this.choosingPi = false;
+    if (file !== null) this.run(() => this.setSettings({ piPath: file }));
   }
 
   disconnected(): void {
@@ -173,6 +223,8 @@ export class Workspace {
   /** Sends a new page everything it shows. */
   greet(): void {
     this.send({ v, type: "ui", sidebarHidden: this.store.ui().sidebarHidden });
+    this.sendSettings(null);
+    this.run(() => this.sendPiEnv());
     this.sendSnapshot();
     this.lastSidebar = "";
     this.sendSidebar();
@@ -361,15 +413,6 @@ export class Workspace {
           this.send({ v, type: "sheet", threadId: message.threadId, sheet });
         });
         break;
-      case "settings-files":
-        this.run(async () => {
-          const { project } = this.running(message.threadId);
-          const files = await this.supervisor.settingsFiles(project);
-          for (const file of files) if (file.exists) this.offered.add(file.path);
-          const sheet = { kind: "settings", files } as const;
-          this.send({ v, type: "sheet", threadId: message.threadId, sheet });
-        });
-        break;
       case "trust-status":
         this.run(async () => {
           const thread = this.running(message.threadId);
@@ -392,7 +435,95 @@ export class Workspace {
       case "ping":
         this.send({ v, type: "pong", id: message.id });
         break;
+      case "set-settings":
+        this.run(() => this.setSettings(message.patch));
+        break;
+      case "choose-pi-path":
+        if (!this.choosingPi) {
+          this.choosingPi = true;
+          this.choosePi();
+        }
+        break;
+      case "retry-pi":
+        this.run(() => this.rediscoverPi());
+        break;
+      case "get-pi-config-files":
+        this.run(async () => {
+          const { threadId } = message;
+          const cwd = threadId === null ? null : this.checkout(this.row(threadId));
+          const files = await this.supervisor.settingsFiles(cwd);
+          for (const file of files) if (file.exists) this.offered.add(file.path);
+          this.send({ v, type: "pi-config-files", files });
+        });
+        break;
     }
+  }
+
+  /**
+   * Saves a settings change if it's valid, and applies it at once. Either way
+   * the page gets the settings, with the reason if they didn't change.
+   */
+  private async setSettings(patch: SettingsPatch): Promise<void> {
+    let before: Settings;
+    let after: Settings;
+    try {
+      before = this.supervisor.settings();
+      if (patch.shortcuts !== undefined) {
+        const shortcuts: Record<string, string | null> = { ...before.shortcuts };
+        for (const [command, text] of Object.entries(patch.shortcuts)) {
+          if (text === "default") delete shortcuts[command];
+          else shortcuts[command] = text;
+        }
+        const problems = shortcutProblems(shortcuts);
+        if (problems.length > 0) throw new Error(problems.join(" "));
+      }
+      if (typeof patch.piPath === "string") await this.supervisor.checkPi(patch.piPath);
+      after = this.supervisor.updateSettings(patch);
+    } catch (error) {
+      this.sendSettings(messageOf(error));
+      return;
+    }
+    this.sendSettings(null);
+    this.setLimits(this.poolLimits(after));
+    if (after.theme !== before.theme) this.setTheme(after.theme);
+    if (after.piPath !== before.piPath) await this.rediscoverPi();
+  }
+
+  /** Sends the page the settings, or the defaults if the file can't be read. */
+  private sendSettings(error: string | null): void {
+    let settings: AppSettings = DEFAULT_SETTINGS;
+    let problem = error;
+    try {
+      const { piPath, theme, pool, shortcuts } = this.supervisor.settings();
+      settings = { piPath, theme, pool, shortcuts };
+    } catch (cause) {
+      problem ??= messageOf(cause);
+    }
+    this.send({ v, type: "settings", settings, error: problem });
+  }
+
+  private async sendPiEnv(): Promise<void> {
+    this.send({ v, type: "pi-env", pi: await this.supervisor.discover() });
+  }
+
+  /** Looks for pi again, and starts again every thread whose pi Tondo couldn't find. */
+  private async rediscoverPi(): Promise<void> {
+    await this.sendPiEnv();
+    for (const thread of this.live.values()) {
+      const { status } = thread;
+      if (status.state === "exited" && status.problem) this.run(() => thread.restart());
+    }
+  }
+
+  /** The login terminal closed, so a ready pi reloads to read the credentials it left. */
+  private signedInOrOut(threadId: string): void {
+    const thread = this.live.get(threadId);
+    if (thread?.status.state === "ready" && !thread.busy) this.run(() => thread.reload());
+  }
+
+  /** The defaults, then the settings, then the override from the environment. */
+  private poolLimits({ pool }: AppSettings): PoolLimits {
+    return { maxLive: pool.maxLive, idleMs: pool.idleMinutes * 60_000, ...this.poolOverride };
   }
 
   /** The folder you picked in the dialog, or null if you cancelled. It opens a new thread there. */
@@ -1139,6 +1270,10 @@ export class Workspace {
     console.error(`Tondo Host: ${message}`);
     this.send({ v, type: "error", message });
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Whether pi works in the thread, or waits for your answer to go on. */

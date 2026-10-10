@@ -1,5 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import type { OpenThread, SidebarProject, SidebarThread } from "../../shared/protocol";
+import type { TerminalState } from "../../shared/terminal";
+import { useTerminals } from "../terminal/store";
 import { filterItems, paletteItems, type PaletteItem } from "./model";
 
 function thread(id: string, updatedAt: number, extra: Partial<SidebarThread> = {}): SidebarThread {
@@ -50,13 +52,19 @@ const open: OpenThread = {
 const labels = (items: readonly PaletteItem[]) =>
   items.map(({ group, label }) => `${group}: ${label}`);
 
+const terminalItem = (items: readonly PaletteItem[]) => items.find(({ key }) => key === "terminal");
+
 describe("paletteItems", () => {
+  afterEach(() => useTerminals.setState(new Map(), true));
+
   test("lists actions, recent threads, projects, then archived threads", () => {
     const items = paletteItems({ projects, open, sidebarHidden: false, isMac: true });
     expect(labels(items)).toEqual([
       "Actions: New thread",
       "Actions: Add project…",
       "Actions: Hide sidebar",
+      "Actions: Settings",
+      "Actions: Open terminal",
       "Actions: Rename thread",
       "Actions: Unpin thread",
       "Actions: Archive thread",
@@ -69,15 +77,17 @@ describe("paletteItems", () => {
     ]);
     expect(items[0]).toMatchObject({ detail: "tondo", shortcut: "⌘N" });
     expect(items[0]!.action).toEqual({ type: "new-thread", projectId: 1 });
+    expect(items[3]).toMatchObject({ shortcut: "⌘,", action: { type: "settings" } });
     expect(items.at(-1)!.action).toEqual({ type: "open-thread", threadId: "z", archived: true });
   });
 
   test("starts a new thread in the first project when none is open", () => {
     const items = paletteItems({ projects, open: null, sidebarHidden: true, isMac: false });
-    expect(labels(items).slice(0, 4)).toEqual([
+    expect(labels(items).slice(0, 5)).toEqual([
       "Actions: New thread",
       "Actions: Add project…",
       "Actions: Show sidebar",
+      "Actions: Settings",
       "Threads: Thread b",
     ]);
     expect(items[0]).toMatchObject({ shortcut: "Ctrl+N", action: { projectId: 1 } });
@@ -85,7 +95,34 @@ describe("paletteItems", () => {
 
   test("offers only Add project and the sidebar without projects", () => {
     const items = paletteItems({ projects: [], open: null, sidebarHidden: false, isMac: true });
-    expect(labels(items)).toEqual(["Actions: Add project…", "Actions: Hide sidebar"]);
+    expect(labels(items)).toEqual([
+      "Actions: Add project…",
+      "Actions: Hide sidebar",
+      "Actions: Settings",
+    ]);
+  });
+
+  test("opens the open thread's terminal, or closes it", () => {
+    const input = { projects, open, sidebarHidden: false, isMac: true };
+    expect(terminalItem(paletteItems(input))).toMatchObject({
+      label: "Open terminal",
+      shortcut: "",
+      action: { type: "terminal", open: true },
+    });
+    const running: TerminalState = {
+      id: "t1",
+      kind: "shell",
+      status: "running",
+      error: null,
+      exitCode: null,
+    };
+    useTerminals.setState(new Map([["a", running]]), true);
+    expect(terminalItem(paletteItems(input))).toMatchObject({
+      label: "Close terminal",
+      action: { type: "terminal", open: false },
+    });
+    const asking = { ...open, askingTrust: true };
+    expect(terminalItem(paletteItems({ ...input, open: asking }))).toBeUndefined();
   });
 
   test("offers no rename before pi has saved the thread", () => {

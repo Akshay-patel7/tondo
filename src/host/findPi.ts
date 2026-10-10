@@ -13,11 +13,14 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
+import type { PiProblem } from "../shared/protocol";
 
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 export const MIN_PI_VERSION = "0.87.1";
 
 export interface PiInstall {
+  /** The pi command it was found as: on PATH, in the settings, or an install an asdf shim names. */
+  command: string;
   /** The node in the same folder as the `pi` command. */
   node: string;
   /** The realpath of pi's cli.js. */
@@ -27,29 +30,49 @@ export interface PiInstall {
 
 export class PiNotFoundError extends Error {
   override name = "PiNotFoundError";
+  readonly problem: PiProblem;
+
+  constructor(message: string, problem: PiProblem) {
+    super(message);
+    this.problem = problem;
+  }
 }
+
+/** Which problem to report when no install works: the one you can most easily fix. */
+const PROBLEM_ORDER: readonly PiProblem["kind"][] = ["too-old", "invalid", "not-found"];
 
 /**
  * Finds pi at `override` if it's set, else at the first `pi` on the PATH in
  * `env`. An asdf shim stands for the installs it names, and the newest pi
  * among them wins.
  */
-export function findPi(env: Record<string, string>, override?: string): PiInstall {
+export function findPi(env: Record<string, string>, override?: string | null): PiInstall {
   const command = override ?? onPath("pi", env.PATH ?? "");
-  if (command === undefined) throw new PiNotFoundError(`No pi on PATH: ${env.PATH ?? ""}`);
+  if (command === undefined) {
+    const message = `No pi on PATH: ${env.PATH ?? ""}`;
+    throw new PiNotFoundError(message, { kind: "not-found", detail: message });
+  }
   const commands = asdfShimTargets(command) ?? [command];
   const installs: PiInstall[] = [];
-  const problems: string[] = [];
+  const problems: PiNotFoundError[] = [];
   for (const candidate of commands) {
     try {
       installs.push(installAt(candidate));
     } catch (error) {
-      problems.push((error as Error).message);
+      const message = (error as Error).message;
+      problems.push(
+        error instanceof PiNotFoundError
+          ? error
+          : new PiNotFoundError(message, { kind: "invalid", detail: message }),
+      );
     }
   }
   const newest = installs.toSorted((a, b) => compareVersions(b.version, a.version))[0];
-  if (newest === undefined) throw new PiNotFoundError(problems.join("\n"));
-  return newest;
+  if (newest !== undefined) return newest;
+  const [first] = problems.toSorted(
+    (a, b) => PROBLEM_ORDER.indexOf(a.problem.kind) - PROBLEM_ORDER.indexOf(b.problem.kind),
+  );
+  throw new PiNotFoundError(problems.map(({ message }) => message).join("\n"), first!.problem);
 }
 
 /** The pi that `command` runs, if it's 0.87.1 or newer and has a node next to it. */
@@ -58,22 +81,26 @@ function installAt(command: string): PiInstall {
   try {
     real = realpathSync(command);
   } catch {
-    throw new PiNotFoundError(`${command} doesn't exist`);
+    const message = `${command} doesn't exist`;
+    throw new PiNotFoundError(message, { kind: "not-found", detail: message });
   }
   const found = packageOf(real);
-  if (found === undefined) throw new PiNotFoundError(`${command} isn't part of ${PI_PACKAGE}`);
+  if (found === undefined) throw invalid(`${command} isn't part of ${PI_PACKAGE}`);
   const { dir, version, bin } = found;
   if (compareVersions(version, MIN_PI_VERSION) < 0) {
     throw new PiNotFoundError(
       `${command} is pi ${version}, and Tondo needs ${MIN_PI_VERSION} or newer`,
+      { kind: "too-old", version, required: MIN_PI_VERSION, command },
     );
   }
-  if (bin === undefined)
-    throw new PiNotFoundError(`${path.join(dir, "package.json")} names no pi command`);
+  if (bin === undefined) throw invalid(`${path.join(dir, "package.json")} names no pi command`);
   const node = path.join(path.dirname(command), "node");
-  if (!isExecutableFile(node))
-    throw new PiNotFoundError(`${command} has no node next to it at ${node}`);
-  return { node, cli: realpathSync(path.join(dir, bin)), version };
+  if (!isExecutableFile(node)) throw invalid(`${command} has no node next to it at ${node}`);
+  return { command, node, cli: realpathSync(path.join(dir, bin)), version };
+}
+
+function invalid(message: string): PiNotFoundError {
+  return new PiNotFoundError(message, { kind: "invalid", detail: message });
 }
 
 interface PiPackage {

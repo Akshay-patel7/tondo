@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "react"],
+  "jsPlugins": ["./scripts/lint/no-restyle.mjs"],
   "categories": {
     "correctness": "error",
     "suspicious": "error",
@@ -108,6 +109,15 @@
             ]
           }
         ]
+      }
+    },
+    {
+      // A ui component owns its look. Code that renders one picks a variant or
+      // size and passes only layout classes (scripts/lint/no-restyle.mjs).
+      "files": ["src/renderer/**"],
+      "excludeFiles": ["src/renderer/ui/**"],
+      "rules": {
+        "tondo/no-restyle": ["error", { "ui": "src/renderer/ui" }]
       }
     }
   ]
