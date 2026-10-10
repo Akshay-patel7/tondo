@@ -1,5 +1,6 @@
 .claude/
 node_modules/
 out/
+dist/
 .dev/
 test-results/
