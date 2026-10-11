@@ -107,7 +107,8 @@ function Thread() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="min-h-0 flex-1">
+        {/* Toasts stay inside the transcript's box (toast-stack in index.css). */}
+        <main className="min-h-0 flex-1 [anchor-name:--transcript]">
           <Timeline key={threadKey} />
         </main>
         {/* When the terminal drawer needs the room, the footer gives up height and clips. The
