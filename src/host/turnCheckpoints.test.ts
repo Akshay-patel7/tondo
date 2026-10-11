@@ -109,6 +109,37 @@ test("explains non-Git folders and a failed baseline, never presenting them as e
   expect((await turns.diff(2)).error).toContain("checkpoint failed");
 });
 
+test("a ready turn names nested repositories whose uncommitted changes it can't show", async () => {
+  git("init", "-q");
+  write("before\n");
+  const nested = path.join(root, "nested");
+  execFileSync("git", ["init", "-q", nested]);
+  writeFileSync(path.join(nested, "a.txt"), "a\n");
+  execFileSync("git", ["-C", nested, "add", "."]);
+  execFileSync("git", [
+    "-C",
+    nested,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@localhost",
+    "commit",
+    "-qm",
+    "nested",
+  ]);
+  await turns.prepare();
+  turns.started();
+  write("after\n");
+  writeFileSync(path.join(nested, "a.txt"), "edited\n");
+  turns.settled();
+  await turns.drain();
+  expect(turns.turns[0]).toMatchObject({
+    state: "ready",
+    reason: "Uncommitted changes inside nested repositories and submodules aren't shown: nested.",
+  });
+  expect((await turns.diff(1)).files.map((file) => file.path)).toEqual(["file.txt"]);
+});
+
 test("extension-started work without a prepared baseline is marked unavailable", async () => {
   git("init", "-q");
   write("already changed\n");

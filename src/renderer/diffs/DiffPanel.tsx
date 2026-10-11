@@ -1,4 +1,4 @@
-import { ChevronRight, CircleAlert, FileDiff, X } from "lucide-react";
+import { ChevronRight, CircleAlert, FileDiff, Info, X } from "lucide-react";
 import {
   lazy,
   Suspense,
@@ -168,7 +168,18 @@ function TurnDiff({ turn }: { turn: CheckpointTurn | undefined }) {
         <AlertDescription>{diff.error}</AlertDescription>
       </Alert>
     );
-  return <Files key={turn.turn} files={diff.files} />;
+  // A ready turn's reason names changes the checkpoint couldn't hold, such as inside submodules.
+  if (!turn.reason) return <Files key={turn.turn} files={diff.files} />;
+  return (
+    <div className="flex flex-col gap-3">
+      <Alert variant="info">
+        <Info aria-hidden />
+        <AlertTitle>Some changes aren't shown</AlertTitle>
+        <AlertDescription>{turn.reason}</AlertDescription>
+      </Alert>
+      <Files key={turn.turn} files={diff.files} />
+    </div>
+  );
 }
 
 function Working({ children }: { children: ReactNode }) {
@@ -233,6 +244,11 @@ function Files({ files }: { files: readonly CheckpointFile[] }) {
 }
 
 function FilePatch({ file }: { file: CheckpointFile }) {
+  // The host lists a file with an empty patch when its diff doesn't fit the turn's cap.
+  if (!file.patch)
+    return (
+      <p className="text-sm text-muted-foreground">This file's diff is too large to preview.</p>
+    );
   if (file.binary)
     return <p className="text-sm text-muted-foreground">Binary file changed. No text preview.</p>;
   if (!/^@@ /m.test(file.patch))

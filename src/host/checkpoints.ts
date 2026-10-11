@@ -275,12 +275,17 @@ async function seedIndex(
   await utimes(index, indexTime, indexTime);
 }
 
-/** Capture without moving HEAD, running commit hooks, signing, or needing a Git identity. */
+/**
+ * Capture without moving HEAD, running commit hooks, signing, or needing a Git identity.
+ * Resolves with the nested repositories and submodules whose uncommitted contents the
+ * checkpoint can't hold: a gitlink records only the nested HEAD, and repositories
+ * without a commit are left out.
+ */
 export async function captureCheckpoint(
   root: string,
   threadId: string,
   turn: number,
-): Promise<void> {
+): Promise<string[]> {
   const ref = checkpointRef(threadId, turn);
   const gitDir = (await git(root, ["rev-parse", "--absolute-git-dir"])).replace(/\n$/, "");
   const temporary = await mkdtemp(path.join(gitDir, "tondo-checkpoint-"));
@@ -309,6 +314,7 @@ export async function captureCheckpoint(
         ],
         { env },
       );
+    const excluded: string[] = [];
     try {
       await stage([]);
     } catch (error) {
@@ -338,19 +344,49 @@ export async function captureCheckpoint(
         } catch (failure) {
           if (!(failure instanceof CheckpointGitError && failure.code === 1)) throw failure;
           exclusions.push(`:(exclude,literal)${entry}`);
+          excluded.push(entry.slice(0, -1));
         }
       }
       if (!exclusions.length) throw error;
       await stage(exclusions);
+    }
+    // After add -A, a gitlink differs from the work tree only when its repository has
+    // uncommitted changes or untracked files.
+    const dirty = (
+      await git(
+        root,
+        [...INDEX_CONFIG, "diff-files", "--raw", "--no-abbrev", "-z", "--ignore-submodules=none"],
+        { env },
+      )
+    ).split("\0");
+    for (let i = 0; i < dirty.length - 1; i += 2) {
+      if (dirty[i]!.startsWith(":160000 160000 ")) excluded.push(dirty[i + 1]!);
     }
     const tree = (await git(root, [...INDEX_CONFIG, ...DURABLE, "write-tree"], { env })).trim();
     const commit = (
       await git(root, [...DURABLE, "commit-tree", tree, "-m", `Tondo checkpoint ${ref}`], { env })
     ).trim();
     await git(root, [...DURABLE, "update-ref", ref, commit]);
+    return excluded;
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+}
+
+const DIFF = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames"];
+
+function checkpointRange(threadId: string, from: number, to: number): string[] {
+  return [`${checkpointRef(threadId, from)}^{commit}`, `${checkpointRef(threadId, to)}^{commit}`];
+}
+
+function patchBetween(
+  root: string,
+  range: readonly string[],
+  pathspecs: readonly string[] = [],
+): Promise<string> {
+  return git(root, [...DIFF, "--src-prefix=a/", "--dst-prefix=b/", ...range, "--", ...pathspecs], {
+    cap: CHECKPOINT_DIFF_BYTES,
+  });
 }
 
 /** Return the exact bounded patch. No external diff drivers or textconv commands run. */
@@ -360,54 +396,101 @@ export function diffCheckpoints(
   from: number,
   to: number,
 ): Promise<string> {
-  return git(
-    root,
-    [
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--no-color",
-      "--find-renames",
-      "--src-prefix=a/",
-      "--dst-prefix=b/",
-      `${checkpointRef(threadId, from)}^{commit}`,
-      `${checkpointRef(threadId, to)}^{commit}`,
-      "--",
-    ],
-    { cap: CHECKPOINT_DIFF_BYTES },
-  );
+  return patchBetween(root, checkpointRange(threadId, from, to));
 }
 
-/** Names come from NUL-separated records, never from quoted patch headers. */
+/** Most files listed without a patch before the rest are given up on. */
+const MAX_OVERSIZED = 1000;
+
+/**
+ * The paths whose patches can't share the cap, from blob sizes. A patch holds each
+ * old and new line at most once, plus a prefix byte per line, so twice the two
+ * blobs' sizes bounds it. The smallest files are kept first.
+ */
+async function oversizedPaths(root: string, range: readonly string[]): Promise<string[]> {
+  const raw = (await git(root, [...DIFF, "--raw", "--no-abbrev", "-z", ...range, "--"])).split(
+    "\0",
+  );
+  const entries: { paths: string[]; oids: string[] }[] = [];
+  for (let i = 0; i < raw.length - 1;) {
+    const [oldMode, newMode, oldOid, newOid, status] = raw[i++]!.slice(1).split(" ");
+    const paths = /^[RC]/.test(status!) ? [raw[i++]!, raw[i++]!] : [raw[i++]!];
+    const oids = [
+      [oldMode, oldOid],
+      [newMode, newOid],
+    ]
+      .filter(([mode, oid]) => mode !== "160000" && !/^0+$/.test(oid!))
+      .map(([, oid]) => oid!);
+    entries.push({ paths, oids });
+  }
+  const oids = [...new Set(entries.flatMap((entry) => entry.oids))];
+  const sizes = new Map<string, number>();
+  if (oids.length) {
+    const listing = await git(root, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], {
+      input: oids.join("\n") + "\n",
+    });
+    for (const line of listing.split("\n")) {
+      const [oid, size] = line.split(" ");
+      if (oid && size && /^\d+$/.test(size)) sizes.set(oid, Number(size));
+    }
+  }
+  const estimates = entries
+    .map(({ paths, oids: blobs }) => ({
+      paths,
+      bytes: 4096 + blobs.reduce((sum, oid) => sum + 2 * (sizes.get(oid) ?? 0), 0),
+    }))
+    .toSorted((a, b) => a.bytes - b.bytes);
+  let budget = CHECKPOINT_DIFF_BYTES;
+  const oversized: string[] = [];
+  for (const { paths, bytes } of estimates) {
+    if (bytes <= budget) budget -= bytes;
+    else oversized.push(...paths);
+  }
+  return oversized;
+}
+
+/**
+ * Names come from NUL-separated records, never from quoted patch headers. When the
+ * whole patch is over the cap, the largest files are listed with an empty patch, which
+ * no listed file otherwise has, so the rest of the turn stays readable.
+ */
 export async function checkpointFiles(
   root: string,
   threadId: string,
   from: number,
   to: number,
 ): Promise<CheckpointFile[]> {
-  const patch = await diffCheckpoints(root, threadId, from, to);
-  const names = (
-    await git(root, [
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--no-color",
-      "--find-renames",
-      "--name-status",
-      "-z",
-      `${checkpointRef(threadId, from)}^{commit}`,
-      `${checkpointRef(threadId, to)}^{commit}`,
-      "--",
-    ])
-  ).split("\0");
+  const range = checkpointRange(threadId, from, to);
+  const names = (await git(root, [...DIFF, "--name-status", "-z", ...range, "--"])).split("\0");
+  let oversized = new Set<string>();
+  let patch: string;
+  try {
+    patch = await patchBetween(root, range);
+  } catch (error) {
+    if (!(error instanceof CheckpointGitError && error.message.includes("output exceeds")))
+      throw error;
+    const paths = await oversizedPaths(root, range);
+    if (!paths.length || paths.length > MAX_OVERSIZED) throw error;
+    oversized = new Set(paths);
+    patch = await patchBetween(
+      root,
+      range,
+      paths.map((name) => `:(exclude,literal)${name}`),
+    );
+  }
   const patches = patch ? patch.split(/(?=^diff --git )/m) : [];
   const files: CheckpointFile[] = [];
+  let next = 0;
   for (let i = 0; i < names.length - 1;) {
     const status = names[i++]!;
     const first = names[i++]!;
     const previousPath = status.startsWith("R") ? first : null;
     const name = previousPath === null ? first : names[i++]!;
-    const filePatch = patches[files.length];
+    if (name && oversized.has(name)) {
+      files.push({ path: name, previousPath, status: status[0]!, binary: false, patch: "" });
+      continue;
+    }
+    const filePatch = patches[next++];
     if (!name || !filePatch) throw new Error("Checkpoint file listing does not match its patch");
     files.push({
       path: name,
@@ -417,8 +500,7 @@ export async function checkpointFiles(
       patch: filePatch,
     });
   }
-  if (files.length !== patches.length)
-    throw new Error("Checkpoint patch does not match its file listing");
+  if (next !== patches.length) throw new Error("Checkpoint patch does not match its file listing");
   return files;
 }
 
