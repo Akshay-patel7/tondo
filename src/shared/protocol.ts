@@ -243,7 +243,7 @@ export interface SidebarProject {
   readonly path: string;
   /** Whether the sidebar hides the project's threads. */
   readonly collapsed: boolean;
-  /** Its threads, archived ones too, pinned first and then the most recently updated. */
+  /** Its threads, including legacy archives, pinned first and then most recently updated. */
   readonly threads: readonly SidebarThread[];
 }
 
@@ -281,7 +281,7 @@ export type ClientMessage = Versioned<
   | { type: "pin-thread"; threadId: string; pinned: boolean }
   | { type: "archive-thread"; threadId: string; archived: boolean }
   /** What a thread's composer holds, which Tondo keeps across restarts. */
-  | { type: "set-draft"; threadId: string; text: string }
+  | { type: "set-draft"; threadId: string; text: string; userInput?: boolean }
   | { type: "set-draft-images"; threadId: string; images: readonly DraftImage[] }
   /** List project files for @ completion, correlated so stale scans can't replace a new menu. */
   | { type: "list-files"; threadId: string; id: number }
@@ -597,7 +597,16 @@ export function parseClientMessage(data: unknown): ParseResult {
       if (typeof text !== "string") {
         return invalid(`set-draft: text must be a string, not ${describe(text)}`);
       }
-      return exactly(message, { v, type, threadId: threadId as string, text });
+      const { userInput } = message;
+      if (userInput !== undefined && typeof userInput !== "boolean")
+        return invalid("set-draft: userInput must be a boolean");
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        text,
+        ...(userInput === undefined ? {} : { userInput }),
+      });
     }
     case "set-draft-images": {
       const bad = badThreadId(type, threadId);

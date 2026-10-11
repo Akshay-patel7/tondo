@@ -11,6 +11,7 @@ import { Store } from "./store";
 import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { Terminals } from "./terminals";
 import { Workspace } from "./workspace";
+import { IMAGE_FIXTURE } from "../shared/imageFixture";
 
 // Workspace runs real pi through LiveThread. These tests stand in for it, and
 // keep everything else Workspace builds on real: the store, settings.json,
@@ -37,18 +38,19 @@ const { FakeThread, threads } = vi.hoisted(() => {
     readonly open = vi.fn(async () => {});
     readonly close = vi.fn(async () => {});
     readonly trust = vi.fn(async (_trusted: boolean) => {});
+    readonly prompt = vi.fn(async () => {});
 
     constructor(
       project: { id: number; path: string },
-      session: { id: string; file: string | null },
+      selection: { id: string; file: string | null },
       _supervisor: unknown,
       listener: ThreadListener,
       checkpoints: unknown,
     ) {
-      this.id = session.id;
+      this.id = selection.id;
       this.projectId = project.id;
       this.project = project.path;
-      this.sessionFile = session.file;
+      this.sessionFile = selection.file;
       this.listener = listener;
       this.checkpoints = checkpoints;
       made.push(this);
@@ -273,21 +275,198 @@ describe("a project folder deleted outside Tondo", () => {
     const project = path.join(dir, "gone");
     mkdirSync(project);
     const { id: projectId } = store.addProject(project, 1);
-    addThread(projectId, "thread-a");
+    store.addThread({ id: "thread-a", projectId, sessionFile: null, createdAt: 1 }, false);
     addThread(projectId, "thread-b");
     const left = await openThread("thread-a");
     rmSync(project, { recursive: true });
-    const forgotten = next(
-      (message) =>
-        isError(message) ||
-        (message.type === "sidebar" &&
-          !message.projects[0]!.threads.some(({ id }) => id === "thread-a")),
-    );
+    // The row was already hidden, so deletion need not change the sidebar.
+    const forgotten = Promise.withResolvers<void>();
+    const remove = store.removeThread.bind(store);
+    vi.spyOn(store, "removeThread").mockImplementation((id) => {
+      remove(id);
+      if (id === "thread-a") forgotten.resolve();
+    });
     await openThread("thread-b");
-    expect((await forgotten).type).toBe("sidebar");
+    await forgotten.promise;
     expect(left.close).toHaveBeenCalledTimes(1);
     expect(store.thread("thread-a")).toBeUndefined();
     expect(store.thread("thread-b")).toBeDefined();
+  });
+});
+
+describe("draft visibility", () => {
+  it("keeps a new worktree hidden until meaningful input without forgetting its ownership", async () => {
+    const project = repository("managed-project", ["fixture"]);
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: project, encoding: "utf8", stdio: "pipe" }).trim();
+    git("symbolic-ref", "HEAD", "refs/heads/main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    git("config", "commit.gpgsign", "false");
+    git("add", ".");
+    git("commit", "-m", "fixture");
+    const existingId = "existing-worktree";
+    const checkout = path.join(dir, "worktrees", existingId);
+    mkdirSync(path.dirname(checkout), { recursive: true });
+    git("worktree", "add", "-b", "kept-branch", checkout);
+    const { id: projectId } = store.addProject(project, 1);
+    store.addThread({ id: existingId, projectId, sessionFile: null, createdAt: 1 });
+    store.addWorktree({
+      path: checkout,
+      repository: project,
+      branch: "kept-branch",
+      threadId: existingId,
+    });
+    await openThread(existingId);
+    addThread(projectId, "local");
+    await openThread("local");
+    const created = next((message) => message.type === "git-result");
+    workspace.handle({
+      v,
+      type: "git-action",
+      threadId: "local",
+      id: 1,
+      expectedBranch: "main",
+      action: { kind: "new-worktree", branch: "empty-worktree", base: "main" },
+    });
+    expect(await created).toMatchObject({ type: "git-result", error: null });
+    const id = store.ui().openThread!;
+    expect(store.thread(id)).toMatchObject({ visible: false, sessionFile: null });
+    expect(store.worktrees().find((entry) => entry.threadId === id)).toBeDefined();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: expect.not.arrayContaining([expect.objectContaining({ id })]) }],
+    });
+    expect(store.thread(existingId)?.visible).toBe(true);
+    workspace.handle({ v, type: "set-draft", threadId: id, text: " \n\t" });
+    await openThread("local");
+    await workspace.refresh();
+    expect(store.thread(id)?.visible).toBe(false);
+    expect(store.worktrees().find((entry) => entry.threadId === id)).toBeDefined();
+    await openThread(id);
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "Worktree thought" });
+    expect(store.thread(id)).toMatchObject({ visible: true, draft: "Worktree thought" });
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        { threads: expect.arrayContaining([expect.objectContaining({ id, hasDraft: true })]) },
+      ],
+    });
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
+    expect(store.thread(id)?.visible).toBe(true);
+  });
+
+  it("reveals an unedited extension suggestion only after pi accepts its submission", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    const liveThread = threads.find((thread) => thread.id === id)!;
+    workspace.handle({
+      v,
+      type: "set-draft",
+      threadId: id,
+      text: "Extension suggestion",
+      userInput: false,
+    });
+    // Submit clears the composer ahead of sending; no user editor edit revealed it.
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
+    const accepted = Promise.withResolvers<void>();
+    liveThread.prompt.mockImplementationOnce(() => accepted.promise);
+    const revealed = next((message) => message.type === "sidebar");
+    workspace.handle({
+      v,
+      type: "prompt",
+      threadId: id,
+      text: "Extension suggestion",
+      streamingBehavior: "steer",
+    });
+    expect(store.thread(id)?.visible).toBe(false);
+    accepted.resolve();
+    expect(await revealed).toMatchObject({ projects: [{ threads: [{ id, hasDraft: false }] }] });
+    expect(store.thread(id)).toMatchObject({ visible: true, draft: "" });
+    expect(liveThread.prompt).toHaveBeenCalledWith("Extension suggestion", "steer", []);
+  });
+
+  it("does not latch an extension suggestion when pi rejects its submission", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    const liveThread = threads.find((thread) => thread.id === id)!;
+    store.setDraft(id, "Extension suggestion", false);
+    liveThread.prompt.mockRejectedValueOnce(new Error("pi rejected the prompt"));
+    const rejected = next(isError);
+    workspace.handle({
+      v,
+      type: "prompt",
+      threadId: id,
+      text: "Extension suggestion",
+      streamingBehavior: "steer",
+    });
+    expect(await rejected).toMatchObject({ type: "error", message: "pi rejected the prompt" });
+    expect(store.thread(id)?.visible).toBe(false);
+  });
+
+  it("keeps a current draft usable but unlisted until meaningful input", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    expect(sent.find((message) => message.type === "snapshot")).toMatchObject({
+      thread: { id },
+      draft: "",
+    });
+    const sidebar = () => sent.findLast((message) => message.type === "sidebar");
+    expect(sidebar()).toMatchObject({ projects: [{ threads: [] }] });
+    workspace.handle({ v, type: "set-draft", threadId: id, text: " \n\t" });
+    workspace.handle({
+      v,
+      type: "set-draft",
+      threadId: id,
+      text: "Extension suggestion",
+      userInput: false,
+    });
+    expect(sidebar()).toMatchObject({ projects: [{ threads: [] }] });
+    const revealed = next((message) => message.type === "sidebar");
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "A thought" });
+    expect(await revealed).toMatchObject({ projects: [{ threads: [{ id, hasDraft: true }] }] });
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
+    workspace.handle({ v, type: "new-thread", projectId });
+    expect(sidebar()).toMatchObject({ projects: [{ threads: [{ id, hasDraft: false }] }] });
+    expect(store.thread(id)?.visible).toBe(true);
+  });
+
+  it("reveals image-only input without requiring a prompt", () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    workspace.handle({ v, type: "set-draft-images", threadId: id, images: [IMAGE_FIXTURE] });
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id, hasDraft: true }] }],
+    });
+  });
+
+  it("keeps resumed records listed before live messages load", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    addThread(projectId, "resumed");
+    await openThread("resumed");
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id: "resumed" }] }],
+    });
+  });
+
+  it("does not reveal a hidden draft when its offscreen extension sets editor text", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    const liveThread = threads.find((thread) => thread.id === id)!;
+    store.setDraft(id, "Extension suggestion", false);
+    addThread(projectId, "other");
+    await openThread("other");
+    liveThread.listener.editorText("Updated extension suggestion");
+    expect(store.thread(id)).toMatchObject({
+      visible: false,
+      draft: "Extension suggestion\n\nUpdated extension suggestion",
+    });
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id: "other" }] }],
+    });
   });
 });
 

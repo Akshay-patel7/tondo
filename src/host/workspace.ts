@@ -320,13 +320,13 @@ export class Workspace {
         });
         break;
       case "set-draft":
-        this.run(() => this.setDraft(message.threadId, message.text));
+        this.run(() => this.setDraft(message.threadId, message.text, message.userInput));
         break;
       case "set-draft-images":
         this.run(() => {
           this.row(message.threadId);
           this.store.setDraftImages(message.threadId, message.images);
-          this.scheduleSidebar();
+          this.sendSidebar();
         });
         break;
       case "list-checkpoints":
@@ -689,13 +689,13 @@ export class Workspace {
   private newThread(projectId: number): void {
     this.project(projectId);
     const id = randomUUID();
-    this.store.addThread({ id, projectId, sessionFile: null, createdAt: Date.now() });
+    this.store.addThread({ id, projectId, sessionFile: null, createdAt: Date.now() }, false);
     this.open(id);
   }
 
   /** Puts a thread on screen, starting its pi if it isn't running. */
   private open(id: string): void {
-    if (id === this.visibleId) return;
+    if (id === this.visibleId && this.live.has(id)) return;
     const existing = this.live.get(id);
     const thread = existing ?? this.startThread(id);
     // You may have answered for the project in another thread since.
@@ -843,7 +843,7 @@ export class Workspace {
             this.extensionDrafts.get(thread.id),
           );
           this.extensionDrafts.set(thread.id, text);
-          this.setDraft(thread.id, draft);
+          this.setDraft(thread.id, draft, false);
         }
       },
     };
@@ -887,6 +887,11 @@ export class Workspace {
         throw error;
       }
       await thread.prompt(text, streamingBehavior, images);
+      // Sending an extension's suggestion is user input too, without an editor edit.
+      if (text.trim() !== "" || images.length > 0) {
+        this.store.revealThread(threadId);
+        this.sendSidebar();
+      }
       if (imageIds.length > 0) {
         this.store.setDraftImages(
           threadId,
@@ -900,10 +905,10 @@ export class Workspace {
     }
   }
 
-  private setDraft(id: string, text: string): void {
-    const had = this.row(id).draft.trim() !== "";
-    this.store.setDraft(id, text);
-    if (had !== (text.trim() !== "")) this.scheduleSidebar();
+  private setDraft(id: string, text: string, userInput = true): void {
+    this.row(id);
+    this.store.setDraft(id, text, userInput);
+    this.sendSidebar();
   }
 
   /** Every tool for a worktree thread uses its checkout, not the sidebar project's folder. */
@@ -1006,12 +1011,15 @@ export class Workspace {
       if (action.kind === "new-worktree") {
         const newId = randomUUID();
         await this.worktrees.create(status.root, newId, action.branch, action.base);
-        this.store.addThread({
-          id: newId,
-          projectId: row.projectId,
-          sessionFile: null,
-          createdAt: Date.now(),
-        });
+        this.store.addThread(
+          {
+            id: newId,
+            projectId: row.projectId,
+            sessionFile: null,
+            createdAt: Date.now(),
+          },
+          false,
+        );
         this.open(newId);
       } else if (action.kind === "remove-worktree") {
         const worktree = this.worktrees.forThread(threadId);
@@ -1136,6 +1144,7 @@ export class Workspace {
     const thread = this.live.get(id);
     if (
       !row ||
+      row.visible ||
       row.pinned ||
       row.archived ||
       row.draft.trim() ||
@@ -1272,6 +1281,9 @@ export class Workspace {
     for (const row of rows.values()) projectOf.set(row.id, row.projectId);
     const threads = new Map<number, SidebarThread[]>();
     for (const [id, projectId] of projectOf) {
+      // Only newly created Tondo drafts carry this marker. Resumed and legacy
+      // sessions stay listed without depending on their live transcript.
+      if (rows.get(id)?.visible === false) continue;
       let list = threads.get(projectId);
       if (!list) threads.set(projectId, (list = []));
       list.push(this.sidebarThread(id, rows.get(id)));

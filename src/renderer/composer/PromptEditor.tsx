@@ -50,8 +50,8 @@ function snapshot(editor: Editor): EditorSnapshot {
 }
 
 /** One undo step, separate from typing before and after it. A caret move alone never replaces text. */
-function replace(editor: Editor, text: string, caret: number): void {
-  const tr = closeHistory(editor.state.tr);
+function replace(editor: Editor, text: string, caret: number, emitUpdate = true): void {
+  const tr = closeHistory(editor.state.tr).setMeta("preventUpdate", !emitUpdate);
   if (documentMarkdown(tr.doc) !== text) {
     const next = editor.schema.nodeFromJSON(markdownDocument(text));
     tr.replaceWith(0, tr.doc.content.size, next.content);
@@ -135,7 +135,9 @@ export function PromptEditor({
 
   useLayoutEffect(() => {
     if (editor && documentMarkdown(editor.state.doc) !== value) {
-      replace(editor, value, value.length);
+      // Store-driven text already carries its input provenance; do not echo it
+      // through onChange as a fresh user edit.
+      replace(editor, value, value.length, false);
     }
   }, [editor, value]);
 

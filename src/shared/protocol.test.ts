@@ -11,6 +11,18 @@ function rejection(data: unknown): string {
 }
 
 describe("parseClientMessage", () => {
+  it("rejects nonboolean draft input provenance", () => {
+    expect(
+      parseClientMessage({
+        v,
+        type: "set-draft",
+        threadId: "t",
+        text: "draft",
+        userInput: "yes",
+      }).ok,
+    ).toBe(false);
+  });
+
   it("accepts every message the page sends, as a copy", () => {
     const threadId = "0199c5e0-4a2b-7c3d-9e8f-1a2b3c4d5e6f";
     for (const message of [
@@ -24,6 +36,8 @@ describe("parseClientMessage", () => {
       { v, type: "archive-thread", threadId, archived: false },
       { v, type: "set-draft", threadId, text: "" },
       { v, type: "set-draft", threadId, text: "half a thought" },
+      { v, type: "set-draft", threadId, text: "extension text", userInput: false },
+      { v, type: "set-draft", threadId, text: "typed text", userInput: true },
       { v, type: "list-files", threadId, id: 1 },
       { v, type: "list-checkpoints", threadId },
       { v, type: "read-checkpoint", threadId, id: 1, turn: 2 },

@@ -635,7 +635,9 @@ test("Shift+Tab reaches the open thread's actions on the way back, as Tab does o
   const { page } = await launch([]);
   await addProject(tondo!, project);
   await waitForPi(page);
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Keyboard draft");
   const row = threads(page).locator(THREAD_ROW).first();
+  await expect(row).toBeVisible();
   const actions = threads(page).getByRole("button", { name: "Thread actions" });
   const changes = page.getByRole("button", { name: "Changes", exact: true });
 
