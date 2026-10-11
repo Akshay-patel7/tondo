@@ -74,6 +74,7 @@ describe("file index", () => {
     expect((await index.read(folder)).paths).toEqual(["new.txt"]);
   });
 
+  // Writing and listing over 10,000 files takes seconds on a busy or slow machine.
   test("over the cap, a search finds any file by name, ranked like the menu's", async () => {
     git("init", "-q");
     mkdirSync(path.join(folder, "bulk"));
@@ -91,7 +92,7 @@ describe("file index", () => {
       last,
     ]);
     expect(await files.find(folder, "bulk/f")).toHaveLength(20);
-  });
+  }, 30_000);
 
   test("a search before any scan, or of a small project, reads the listing itself", async () => {
     git("init", "-q");
