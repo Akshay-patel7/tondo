@@ -295,7 +295,8 @@ test("a settings.json Tondo can't read is named as the file's problem, and stays
   const welcome = page.getByRole("main");
   await expect(fileProblem(welcome)).toContainText("isn't valid JSON");
   await expect(welcome).not.toContainText("didn't save that change");
-  await expect(welcome).not.toContainText("Tondo can't run the pi it found");
+  // Whatever pi this machine has, the file's problem isn't reported as pi's too.
+  await expect(welcome.getByText("isn't valid JSON")).toHaveCount(1);
 
   // Closing Settings forgets a refused change, not the broken file.
   const settings = page.getByRole("region", { name: "Settings", exact: true });
@@ -365,7 +366,8 @@ test("a broken settings.json is the file's problem, with the file to show, not p
   const alert = page.getByRole("alert").filter({ hasText: "Tondo can't use its settings file" });
   await expect(alert).toContainText(settingsFile);
   await expect(page.getByText("Tondo didn't save that change")).toHaveCount(0);
-  await expect(page.getByText("Tondo can't run the pi it found")).toHaveCount(0);
+  // Whatever pi this machine has, the file's problem isn't reported as pi's too.
+  await expect(page.getByText("isn't valid JSON")).toHaveCount(1);
   await alert
     .getByRole("button", {
       name: process.platform === "darwin" ? "Show in Finder" : "Show in folder",
