@@ -16,6 +16,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { readTerminal } from "./store";
+import { GraphemeUnicode } from "./unicode";
 
 type ThemeColor = Exclude<keyof ITheme, "extendedAnsi">;
 
@@ -274,10 +275,13 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       scrollback: 1_000,
       screenReaderMode: true,
-      allowProposedApi: false,
+      // For terminal.unicode, which takes Tondo's grapheme widths.
+      allowProposedApi: true,
       theme: terminalTheme(),
       minimumContrastRatio: minimumContrast(dark),
     });
+    terminal.unicode.register(new GraphemeUnicode());
+    terminal.unicode.activeVersion = "tondo-graphemes";
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(element);
