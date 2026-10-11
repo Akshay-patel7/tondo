@@ -402,6 +402,8 @@ export function connectToHost(): void {
   window.addEventListener("focus", () => {
     if (port) send({ v, type: "refresh" });
   });
+  // Closing the window, quitting or reloading would otherwise drop text typed in the last moments.
+  window.addEventListener("pagehide", saveDraft);
 }
 
 /** How long the composer waits after you stop typing to save the draft. */

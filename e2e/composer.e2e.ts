@@ -251,3 +251,32 @@ test("a multiline Markdown draft survives quitting and restarting the entire app
   await composer(tondo.page).press("ControlOrMeta+z");
   await expectDraft(tondo.page, source);
 });
+
+test("a draft typed right before quitting survives the restart", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  tondo = await launchWithPi({ workDir, profileDir, script: { responses: [] } });
+  recordErrors(tondo.page);
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(tondo.page);
+  const source = "Typed right before quit";
+  await composer(tondo.page).fill(source);
+  await expectDraft(tondo.page, source);
+  // Quits at once, inside the composer's save delay. It's app.quit(), as Cmd+Q is.
+  await tondo.close();
+  const db = new DatabaseSync(path.join(profileDir, "tondo.sqlite"), { readOnly: true });
+  try {
+    expect(db.prepare("SELECT draft FROM threads").get()?.draft).toBe(source);
+  } finally {
+    db.close();
+  }
+
+  const secondRun = path.join(workDir, "second-run");
+  mkdirSync(secondRun);
+  tondo = await launchWithPi({ workDir: secondRun, profileDir, script: { responses: [] } });
+  recordErrors(tondo.page);
+  await bringToFront(tondo);
+  await waitForPi(tondo.page);
+  await expectDraft(tondo.page, source);
+});
