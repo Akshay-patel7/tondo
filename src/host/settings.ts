@@ -12,7 +12,7 @@ import {
   type SettingsPatch,
   type ShortcutCommand,
 } from "../shared/settings";
-import { formatChord, parseChord } from "../shared/shortcuts";
+import { formatChord, parseChord, shortcutProblems } from "../shared/shortcuts";
 import { canonical } from "./trust";
 
 export interface Settings extends AppSettings {
@@ -51,6 +51,25 @@ export function readSettingsLeniently(file: string): SettingsRead {
   const settings = parse(saved, (what) => problems.push(what));
   return { settings, problem: problems.length === 0 ? null : problem(file, problems[0]!).message };
 }
+
+/**
+ * The shortcut problems `patch` brings to the bindings in `saved`. Problems
+ * the bindings already had, such as two commands a hand edit gave one chord,
+ * don't count against a change that leaves them as they were.
+ */
+export function newShortcutProblems(
+  saved: Settings["shortcuts"],
+  patch: NonNullable<SettingsPatch["shortcuts"]>,
+): string[] {
+  const shortcuts: Record<string, string | null> = { ...saved };
+  for (const [command, text] of Object.entries(patch)) {
+    if (text === "default") delete shortcuts[command];
+    else if (text !== undefined) shortcuts[command] = text;
+  }
+  const had = new Set(shortcutProblems(saved));
+  return shortcutProblems(shortcuts).filter((found) => !had.has(found));
+}
+
 /**
  * Applies `patch` to the settings in `file` and returns them. An invalid
  * change throws and leaves the file as it was.

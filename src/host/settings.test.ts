@@ -13,6 +13,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 import {
+  newShortcutProblems,
   readSettings,
   readSettingsLeniently,
   saveTrustAnswer,
@@ -162,6 +163,24 @@ describe("readSettingsLeniently", () => {
     expect(problem).toContain(`Tondo's settings file ${file} isn't valid JSON: `);
   });
 });
+
+describe("newShortcutProblems", () => {
+  it("lets a change through when the bindings already had a problem it leaves as it was", () => {
+    // Command palette on mod+n clashes with New thread's default.
+    expect(newShortcutProblems({ palette: "mod+n" }, { settings: "mod+j" })).toEqual([]);
+  });
+
+  it("refuses a change that brings a problem of its own", () => {
+    expect(newShortcutProblems({ palette: "mod+n" }, { "add-project": "mod+b" })).toEqual([
+      "Toggle sidebar and Add project both use mod+b.",
+    ]);
+  });
+
+  it("lets a change through that fixes the problem", () => {
+    expect(newShortcutProblems({ palette: "mod+n" }, { palette: "default" })).toEqual([]);
+  });
+});
+
 describe("updateSettings", () => {
   it("keeps keys it doesn't know and your trust answers", () => {
     writeFileSync(

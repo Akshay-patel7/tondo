@@ -9,6 +9,7 @@ import {
   type ShortcutCommand,
 } from "../../shared/settings";
 import {
+  checkShortcuts,
   chordFromKeyEvent,
   chordLabel,
   DEFAULT_SHORTCUTS,
@@ -42,31 +43,51 @@ export function ShortcutSettings() {
       {overrides === undefined ? (
         <Loading>Loading settings…</Loading>
       ) : (
-        <SettingsGroup>
-          {SHORTCUT_COMMANDS.map((command) => (
-            <ShortcutRow
-              key={command}
-              command={command}
-              overrides={overrides}
-              recording={recording?.command === command ? recording : null}
-              setRecording={setRecording}
-            />
-          ))}
-        </SettingsGroup>
+        <ShortcutRows overrides={overrides} recording={recording} setRecording={setRecording} />
       )}
       <FixedKeys />
     </div>
   );
 }
 
+function ShortcutRows({
+  overrides,
+  recording,
+  setRecording,
+}: {
+  overrides: AppSettings["shortcuts"];
+  recording: Recording | null;
+  setRecording: (recording: Recording | null) => void;
+}) {
+  // settings.json can hold bindings the recorder would refuse. They're off, and their rows say why.
+  const { problems } = checkShortcuts(overrides);
+  return (
+    <SettingsGroup>
+      {SHORTCUT_COMMANDS.map((command) => (
+        <ShortcutRow
+          key={command}
+          command={command}
+          overrides={overrides}
+          problems={problems[command]}
+          recording={recording?.command === command ? recording : null}
+          setRecording={setRecording}
+        />
+      ))}
+    </SettingsGroup>
+  );
+}
+
 function ShortcutRow({
   command,
   overrides,
+  problems,
   recording,
   setRecording,
 }: {
   command: ShortcutCommand;
   overrides: AppSettings["shortcuts"];
+  /** What's wrong with the saved binding, which is off until it's fixed. */
+  problems: readonly string[];
   recording: Recording | null;
   setRecording: (recording: Recording | null) => void;
 }) {
@@ -110,9 +131,12 @@ function ShortcutRow({
     const next: Record<string, string | null> = { ...overrides };
     if (binding === "default") delete next[command];
     else next[command] = binding;
-    const problems = shortcutProblems(next);
-    if (problems.length > 0) {
-      setRecording({ command, problem: problems.join(" ") });
+    // Problems the saved bindings already had, such as a clash a hand edit made, aren't this
+    // change's fault. The host refuses a change on the same terms.
+    const had = new Set(shortcutProblems(overrides));
+    const refused = shortcutProblems(next).filter((problem) => !had.has(problem));
+    if (refused.length > 0) {
+      setRecording({ command, problem: refused.join(" ") });
       return;
     }
     save(binding);
@@ -177,6 +201,10 @@ function ShortcutRow({
       {recording?.problem ? (
         <p id={problemId} role="alert" className="basis-full text-xs text-destructive">
           {recording.problem}
+        </p>
+      ) : recording === null && problems.length > 0 ? (
+        <p role="alert" className="basis-full text-xs text-destructive">
+          {problems.join(" ")}
         </p>
       ) : null}
     </div>

@@ -5,15 +5,24 @@
 // without a name.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bringToFront, type Tondo } from "./launch";
+import { bringToFront, launchTondo, type Tondo } from "./launch";
 import {
   addProject,
   answerFolderDialog,
   bashCall,
   composer,
+  expectDraft,
   launchWithPi,
   reply,
   send,
@@ -600,3 +609,70 @@ async function auditNames(page: Page): Promise<{ checked: number; unnamed: strin
     await cdp.detach();
   }
 }
+
+/** Opens Settings with its shortcut and goes to the Shortcuts section. */
+async function openShortcuts(page: Page): Promise<Locator> {
+  await page.keyboard.press("ControlOrMeta+Comma");
+  const settings = page.getByRole("region", { name: "Settings", exact: true });
+  await expect(settings.getByRole("heading", { level: 1, name: "Settings" })).toBeFocused();
+  await settings
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Shortcuts", exact: true })
+    .click();
+  await expect(settings.getByText("Loading settings…")).toHaveCount(0);
+  return settings;
+}
+
+test("a shortcut without mod in settings.json is off and flagged, and its key types", async () => {
+  tondo = await launchWithPi({
+    workDir: dir,
+    env,
+    script: { responses: [] },
+    settings: { shortcuts: { palette: "k" } },
+  });
+  await bringToFront(tondo);
+  const { page } = tondo;
+  await addProject(tondo, project);
+  await waitForPi(page);
+
+  await composer(page).click();
+  await page.keyboard.type("kick");
+  await expectDraft(page, "kick");
+  await expect(page.getByRole("dialog", { name: "Command palette" })).toHaveCount(0);
+
+  const settings = await openShortcuts(page);
+  await expect(
+    settings.getByRole("group", { name: "Command palette", exact: true }).getByRole("alert"),
+  ).toHaveText("Command palette's shortcut k needs mod, which is Cmd or Ctrl.");
+});
+
+test("two commands on one chord in settings.json are flagged, and a change to a third saves", async () => {
+  tondo = await launchTondo({ env, settings: { shortcuts: { palette: "mod+n" } } });
+  const { page, profileDir } = tondo;
+  // Shortcuts do nothing until main has handed the page its port to the host.
+  await expect(page.getByRole("button", { name: "Add project", exact: true })).toBeEnabled();
+
+  const settings = await openShortcuts(page);
+  const clash = "New thread and Command palette both use mod+n.";
+  const flag = (name: string) =>
+    settings.getByRole("group", { name, exact: true }).getByRole("alert");
+  await expect(flag("Command palette")).toHaveText(clash);
+  await expect(flag("New thread")).toHaveText(clash);
+
+  const row = settings.getByRole("group", { name: "Settings", exact: true });
+  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(row.getByRole("textbox", { name: "Shortcut for Settings" })).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+j");
+  await expect(row.getByRole("button", { name: "Change", exact: true })).toBeFocused();
+  await expect(row.getByRole("alert")).toHaveCount(0);
+  await expect
+    .poll(
+      () =>
+        (
+          JSON.parse(readFileSync(path.join(profileDir, "settings.json"), "utf8")) as {
+            shortcuts?: unknown;
+          }
+        ).shortcuts,
+    )
+    .toEqual({ palette: "mod+n", settings: "mod+j" });
+});

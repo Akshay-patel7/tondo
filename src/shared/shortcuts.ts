@@ -159,9 +159,27 @@ export function resolveShortcuts(
   ) as Record<ShortcutCommand, Chord | null>;
 }
 
-/** What's wrong with these bindings, one sentence each. Empty when they all work. */
-export function shortcutProblems(overrides: AppSettings["shortcuts"]): string[] {
-  const problems: string[] = [];
+export interface ShortcutCheck {
+  /**
+   * Each command's chord, or null if it's disabled or its binding can't work:
+   * no mod, a reserved chord, or one an earlier command already uses.
+   */
+  readonly usable: Readonly<Record<ShortcutCommand, Chord | null>>;
+  /** What's wrong with each command's binding. Two commands on one chord both get the sentence. */
+  readonly problems: Readonly<Record<ShortcutCommand, readonly string[]>>;
+}
+
+/**
+ * Checks every binding, as a hand-edited settings.json can hold any of them.
+ * Of two commands on one chord, the first in SHORTCUT_COMMANDS keeps it.
+ */
+export function checkShortcuts(overrides: AppSettings["shortcuts"]): ShortcutCheck {
+  const usable = {} as Record<ShortcutCommand, Chord | null>;
+  const problems = {} as Record<ShortcutCommand, string[]>;
+  for (const command of SHORTCUT_COMMANDS) {
+    usable[command] = null;
+    problems[command] = [];
+  }
   const owners = new Map<string, ShortcutCommand>();
   for (const command of SHORTCUT_COMMANDS) {
     const title = SHORTCUT_TITLES[command];
@@ -169,20 +187,33 @@ export function shortcutProblems(overrides: AppSettings["shortcuts"]): string[] 
     if (text === null) continue;
     const chord = parseChord(text ?? DEFAULT_SHORTCUTS[command]);
     if (chord === null) {
-      problems.push(`${title}'s shortcut ${JSON.stringify(text)} isn't one Tondo understands.`);
+      problems[command].push(
+        `${title}'s shortcut ${JSON.stringify(text)} isn't one Tondo understands.`,
+      );
       continue;
     }
     const canonical = formatChord(chord);
     const owner = owners.get(canonical);
     if (!chord.mod) {
-      problems.push(`${title}'s shortcut ${canonical} needs mod, which is Cmd or Ctrl.`);
+      problems[command].push(`${title}'s shortcut ${canonical} needs mod, which is Cmd or Ctrl.`);
     } else if (Object.hasOwn(RESERVED, canonical)) {
-      problems.push(`${title}'s shortcut ${canonical} is kept for ${RESERVED[canonical]}.`);
+      problems[command].push(
+        `${title}'s shortcut ${canonical} is kept for ${RESERVED[canonical]}.`,
+      );
     } else if (owner !== undefined) {
-      problems.push(`${title} and ${SHORTCUT_TITLES[owner]} both use ${canonical}.`);
+      const problem = `${title} and ${SHORTCUT_TITLES[owner]} both use ${canonical}.`;
+      problems[command].push(problem);
+      problems[owner].push(problem);
     } else {
       owners.set(canonical, command);
+      usable[command] = chord;
     }
   }
-  return problems;
+  return { usable, problems };
+}
+
+/** What's wrong with these bindings, one sentence each. Empty when they all work. */
+export function shortcutProblems(overrides: AppSettings["shortcuts"]): string[] {
+  const { problems } = checkShortcuts(overrides);
+  return [...new Set(SHORTCUT_COMMANDS.flatMap((command) => problems[command]))];
 }

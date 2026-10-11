@@ -24,8 +24,7 @@ import {
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
 import type { AppSettings, SettingsPatch, ThemeSetting } from "../shared/settings";
-import { shortcutProblems } from "../shared/shortcuts";
-import type { Settings } from "./settings";
+import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
 import { TurnCheckpoints } from "./turnCheckpoints";
@@ -479,12 +478,7 @@ export class Workspace {
     try {
       before = this.supervisor.settings();
       if (patch.shortcuts !== undefined) {
-        const shortcuts: Record<string, string | null> = { ...before.shortcuts };
-        for (const [command, text] of Object.entries(patch.shortcuts)) {
-          if (text === "default") delete shortcuts[command];
-          else shortcuts[command] = text;
-        }
-        const problems = shortcutProblems(shortcuts);
+        const problems = newShortcutProblems(before.shortcuts, patch.shortcuts);
         if (problems.length > 0) throw new Error(problems.join(" "));
       }
       if (typeof patch.piPath === "string") await this.supervisor.checkPi(patch.piPath);

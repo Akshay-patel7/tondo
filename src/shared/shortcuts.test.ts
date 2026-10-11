@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SHORTCUT_COMMANDS } from "./settings";
 import {
+  checkShortcuts,
   chordFromKeyEvent,
   chordLabel,
   DEFAULT_SHORTCUTS,
@@ -132,6 +133,36 @@ describe("resolveShortcuts", () => {
     expect(resolved.palette).toEqual(parseChord("mod+shift+p"));
     expect(resolved.settings).toBeNull();
     expect(resolved["new-thread"]).toEqual(parseChord("mod+n"));
+  });
+});
+
+describe("checkShortcuts", () => {
+  it("turns off a binding without mod or a reserved one, and says why on its row", () => {
+    const { usable, problems } = checkShortcuts({ palette: "k", settings: "mod+c" });
+    expect(usable.palette).toBeNull();
+    expect(usable.settings).toBeNull();
+    expect(usable["new-thread"]).toEqual(parseChord("mod+n"));
+    expect(problems.palette).toEqual([
+      "Command palette's shortcut k needs mod, which is Cmd or Ctrl.",
+    ]);
+    expect(problems.settings).toEqual(["Settings's shortcut mod+c is kept for copy."]);
+    expect(problems["new-thread"]).toEqual([]);
+  });
+
+  it("leaves a shared chord with the first command, and flags both rows", () => {
+    const { usable, problems } = checkShortcuts({ palette: "mod+n" });
+    expect(usable.palette).toEqual(parseChord("mod+n"));
+    expect(usable["new-thread"]).toBeNull();
+    const clash = "New thread and Command palette both use mod+n.";
+    expect(problems.palette).toEqual([clash]);
+    expect(problems["new-thread"]).toEqual([clash]);
+    expect(shortcutProblems({ palette: "mod+n" })).toEqual([clash]);
+  });
+
+  it("finds nothing wrong with the defaults", () => {
+    const { usable, problems } = checkShortcuts({});
+    expect(usable).toEqual(resolveShortcuts({}));
+    expect(Object.values(problems).flat()).toEqual([]);
   });
 });
 

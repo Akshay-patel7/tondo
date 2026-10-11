@@ -86,6 +86,19 @@ describe("appCommand", () => {
     expect(appCommand(press("b", "KeyB", { metaKey: true }), mac)).toBeNull();
   });
 
+  test("ignores a binding from settings.json without mod, so typing stays typing", () => {
+    bind({ palette: "k" });
+    expect(appCommand(press("k", "KeyK"), mac)).toBeNull();
+    expect(appCommand(press("k", "KeyK", { metaKey: true }), mac)).toBeNull();
+    expect(shortcutLabelFor("palette", mac)).toBeNull();
+  });
+
+  test("gives a chord two bindings share to the first command only", () => {
+    bind({ palette: "mod+n" });
+    expect(appCommand(press("n", "KeyN", { metaKey: true }), mac)).toEqual({ type: "palette" });
+    expect(shortcutLabelFor("new-thread", mac)).toBeNull();
+  });
+
   test("keeps the thread jumps when a binding takes their keys", () => {
     bind({ settings: "mod+digit1" });
     expect(appCommand(press("1", "Digit1", { metaKey: true }), mac)).toEqual({
