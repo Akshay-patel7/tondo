@@ -89,9 +89,11 @@ export function DiffPanel() {
   };
 
   return (
+    // In a narrow window, as at 200% zoom, the panel narrows too, so the
+    // thread beside it keeps about 320 px (sidebar/layout.ts).
     <aside
       aria-label="Turn changes"
-      className="flex w-[420px] min-w-0 shrink-0 flex-col border-l border-border bg-card"
+      className="flex w-[min(420px,45vw)] min-w-0 shrink-0 flex-col border-l border-border bg-card"
       onKeyDown={onKeyDown}
     >
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border ps-4 pe-2">

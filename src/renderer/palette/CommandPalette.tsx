@@ -6,6 +6,7 @@ import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "re
 import { runPaletteAction } from "../commands";
 import { useHost } from "../connection";
 import { isMac } from "../platform";
+import { useSidebarShown } from "../sidebar/layout";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -34,7 +35,7 @@ function groupItems(items: readonly PaletteItem[]): Group[] {
 export function CommandPalette() {
   const projects = useHost((host) => host.projects);
   const open = useHost((host) => host.thread);
-  const sidebarHidden = useHost((host) => host.sidebarHidden);
+  const sidebarHidden = !useSidebarShown();
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState(0);
   const input = useRef<HTMLInputElement>(null);

@@ -36,7 +36,6 @@ import {
   removeProject,
   renameThread,
   setCollapsed,
-  toggleSidebar,
   useHost,
 } from "../connection";
 import { folderName, formatAge } from "../format";
@@ -64,6 +63,7 @@ import {
 } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { toggleSidebarShown } from "./layout";
 import { listedThreads, MORE_SIZE, PAGE_SIZE } from "./model";
 import { endRename, startRename, useFocusedRow, useRenaming } from "./store";
 
@@ -231,7 +231,7 @@ export function Sidebar() {
             label="Hide sidebar"
             command="toggle-sidebar"
             disabled={!connected}
-            onClick={toggleSidebar}
+            onClick={toggleSidebarShown}
           >
             <PanelLeft aria-hidden />
           </ShellButton>

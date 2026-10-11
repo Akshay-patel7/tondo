@@ -15,6 +15,7 @@ import type { PaletteAction } from "./palette/model";
 import { closePalette, togglePalette } from "./palette/store";
 import { openSettings } from "./settings/store";
 import type { AppCommand } from "./shortcuts";
+import { toggleSidebarShown } from "./sidebar/layout";
 import { stepThread, threadOrder } from "./sidebar/model";
 import { startRename } from "./sidebar/store";
 import { useTerminals } from "./terminal/store";
@@ -38,7 +39,7 @@ export function runAppCommand(command: AppCommand): void {
   const { thread, projects } = useHost.getState();
   switch (command.type) {
     case "sidebar":
-      toggleSidebar();
+      toggleSidebarShown();
       break;
     case "new-thread":
       newThreadHere();
@@ -72,7 +73,7 @@ export function runPaletteAction(action: PaletteAction): void {
       addProject();
       break;
     case "toggle-sidebar":
-      toggleSidebar();
+      toggleSidebarShown();
       break;
     case "settings":
       openSettings();
