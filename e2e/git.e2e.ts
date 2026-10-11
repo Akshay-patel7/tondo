@@ -24,6 +24,7 @@ import {
   reply,
   send,
   threadRows,
+  threads,
   waitForIdle,
   waitForPi,
   waitForFileCommand,
@@ -389,4 +390,35 @@ test("a blank commit message or branch name is refused in the dialog instead of 
   await expect(dialog).toBeHidden();
   await expect(commit).toBeEnabled();
   expect(git(project, "branch", "--show-current")).toBe("main");
+});
+
+test("a worktree whose folder was deleted outside Tondo can be removed, and then its project", async () => {
+  const { page } = await start();
+  await page.getByRole("button", { name: "New worktree", exact: true }).click();
+  await page.getByLabel("Branch name", { exact: true }).fill("feature/gone");
+  await submit("Create worktree thread");
+  await waitForPi(page);
+  await expectPicked(page, "Git branch", "feature/gone");
+  await expect(threadRows(page)).toHaveCount(2);
+  const checkout = worktreePath();
+  rmSync(checkout, { recursive: true, force: true });
+
+  await page.getByRole("button", { name: "Refresh Git", exact: true }).click();
+  await expect(page.getByText("This worktree's folder was deleted outside Tondo")).toBeVisible();
+  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await submit("Remove worktree and forget thread");
+  await expect(threadRows(page)).toHaveCount(1);
+  expect(git(project, "worktree", "list", "--porcelain")).not.toContain(checkout);
+  expect(git(project, "branch", "--list", "feature/gone")).toContain("feature/gone");
+
+  await threads(page).getByRole("button", { name: "project", exact: true }).click({
+    button: "right",
+  });
+  await page.getByRole("menuitem", { name: "Remove project…" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Remove project", exact: true })
+    .click();
+  await expect(threads(page).getByRole("button", { name: "project", exact: true })).toHaveCount(0);
+  await expect(threadRows(page)).toHaveCount(0);
 });

@@ -80,13 +80,28 @@ export function BranchToolbar() {
   const [actionOpen, setActionOpen] = useState(false);
   const branchPicker = useRef<HTMLButtonElement>(null);
   const [focused, setFocused] = useState<Control | null>(null);
+  const disabled = busy || !connected;
   if (!status?.root)
     return (
-      <p className="mt-2 text-xs text-muted-foreground">
-        {error ?? (status ? "Not a Git checkout" : "Reading Git status…")}
-      </p>
+      <div className="mt-2 flex items-center gap-1">
+        <p className="text-xs text-muted-foreground">
+          {error ?? (status ? "Not a Git checkout" : "Reading Git status…")}
+        </p>
+        {error ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Refresh Git"
+            disabled={disabled}
+            onClick={refreshGit}
+          >
+            <RefreshCw aria-hidden />
+          </Button>
+        ) : null}
+        {/* A worktree whose folder was deleted outside Tondo must stay removable. */}
+        {worktree ? <RemoveMissingWorktree disabled={disabled} cwd={cwd ?? ""} /> : null}
+      </div>
     );
-  const disabled = busy || !connected;
   const open = (kind: Action["kind"], branch?: string) => {
     setAction({
       id: (action?.id ?? 0) + 1,
@@ -404,6 +419,84 @@ function Field({ id, label, children }: { id: string; label: string; children: R
       <Label htmlFor={id}>{label}</Label>
       {children}
     </div>
+  );
+}
+
+/** Removal for a worktree thread whose checkout Git can't read, such as a deleted folder. */
+function RemoveMissingWorktree({ disabled, cwd }: { disabled: boolean; cwd: string }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      await performGit({ kind: "remove-worktree", force: false }, null);
+      setOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+    setPending(false);
+  };
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="xs"
+        disabled={disabled}
+        onClick={() => {
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        <Trash2 aria-hidden />
+        Remove worktree
+      </Button>
+      <AlertDialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next && !pending) setOpen(false);
+        }}
+      >
+        <AlertDialogPopup initialFocus={cancel} className="max-w-md">
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{TITLES["remove-worktree"]}</AlertDialogTitle>
+              <p className="font-mono text-xs break-all text-muted-foreground">{cwd}</p>
+              <AlertDialogDescription>
+                Forget this thread in Tondo and clear Git&apos;s record of its checkout if the
+                folder is gone. The branch and external pi session file stay. A folder that still
+                exists is removed only if it has no uncommitted or ignored files.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {error ? (
+              <Alert variant="destructive" role="alert">
+                <CircleAlert aria-hidden />
+                <AlertTitle>{FAILURES["remove-worktree"]}</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel ref={cancel} disabled={pending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction type="submit" variant="destructive" disabled={pending}>
+                {pending ? (
+                  <>
+                    <Spinner size="sm" />
+                    Working…
+                  </>
+                ) : (
+                  TITLES["remove-worktree"]
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </form>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
   );
 }
 

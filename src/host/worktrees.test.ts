@@ -18,6 +18,9 @@ import { Store } from "./store";
 import { Worktrees } from "./worktrees";
 import { sessionFolder } from "./sessionFolder";
 
+const CREATED_AT = 1_700_000_000_000;
+const owner = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
 let dir: string;
 let cwd: string;
 let git: Git;
@@ -121,6 +124,55 @@ it("cleans the registration of a missing abandoned folder without deleting its b
   expect(store.worktrees()).toEqual([]);
   expect(await git.run(cwd, ["worktree", "list", "--porcelain"])).not.toContain(worktree.path);
   expect((await git.status(cwd)).branches).toContain("missing");
+});
+
+it("forgets a creation that Git refused, so no ledger row outlives it", async () => {
+  await worktrees.create(cwd, owner(8), "taken", "HEAD");
+  const before = store.worktrees();
+  await expect(worktrees.create(cwd, owner(9), "taken", "HEAD")).rejects.toThrow();
+  await expect(worktrees.create(cwd, owner(10), "taken", "HEAD")).rejects.toThrow();
+  expect(store.worktrees()).toEqual(before);
+});
+
+it("forgets a live thread's worktree whose folder was deleted, keeping its branch", async () => {
+  const worktree = await worktrees.create(cwd, owner(11), "gone", "HEAD");
+  const project = store.addProject(cwd, CREATED_AT);
+  store.addThread({
+    id: worktree.threadId,
+    projectId: project.id,
+    sessionFile: null,
+    createdAt: CREATED_AT,
+  });
+  expect(await worktrees.forgetIfMissing(worktree)).toBe(false);
+  expect(store.worktrees()).toEqual([worktree]);
+  rmSync(worktree.path, { recursive: true });
+  expect(await worktrees.forgetIfMissing(worktree)).toBe(true);
+  expect(store.worktrees()).toEqual([]);
+  expect(await git.run(cwd, ["worktree", "list", "--porcelain"])).not.toContain(worktree.path);
+  expect((await git.status(cwd)).branches).toContain("gone");
+});
+
+it("clears an abandoned empty owned folder, and explains a foreign one in plain words", async () => {
+  const root = path.join(dir, "managed");
+  mkdirSync(root);
+  const empty = { path: path.join(root, owner(12)), repository: cwd, branch: "x", threadId: "" };
+  empty.threadId = path.basename(empty.path);
+  mkdirSync(empty.path);
+  const full = { path: path.join(root, owner(13)), repository: cwd, branch: "y", threadId: "" };
+  full.threadId = path.basename(full.path);
+  mkdirSync(full.path);
+  writeFileSync(path.join(full.path, "notes"), "keep");
+  store.addWorktree(empty);
+  store.addWorktree(full);
+  const messages: string[] = [];
+  await worktrees.cleanup((message) => messages.push(message));
+  expect(existsSync(empty.path)).toBe(false);
+  expect(store.worktrees()).toEqual([full]);
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toContain("not Tondo's managed linked worktree");
+  expect(messages[0]).toContain("delete the folder");
+  expect(messages[0]).not.toContain("ENOENT");
+  expect(existsSync(path.join(full.path, "notes"))).toBe(true);
 });
 
 it("refuses paths outside its managed root and symlink replacements even with force", async () => {

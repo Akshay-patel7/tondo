@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { Git } from "./git";
 import { GitCommands } from "./gitCommand";
-import { inside, Worktrees } from "./worktrees";
+import { inside, missing, Worktrees } from "./worktrees";
 import {
   NO_EXTENSION_UI,
   PROTOCOL_VERSION,
@@ -873,7 +873,13 @@ export class Workspace {
     try {
       status = await this.git.status(this.checkout(this.row(id)), true, fresh);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      const worktree = this.worktrees.forThread(id);
+      error =
+        worktree && (await missing(worktree.path).catch(() => false))
+          ? "This worktree's folder was deleted outside Tondo. Remove the worktree to forget its thread. Its branch stays."
+          : cause instanceof Error
+            ? cause.message
+            : String(cause);
     }
     if (generation !== this.gitGeneration || this.visibleId !== id || !this.gitConnected) return;
     const json = JSON.stringify({ status, error });
@@ -901,6 +907,27 @@ export class Workspace {
       await this.gitReading;
       const row = this.row(threadId);
       const cwd = this.checkout(row);
+      const managed = this.worktrees.forThread(threadId);
+      if (action.kind === "remove-worktree" && managed && (await missing(managed.path))) {
+        // Deleted outside Tondo: no files are left to lose, only Git's record and the ledger row.
+        const thread = this.live.get(threadId);
+        await this.terminals.close(threadId);
+        if (thread) await this.letGo(thread);
+        try {
+          if (!(await this.worktrees.forgetIfMissing(managed)))
+            throw new Error("The worktree's folder is back. Refresh Git and try again.");
+        } catch (cause) {
+          this.startThread(threadId).show();
+          this.sendSnapshot();
+          throw cause;
+        }
+        await this.forgetWorktreeThread(
+          threadId,
+          managed.repository,
+          "The worktree's folder was already gone. Cleared Git's record of it and forgot its thread. Its branch and external pi session file were kept.",
+        );
+        return;
+      }
       const status = await this.git.status(cwd, false);
       if (!status.root) throw new Error("This folder is not a Git checkout.");
       if (status.branch !== expectedBranch)
@@ -953,24 +980,9 @@ export class Workspace {
           this.sendSnapshot();
           throw cause;
         }
-        // Checkpoint refs are shared by linked worktrees. Use the surviving
-        // repository after removal, and never delete diffs on a refused removal.
-        try {
-          await deleteCheckpoints(worktree.repository, threadId);
-        } catch (cause) {
-          this.toast(
-            "warning",
-            `Worktree removed, but checkpoint cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-          );
-        }
-        this.store.removeThread(threadId);
-        this.found.delete(threadId);
-        this.visibleId = null;
-        this.store.setUi("openThread", null);
-        this.sendSnapshot();
-        this.sendSidebar();
-        this.toast(
-          "info",
+        await this.forgetWorktreeThread(
+          threadId,
+          worktree.repository,
           "Removed the worktree and forgot its thread. Its branch and external pi session file were kept.",
         );
       } else {
@@ -988,13 +1000,40 @@ export class Workspace {
     }
   }
 
+  /** After a thread's worktree is gone: deletes its checkpoints and forgets the thread. */
+  private async forgetWorktreeThread(
+    threadId: string,
+    repository: string,
+    done: string,
+  ): Promise<void> {
+    // Checkpoint refs are shared by linked worktrees. Use the surviving
+    // repository after removal, and never delete diffs on a refused removal.
+    try {
+      await deleteCheckpoints(repository, threadId);
+    } catch (cause) {
+      this.toast(
+        "warning",
+        `Worktree removed, but checkpoint cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+    this.store.removeThread(threadId);
+    this.found.delete(threadId);
+    this.visibleId = null;
+    this.store.setUi("openThread", null);
+    this.sendSnapshot();
+    this.sendSidebar();
+    this.toast("info", done);
+  }
+
   private async removeProject(projectId: number): Promise<void> {
     const project = this.project(projectId);
-    if (
-      this.store
-        .threads()
-        .some((row) => row.projectId === projectId && this.worktrees.forThread(row.id))
-    )
+    // A worktree whose folder was deleted outside Tondo has no files left to keep.
+    const worktrees = this.store
+      .threads()
+      .filter((row) => row.projectId === projectId)
+      .flatMap((row) => this.worktrees.forThread(row.id) ?? []);
+    const gone = await Promise.all(worktrees.map((worktree) => missing(worktree.path)));
+    if (gone.includes(false))
       throw new Error(
         "Remove this project's managed worktrees before removing the project. Their files have been kept.",
       );
@@ -1014,14 +1053,20 @@ export class Workspace {
       }
       if (this.visibleId === null) this.sendSnapshot();
       await Promise.all(closing);
-      for (const [id, entry] of this.found) {
-        if (entry.projectId === projectId) this.found.delete(id);
+      for (const worktree of worktrees) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- one Git registration at a time.
+        if (!(await this.worktrees.forgetIfMissing(worktree)))
+          throw new Error("A worktree's folder is back. Remove that worktree first.");
       }
       for (const row of this.store.threads().filter((stored) => stored.projectId === projectId)) {
         // oxlint-disable-next-line eslint/no-await-in-loop -- delete refs before forgetting their owner.
         await this.deleteThreadCheckpoints(row.id, project.path);
       }
       this.store.removeProject(projectId);
+      // Titles come from these until the project is really gone.
+      for (const [id, entry] of this.found) {
+        if (entry.projectId === projectId) this.found.delete(id);
+      }
       this.sendSidebar();
     } finally {
       this.removingProjects.delete(projectId);
@@ -1074,10 +1119,11 @@ export class Workspace {
 
   private async deleteThreadCheckpoints(id: string, project: string): Promise<void> {
     const roots = new Set(this.store.checkpoints(id).map((record) => record.root));
-    roots.add(await checkpointRoot(project));
+    // A folder deleted from disk took its refs with it, and Git can't start inside it.
+    if (!(await missing(project))) roots.add(await checkpointRoot(project));
     for (const root of roots) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- delete one repository's refs at a time.
-      if (root) await deleteCheckpoints(root, id);
+      if (root && !(await missing(root))) await deleteCheckpoints(root, id);
     }
   }
 
