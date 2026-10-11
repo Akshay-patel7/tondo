@@ -4,6 +4,12 @@
 // The shared pool follows T3 Code's apps/web/src/components/DiffWorkerPoolProvider.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import {
+  registerCustomTheme,
+  resolveTheme,
+  type ThemeRegistrationResolved,
+  type ThemesType,
+} from "@pierre/diffs";
+import {
   File,
   PatchDiff,
   Virtualizer,
@@ -16,6 +22,29 @@ import {
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { DIFF_DARK, DIFF_LIGHT } from "./syntaxColors";
+
+/**
+ * pierre's light and dark themes, with each syntax color that falls under
+ * 4.5:1 on some line of a diff swapped for one that doesn't (syntaxColors.ts).
+ * The pool resolves them on the page and hands them to its workers.
+ */
+const THEMES = { light: "tondo-light", dark: "tondo-dark" } as const satisfies ThemesType;
+
+function withColors(
+  theme: ThemeRegistrationResolved,
+  name: string,
+  colors: Readonly<Record<string, string>>,
+): ThemeRegistrationResolved {
+  return { ...theme, name, colorReplacements: { ...theme.colorReplacements, ...colors } };
+}
+
+registerCustomTheme(THEMES.light, async () =>
+  withColors(await resolveTheme("pierre-light"), THEMES.light, DIFF_LIGHT),
+);
+registerCustomTheme(THEMES.dark, async () =>
+  withColors(await resolveTheme("pierre-dark"), THEMES.dark, DIFF_DARK),
+);
 
 /** Workers in the pool. Each one loads its own Shiki and grammars. */
 const POOL_SIZE = 2;
@@ -37,7 +66,7 @@ function acquirePool(): () => void {
       { workerFactory: () => new DiffsWorker(), poolSize: POOL_SIZE },
       // Shiki's JavaScript regex engine, like the code blocks'. The WASM one
       // would need 'wasm-unsafe-eval' in the CSP.
-      { preferredHighlighter: "shiki-js" },
+      { preferredHighlighter: "shiki-js", theme: THEMES },
     ),
     users: 0,
     idleTimer: undefined,
@@ -112,7 +141,9 @@ function CodeBox({ label, children }: { label: string; children: ReactNode }) {
   };
   return (
     <div ref={nameScrollBox} className="relative">
-      <Virtualizer className="peer max-h-[360px] overflow-auto outline-hidden [--diffs-font-family:var(--font-mono)]">
+      {/* Changed lines' numbers take the colors of a card's +N −M, which reach
+          4.5:1 on those lines. pierre's light green is under 3:1. */}
+      <Virtualizer className="peer max-h-[360px] overflow-auto outline-hidden [--diffs-fg-number-addition-override:var(--addition)] [--diffs-fg-number-deletion-override:var(--deletion)] [--diffs-font-family:var(--font-mono)]">
         {children}
       </Virtualizer>
       {/* The code paints over any ring on its own box, so the focus ring sits
@@ -138,8 +169,8 @@ function subscribeToScheme(onChange: () => void): () => void {
 const currentScheme = (): Scheme => (DARK.matches ? "dark" : "light");
 
 /**
- * The pool colors code for both of pierre's themes at once, so a scheme change
- * only switches which colors show. Nothing is highlighted again.
+ * The pool colors code for both themes at once, so a scheme change only
+ * switches which colors show. Nothing is highlighted again.
  */
 function useScheme(): Scheme {
   return useSyncExternalStore(subscribeToScheme, currentScheme);
@@ -161,6 +192,7 @@ const MAX_COLORED_DIFF_LINES = 2500;
 const MAX_COLORED_FILE_LINES = 2 * MAX_COLORED_DIFF_LINES;
 
 const DIFF_OPTIONS: FileDiffOptions<undefined, undefined> = {
+  theme: THEMES,
   diffStyle: "unified",
   overflow: "scroll",
   // The card's header already names the file.
@@ -182,6 +214,7 @@ export function DiffView({ patch }: { patch: string }) {
 }
 
 const WITH_NUMBERS: FileOptions<undefined, undefined> = {
+  theme: THEMES,
   overflow: "scroll",
   disableFileHeader: true,
   tokenizeMaxLength: MAX_COLORED_FILE_LINES,
