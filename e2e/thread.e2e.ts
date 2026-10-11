@@ -132,6 +132,35 @@ test("Escape stops pi mid-reply", async () => {
   await expect(row(page, 3)).toHaveText("Still here.");
 });
 
+test("thinking animates only until the answer starts and respects reduced motion", async () => {
+  const response = reply(words(200));
+  response.content.unshift({ type: "thinking", thinking: words(200) });
+  const page = await start({ tokensPerSecond: 200, responses: [response] });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await send(page, "Think then answer.");
+  const thinking = page.locator("[data-streaming] summary span");
+  await expect(thinking).toHaveCSS("animation-name", "pulse");
+  await expect(composer(page)).toHaveAttribute(
+    "aria-placeholder",
+    process.platform === "darwin"
+      ? "Steer pi with Return, or queue a follow-up with Option+Return"
+      : "Steer pi with Enter, or queue a follow-up with Alt+Enter",
+  );
+  await page.screenshot({ path: test.info().outputPath("thinking-active.png") });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(thinking).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(thinking).toHaveCSS("animation-name", "pulse");
+  // The collapsed thinking body also contains words; target the rendered answer.
+  await expect(page.locator("[data-streaming] article > div p")).toContainText("word0", {
+    timeout: 15_000,
+  });
+  await expect(thinking).toHaveCSS("animation-name", "none");
+  await waitForIdle(page);
+  await expect(page.locator("summary span")).toHaveCSS("animation-name", "none");
+  await page.screenshot({ path: test.info().outputPath("thinking-finished.png") });
+});
+
 test("Enter steers pi and Alt+Enter queues a follow-up, and pi takes both in turn", async () => {
   const release = path.join(workDir, "release");
   const page = await start({
@@ -141,6 +170,7 @@ test("Enter steers pi and Alt+Enter queues a follow-up, and pi takes both in tur
   await send(page, "Start.");
   // Stop also shows during checkpoint preparation, before pi can be steered.
   await expect(page.locator("[data-tool-call]")).toHaveAttribute("data-status", "running");
+  await page.screenshot({ path: test.info().outputPath("responding-shortcut.png") });
 
   await send(page, "Steer this.");
   await send(page, "Then this.", "Alt+Enter");

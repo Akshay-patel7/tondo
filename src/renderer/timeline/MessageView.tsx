@@ -77,8 +77,13 @@ function AssistantView({ message, streaming }: { message: AssistantMessage; stre
     <article aria-label="pi" className="py-3">
       {message.content.map((block, index) => (
         // pi names content blocks by position (contentIndex) and only appends them.
-        // oxlint-disable-next-line react/no-array-index-key
-        <ContentBlockView key={index} block={block} streaming={streaming} />
+        <ContentBlockView
+          // oxlint-disable-next-line react/no-array-index-key
+          key={index}
+          block={block}
+          streaming={streaming}
+          thinking={streaming && index === message.content.length - 1}
+        />
       ))}
       {message.stopReason === "error" || message.stopReason === "aborted" ? (
         <p className="mt-2 text-sm text-destructive">
@@ -89,14 +94,22 @@ function AssistantView({ message, streaming }: { message: AssistantMessage; stre
   );
 }
 
-function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming: boolean }) {
+function ContentBlockView({
+  block,
+  streaming,
+  thinking,
+}: {
+  block: ContentBlock;
+  streaming: boolean;
+  thinking: boolean;
+}) {
   switch (block.type) {
     case "thinking":
       return (
         <details className="group mb-2 text-sm text-muted-foreground">
           <summary className="-mx-1 flex w-fit cursor-default items-center gap-1 rounded-control px-1 outline-none select-none hover:text-foreground focus-visible:focus-ring">
             <ChevronRight aria-hidden className="size-3.5 group-open:rotate-90" />
-            Thinking
+            <span className={thinking ? "motion-safe:animate-pulse" : undefined}>Thinking</span>
           </summary>
           <p className="mt-1 whitespace-pre-wrap">{block.thinking}</p>
         </details>
