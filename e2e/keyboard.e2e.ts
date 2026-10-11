@@ -414,12 +414,10 @@ test("every control has an accessible name", async () => {
   await waitForPi(page);
   await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
   const removeWorktree = page.getByRole("alertdialog", {
-    name: "Remove worktree and forget thread",
+    name: "Remove worktree",
   });
   await expect(removeWorktree).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Remove worktree and forget thread" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "Remove worktree" })).toHaveCount(0);
   await audit("the Remove worktree alert dialog");
   await removeWorktree.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(removeWorktree).not.toBeAttached();

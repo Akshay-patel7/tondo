@@ -227,6 +227,7 @@ export interface SidebarThread {
   /** When the thread last had a message, in milliseconds since 1970. */
   readonly updatedAt: number;
   readonly pinned: boolean;
+  /** Deprecated persisted metadata; legacy sessions remain listed for deletion. */
   readonly archived: boolean;
   readonly activity: ThreadActivity;
   /** Whether pi finished or failed in the thread since you last looked at it. */
@@ -279,7 +280,7 @@ export type ClientMessage = Versioned<
   | { type: "open-thread"; threadId: string }
   | { type: "rename-thread"; threadId: string; name: string }
   | { type: "pin-thread"; threadId: string; pinned: boolean }
-  | { type: "archive-thread"; threadId: string; archived: boolean }
+  | { type: "delete-thread"; threadId: string }
   /** What a thread's composer holds, which Tondo keeps across restarts. */
   | { type: "set-draft"; threadId: string; text: string; userInput?: boolean }
   | { type: "set-draft-images"; threadId: string; images: readonly DraftImage[] }
@@ -550,6 +551,7 @@ export function parseClientMessage(data: unknown): ParseResult {
       return exactly(message, { v, type, projectId: projectId as number, collapsed });
     }
     case "open-thread":
+    case "delete-thread":
     case "stop":
     case "dequeue":
     case "restart":
@@ -580,15 +582,6 @@ export function parseClientMessage(data: unknown): ParseResult {
         return invalid(`pin-thread: pinned must be true or false, not ${describe(pinned)}`);
       }
       return exactly(message, { v, type, threadId: threadId as string, pinned });
-    }
-    case "archive-thread": {
-      const bad = badThreadId(type, threadId);
-      if (bad) return invalid(bad);
-      const { archived } = message;
-      if (typeof archived !== "boolean") {
-        return invalid(`archive-thread: archived must be true or false, not ${describe(archived)}`);
-      }
-      return exactly(message, { v, type, threadId: threadId as string, archived });
     }
     case "set-draft": {
       const bad = badThreadId(type, threadId);

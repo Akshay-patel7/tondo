@@ -26,6 +26,7 @@ import {
   type PiStatus,
   type SettingsFile,
   type SidebarProject,
+  type SidebarThread,
   type StreamingBehavior,
   type ThinkingLevel,
 } from "../shared/protocol";
@@ -47,6 +48,9 @@ export const useHost = create<{
   thread: OpenThread | null;
   projects: readonly SidebarProject[];
   sidebarHidden: boolean;
+  /** Shared by the palette and sidebar; neither sends deletion before confirmation. */
+  deletion: SidebarThread | null;
+  confirmingDeletion: boolean;
   /** Errors the host reported, oldest first, until you dismiss them. */
   errors: readonly string[];
   /** Tondo's settings, or null until the host sends them. */
@@ -78,6 +82,8 @@ export const useHost = create<{
   thread: null,
   projects: [],
   sidebarHidden: false,
+  deletion: null,
+  confirmingDeletion: false,
   errors: [],
   settings: null,
   settingsError: null,
@@ -517,8 +523,8 @@ export function pinThread(id: string, pinned: boolean): void {
   send({ v, type: "pin-thread", threadId: id, pinned });
 }
 
-export function archiveThread(id: string, archived: boolean): void {
-  send({ v, type: "archive-thread", threadId: id, archived });
+export function deleteThread(id: string): void {
+  send({ v, type: "delete-thread", threadId: id });
 }
 
 export function toggleSidebar(): void {

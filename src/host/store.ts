@@ -329,6 +329,11 @@ export class Store {
       .run(threadId, checkpoint.turn, JSON.stringify(checkpoint));
   }
 
+  /** Clears checkpoint metadata after its refs are removed, retaining the session row. */
+  removeCheckpoints(threadId: string): void {
+    this.db.prepare("DELETE FROM checkpoint_turns WHERE thread_id = ?").run(threadId);
+  }
+
   worktrees(): StoredWorktree[] {
     return this.db
       .prepare("SELECT path, repository, branch, thread_id AS threadId FROM worktrees")

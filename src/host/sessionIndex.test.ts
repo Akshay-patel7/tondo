@@ -1,10 +1,12 @@
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -62,6 +64,60 @@ function write(name: string, entries: unknown[]): string {
 }
 
 describe("SessionIndex", () => {
+  it("deletes recorded copies of only the selected ID and clears discovery across restart", async () => {
+    const selected = write("selected.jsonl", [header("selected"), user("Delete me")]);
+    const copy = write("copy.jsonl", [header("selected")]);
+    const sibling = write("sibling.jsonl", [header("sibling")]);
+    const other = write("other.jsonl", [header("other", { cwd: "/work/other" })]);
+    const index = new SessionIndex();
+    await index.list(project, { ...folder, shared: true });
+    expect(index.files("selected").toSorted()).toEqual([copy, selected]);
+    await Promise.all(index.files("selected").map((file) => index.delete(file, "selected")));
+    expect(index.files("selected")).toEqual([]);
+    expect(existsSync(selected)).toBe(false);
+    expect(existsSync(copy)).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
+    expect(existsSync(other)).toBe(true);
+    expect(
+      (await new SessionIndex().list(project, { ...folder, shared: true })).map(({ id }) => id),
+    ).toEqual(["sibling"]);
+  });
+
+  it("treats a missing selected file as an idempotent deletion", async () => {
+    const index = new SessionIndex();
+    const file = write("missing.jsonl", [header("missing")]);
+    await index.summary(file);
+    rmSync(file);
+    await index.delete(file, "missing");
+    await index.delete(file, "missing");
+    expect(index.files("missing")).toEqual([]);
+  });
+
+  it("refuses stale identity even when the size and modification time match its cache", async () => {
+    const index = new SessionIndex();
+    const file = write("stale.jsonl", [header("one")]);
+    const time = statSync(file).mtime;
+    await index.summary(file);
+    write("stale.jsonl", [header("two")]);
+    utimesSync(file, time, time);
+    await expect(index.delete(file, "one")).rejects.toThrow("identity changed");
+    expect(existsSync(file)).toBe(true);
+    expect((await new SessionIndex().summary(file))?.id).toBe("two");
+  });
+
+  it("refuses malformed sessions and symlinks without removing their target", async () => {
+    const file = write("malformed.jsonl", ["not JSON"]);
+    const target = write("target.jsonl", [header("target")]);
+    const link = path.join(folder.dir, "link.jsonl");
+    symlinkSync(target, link);
+    const index = new SessionIndex();
+    await expect(index.delete(file, "target")).rejects.toThrow("identity changed");
+    await expect(index.delete(link, "target")).rejects.toThrow("non-file");
+    expect(existsSync(file)).toBe(true);
+    expect(existsSync(link)).toBe(true);
+    expect(existsSync(target)).toBe(true);
+  });
+
   it("reads a session's id, folder, times, name and first message", async () => {
     const file = write("a.jsonl", [
       header("s1"),

@@ -1,7 +1,7 @@
 // Everything the sidebar lists and the threads Tondo runs. Projects are
 // folders you add. Each lists the pi sessions it has, including ones you
 // started in pi's own interface, merged with what Tondo's store remembers:
-// threads too new for pi to have saved, and what you pinned, archived or
+// threads too new for pi to have saved, and what you pinned or
 // drafted. A thread runs a pi only while you use it, and the pool stops the
 // ones you left.
 import { randomUUID } from "node:crypto";
@@ -132,6 +132,8 @@ export class Workspace {
   private choosing = false;
   private readonly removingProjects = new Set<number>();
   private readonly forgettingThreads = new Set<string>();
+  private readonly deletingThreads = new Set<string>();
+  private readonly closingThreads = new Map<string, Promise<void>>();
   private indexing: Promise<void> = Promise.resolve();
   private refreshQueued = false;
   private sidebarTimer: NodeJS.Timeout | undefined;
@@ -242,6 +244,14 @@ export class Workspace {
   }
 
   handle(message: ClientMessage): void {
+    if (
+      "threadId" in message &&
+      message.threadId !== null &&
+      this.deletingThreads.has(message.threadId)
+    ) {
+      this.toast("warning", "This thread is being deleted. Wait for deletion to finish.");
+      return;
+    }
     // No new pi or extension work may race checkout changes. Existing turns are checked below.
     if (
       this.gitMutation &&
@@ -254,6 +264,7 @@ export class Workspace {
         "compact",
         "reload",
         "remove-project",
+        "delete-thread",
       ].includes(message.type)
     ) {
       this.toast("warning", "Wait for the Git action to finish.");
@@ -310,14 +321,8 @@ export class Workspace {
           this.sendSidebar();
         });
         break;
-      case "archive-thread":
-        this.run(async () => {
-          this.row(message.threadId);
-          // An archived thread leaves the sidebar, so its shell must not run on unseen.
-          if (message.archived) await this.terminals.close(message.threadId);
-          this.store.setArchived(message.threadId, message.archived);
-          this.sendSidebar();
-        });
+      case "delete-thread":
+        this.run(() => this.deleteThread(message.threadId));
         break;
       case "set-draft":
         this.run(() => this.setDraft(message.threadId, message.text, message.userInput));
@@ -647,7 +652,10 @@ export class Workspace {
       for (const [id, entry] of found) {
         if (entry.projectId === project.id) found.delete(id);
       }
-      for (const summary of result.value) found.set(summary.id, { projectId: project.id, summary });
+      for (const summary of result.value) {
+        if (!this.deletingThreads.has(summary.id))
+          found.set(summary.id, { projectId: project.id, summary });
+      }
       listed.add(project.id);
     }
     // A thread's file can be outside the folder, such as after you change pi's sessionDir.
@@ -657,7 +665,8 @@ export class Workspace {
     const summaries = await Promise.all(outside.map((row) => this.index.summary(row.sessionFile!)));
     outside.forEach((row, i) => {
       const summary = summaries[i];
-      if (summary) found.set(row.id, { projectId: row.projectId, summary });
+      if (summary && !this.deletingThreads.has(row.id))
+        found.set(row.id, { projectId: row.projectId, summary });
     });
     this.found = found;
     this.sendSidebar();
@@ -980,10 +989,10 @@ export class Workspace {
           this.sendSnapshot();
           throw cause;
         }
-        await this.forgetWorktreeThread(
+        await this.retainWorktreeThread(
           threadId,
           managed.repository,
-          "The worktree's folder was already gone. Cleared Git's record of it and forgot its thread. Its branch and external pi session file were kept.",
+          "The worktree's folder was already gone. Cleared Git's record of it. Its branch and pi session were kept; you can now delete the session.",
         );
         return;
       }
@@ -1042,10 +1051,10 @@ export class Workspace {
           this.sendSnapshot();
           throw cause;
         }
-        await this.forgetWorktreeThread(
+        await this.retainWorktreeThread(
           threadId,
           worktree.repository,
-          "Removed the worktree and forgot its thread. Its branch and external pi session file were kept.",
+          "Removed the worktree. Its branch and pi session were kept; you can now delete the session.",
         );
       } else {
         await this.git.act(cwd, action, expectedBranch);
@@ -1062,8 +1071,8 @@ export class Workspace {
     }
   }
 
-  /** After a thread's worktree is gone: deletes its checkpoints and forgets the thread. */
-  private async forgetWorktreeThread(
+  /** After explicit worktree removal, keeps its session addressable for confirmed deletion. */
+  private async retainWorktreeThread(
     threadId: string,
     repository: string,
     done: string,
@@ -1072,14 +1081,16 @@ export class Workspace {
     // repository after removal, and never delete diffs on a refused removal.
     try {
       await deleteCheckpoints(repository, threadId);
+      this.store.removeCheckpoints(threadId);
     } catch (cause) {
       this.toast(
         "warning",
         `Worktree removed, but checkpoint cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-    this.store.removeThread(threadId);
-    this.found.delete(threadId);
+    // Worktrees removed the checkout ledger entry; the recorded external session
+    // path must survive so discovery and Delete can still address this ID.
+    this.store.revealThread(threadId);
     this.visibleId = null;
     this.store.setUi("openThread", null);
     this.sendSnapshot();
@@ -1087,8 +1098,78 @@ export class Workspace {
     this.toast("info", done);
   }
 
+  private async deleteThread(id: string): Promise<void> {
+    const row = this.row(id);
+    const project = this.project(row.projectId);
+    const thread = this.live.get(id);
+    if (thread?.busy)
+      throw new Error(
+        "Stop pi first, then wait for queued prompts and checkpoint work to finish before deleting this thread.",
+      );
+    this.deletingThreads.add(id);
+    try {
+      const worktree = this.worktrees.forThread(id);
+      if (worktree && !(await missing(worktree.path)))
+        throw new Error(
+          "Remove this thread's managed worktree first, then delete its pi session. Its files and branch have been kept.",
+        );
+      // Drain discovery before capturing paths, so an older read cannot resurrect the row.
+      await this.indexing;
+      const files = new Set([
+        ...this.index.files(id),
+        ...(row.sessionFile === null ? [] : [row.sessionFile]),
+        ...(thread?.sessionFile ? [thread.sessionFile] : []),
+        ...(this.found.get(id) ? [this.found.get(id)!.summary.file] : []),
+      ]);
+      await this.terminals.close(id);
+      if (thread) await this.letGo(thread);
+      await this.closingThreads.get(id);
+      // Forget missing-checkout ownership only through the existing Git repair path.
+      if (worktree && !(await this.worktrees.forgetIfMissing(worktree)))
+        throw new Error("The worktree's folder is back. Remove that worktree first.");
+      // Cleanup failures must leave the session resumable, not recreate it from a missing path.
+      await this.deleteThreadCheckpoints(id, worktree?.repository ?? project.path);
+      await [...files].reduce(async (previous, file) => {
+        await previous;
+        await this.index.delete(file, id);
+        this.offered.delete(file);
+      }, Promise.resolve());
+      // A refresh requested during shutdown must finish while deletion still holds the guard.
+      await this.indexing;
+      this.store.removeThread(id);
+      this.found.delete(id);
+      this.activities.delete(id);
+      this.unread.delete(id);
+      this.extensionDrafts.delete(id);
+      if (this.visibleId === id) {
+        this.visibleId = null;
+        this.store.setUi("openThread", null);
+        this.sendSnapshot();
+        this.refreshGit();
+      }
+      this.sendSidebar();
+    } catch (error) {
+      // Keep the recoverable row on unlink/cleanup failure, with an actionable error.
+      if (this.visibleId === id && !this.live.has(id)) {
+        this.visibleId = null;
+        this.store.setUi("openThread", null);
+        this.sendSnapshot();
+      }
+      this.sendSidebar();
+      throw error;
+    } finally {
+      this.deletingThreads.delete(id);
+    }
+  }
+
   private async removeProject(projectId: number): Promise<void> {
     const project = this.project(projectId);
+    if (
+      this.store
+        .threads()
+        .some((row) => row.projectId === projectId && this.deletingThreads.has(row.id))
+    )
+      throw new Error("Wait for thread deletion to finish before removing this project.");
     // A worktree whose folder was deleted outside Tondo has no files left to keep.
     const worktrees = this.store
       .threads()
@@ -1153,6 +1234,7 @@ export class Workspace {
       this.gitMutation ||
       this.terminals.has(id) ||
       this.forgettingThreads.has(id) ||
+      this.deletingThreads.has(id) ||
       this.removingProjects.has(row.projectId)
     )
       return;
@@ -1222,14 +1304,23 @@ export class Workspace {
     if (this.live.get(thread.id) !== thread) return;
     this.live.delete(thread.id);
     this.activities.delete(thread.id);
-    await thread.close();
-    const file = thread.sessionFile;
-    const row = this.store.thread(thread.id);
-    if (file !== null && row) {
-      const summary = await this.index.summary(file);
-      if (summary) this.found.set(thread.id, { projectId: row.projectId, summary });
+    const closing = (async () => {
+      await thread.close();
+      const file = thread.sessionFile;
+      const row = this.store.thread(thread.id);
+      if (file !== null && row) {
+        const summary = await this.index.summary(file);
+        if (summary && !this.deletingThreads.has(thread.id))
+          this.found.set(thread.id, { projectId: row.projectId, summary });
+      }
+      this.scheduleSidebar();
+    })();
+    this.closingThreads.set(thread.id, closing);
+    try {
+      await closing;
+    } finally {
+      this.closingThreads.delete(thread.id);
     }
-    this.scheduleSidebar();
   }
 
   private sendSnapshot(): void {
@@ -1349,6 +1440,7 @@ export class Workspace {
 
   /** The thread's row in Tondo's store. A session pi wrote outside Tondo gets one the first time you use it. */
   private row(id: string): StoredThread {
+    if (this.deletingThreads.has(id)) throw new Error("This thread is being deleted.");
     if (this.forgettingThreads.has(id)) throw new Error("This unused thread is being removed.");
     const row = this.store.thread(id);
     if (row) return row;
@@ -1368,6 +1460,7 @@ export class Workspace {
 
   /** A thread whose pi Tondo started, for messages that need its pi. */
   private running(id: string): LiveThread {
+    if (this.deletingThreads.has(id)) throw new Error("This thread is being deleted.");
     const thread = this.live.get(id);
     if (!thread) throw new Error("pi isn't running in this thread.");
     return thread;

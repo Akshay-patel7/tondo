@@ -39,26 +39,23 @@ export function keepUnchanged(
 }
 
 /**
- * The threads a project lists: its first `count` threads that aren't
- * archived, and the open thread wherever it is. `more` counts the rest.
+ * The threads a project lists: its first `count` threads and the open
+ * thread wherever it is. Legacy archived sessions remain reachable.
  */
 export function listedThreads(
   threads: readonly SidebarThread[],
   count: number,
   openId: string | undefined,
 ): { listed: readonly SidebarThread[]; more: number } {
-  const active = threads.filter((thread) => !thread.archived);
-  const listed = active.slice(0, count);
-  const open = active.slice(count).find((thread) => thread.id === openId);
+  const listed = threads.slice(0, count);
+  const open = threads.slice(count).find((thread) => thread.id === openId);
   if (open) listed.push(open);
-  return { listed, more: active.length - listed.length };
+  return { listed, more: threads.length - listed.length };
 }
 
 /** The threads of expanded projects, in the sidebar's order, for the shortcuts that move between them. */
 export function threadOrder(projects: readonly SidebarProject[]): string[] {
-  return projects.flatMap((project) =>
-    project.collapsed ? [] : project.threads.filter((t) => !t.archived).map((t) => t.id),
-  );
+  return projects.flatMap((project) => (project.collapsed ? [] : project.threads.map((t) => t.id)));
 }
 
 /** The thread `step` places from `current` in `order`, wrapping around at the ends. */

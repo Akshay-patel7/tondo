@@ -33,7 +33,7 @@ describe("parseClientMessage", () => {
       { v, type: "open-thread", threadId },
       { v, type: "rename-thread", threadId, name: "Parser fix" },
       { v, type: "pin-thread", threadId, pinned: true },
-      { v, type: "archive-thread", threadId, archived: false },
+      { v, type: "delete-thread", threadId },
       { v, type: "set-draft", threadId, text: "" },
       { v, type: "set-draft", threadId, text: "half a thought" },
       { v, type: "set-draft", threadId, text: "extension text", userInput: false },
@@ -156,6 +156,7 @@ describe("parseClientMessage", () => {
     ] as const) {
       for (const type of [
         "open-thread",
+        "delete-thread",
         "list-files",
         "stop",
         "dequeue",
@@ -200,9 +201,12 @@ describe("parseClientMessage", () => {
     expect(rejection({ v, type: "pin-thread", threadId: "t", pinned: 1 })).toBe(
       "pin-thread: pinned must be true or false, not 1",
     );
-    expect(rejection({ v, type: "archive-thread", threadId: "t" })).toBe(
-      "archive-thread: archived must be true or false, not undefined",
-    );
+    expect(
+      parseClientMessage({ v, type: "archive-thread", threadId: "t", archived: true }).ok,
+    ).toBe(false);
+    expect(
+      parseClientMessage({ v, type: "delete-thread", threadId: "t", path: "/outside" }).ok,
+    ).toBe(false);
     expect(rejection({ v, type: "set-sidebar-hidden", hidden: "yes" })).toBe(
       'set-sidebar-hidden: hidden must be true or false, not "yes"',
     );
@@ -386,7 +390,7 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 15, which includes palette settings", () => {
+  it("speaks version 15, which replaces archiving with session deletion", () => {
     expect(PROTOCOL_VERSION).toBe(15);
   });
 

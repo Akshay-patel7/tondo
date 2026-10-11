@@ -16,6 +16,9 @@ import {
 } from "./pi";
 import { pickerOptions } from "./ui";
 
+/** Where the accounts work's QA screenshots go. */
+const ACCOUNTS_QA = path.resolve(__dirname, "../.dev/improvements-20261011/qa/accounts");
+
 let workDir: string;
 let project: string;
 let tondo: Tondo;
@@ -203,6 +206,15 @@ test("at the minimum window size the tallest terminal leaves the transcript and 
 
 test("provider sign-in runs a separate interactive pi in the isolated profile", async () => {
   const { page } = tondo;
+  // pi can use the faux model with nothing saved in auth.json, so it says
+  // you're signed in, and the header offers no sign-in. /login still opens it.
+  const header = page.locator("header");
+  await expect(header.getByRole("button", { name: "Terminal", exact: true })).toBeVisible();
+  await expect(header.getByRole("button", { name: "Sign in to a provider" })).toHaveCount(0);
+  await page.screenshot({
+    path: path.join(ACCOUNTS_QA, "header-signed-in-nothing-saved.png"),
+    animations: "disabled",
+  });
   await send(page, "/login");
   await expect(page.getByRole("heading", { name: "Provider sign-in" })).toBeVisible();
   await expect(output()).toContainText("faux", { timeout: 30_000 });
@@ -248,15 +260,18 @@ test("switching threads retains each shell, and clipboard paste reaches the term
   await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
   await command("export TONDO_TERMINAL_TEST=first; printf 'FIRST_%s\\n' READY");
   await expect(output()).toContainText("FIRST_READY");
+  await composer(page).fill("First shell");
   await composer(page).focus();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+n" : "Control+n");
-  await expect(threadRows(page)).toHaveCount(2);
+  await expect(threadRows(page)).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
   await waitForPi(page);
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
   await command("printf 'SECOND=%s\\n' \"${TONDO_TERMINAL_TEST:-empty}\"");
   await expect(output()).toContainText("SECOND=empty");
+  await composer(page).fill("Second shell");
+  await expect(threadRows(page)).toHaveCount(2);
   await page.locator("nav li > button[title]:not([aria-label]):not([aria-current])").click();
   await expect(output()).toContainText("FIRST_READY");
   await command("printf 'KEPT=%s\\n' \"$TONDO_TERMINAL_TEST\"");
@@ -323,11 +338,13 @@ test("focus goes back to the Terminal button when the drawer closes or leaves wi
   // A draft keeps this thread from being forgotten as unused when Mod+N leaves it.
   await composer(page).pressSequentially("keep");
   await page.keyboard.press("ControlOrMeta+n");
-  await expect(threadRows(page)).toHaveCount(2);
+  await expect(threadRows(page)).toHaveCount(1);
   await waitForPi(page);
   await opener.click();
   await command("printf 'JUMP_%s\\n' READY");
   await expect(output()).toContainText("JUMP_READY");
+  await composer(page).fill("Second shell");
+  await expect(threadRows(page)).toHaveCount(2);
   const other = await threadRows(page).evaluateAll((rows) =>
     rows.findIndex((row) => !row.hasAttribute("aria-current")),
   );
@@ -395,11 +412,11 @@ test("/login starts a sign-in terminal in place of a shell that exited", async (
   await expect(output()).toContainText("faux", { timeout: 30_000 });
 });
 
-test("archiving a thread stops its terminal's shell and background jobs", async () => {
+test("confirmed deletion stops its terminal's shell and background jobs", async () => {
   const { page } = tondo;
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
-  const pids = path.join(workDir, "archived-pids");
+  const pids = path.join(workDir, "deleted-pids");
   await command(`echo $$ > '${pids}'; sleep 401 & echo $! >> '${pids}'`);
   await expect
     .poll(() => (existsSync(pids) ? readFileSync(pids, "utf8").trim().split("\n").length : 0))
@@ -411,15 +428,27 @@ test("archiving a thread stops its terminal's shell and background jobs", async 
   // A draft keeps the first thread listed. Mod+N from the composer, since xterm may take it.
   await composer(page).pressSequentially("keep");
   await page.keyboard.press("ControlOrMeta+n");
-  await expect(threadRows(page)).toHaveCount(2);
+  await expect(threadRows(page)).toHaveCount(1);
   await waitForPi(page);
   await threads(page)
     .locator("li > button[title]:not([aria-label]):not([aria-current])")
     .click({ button: "right" });
   await page
     .getByRole("menu", { name: "Thread actions" })
-    .getByRole("menuitem", { name: "Archive", exact: true })
+    .getByRole("menuitem", { name: "Delete…", exact: true })
     .click();
-  await expect(threadRows(page)).toHaveCount(1);
+  const confirmation = page.getByRole("alertdialog");
+  await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(processesIn(groups)).not.toEqual([]);
+  await threads(page)
+    .locator("li > button[title]:not([aria-label]):not([aria-current])")
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete…", exact: true }).click();
+  await page.screenshot({
+    path: ".dev/improvements-20261011/qa/deletion/terminal-confirmation.png",
+  });
+  await confirmation.getByRole("button", { name: "Delete thread", exact: true }).click();
+  await expect(threadRows(page)).toHaveCount(0);
   await expect.poll(() => processesIn(groups)).toEqual([]);
+  reportProcesses("deletion-terminal-processes.txt", { afterDelete: processesIn(groups) });
 });

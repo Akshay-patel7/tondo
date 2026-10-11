@@ -57,7 +57,7 @@ const terminalItem = (items: readonly PaletteItem[]) => items.find(({ key }) => 
 describe("paletteItems", () => {
   afterEach(() => useTerminals.setState(new Map(), true));
 
-  test("lists actions, recent threads, projects, then archived threads", () => {
+  test("lists legacy archived sessions with recent threads and no archive action", () => {
     const items = paletteItems({ projects, open, sidebarHidden: false, isMac: true });
     expect(labels(items)).toEqual([
       "Actions: New thread",
@@ -67,18 +67,25 @@ describe("paletteItems", () => {
       "Actions: Open terminal",
       "Actions: Rename thread",
       "Actions: Unpin thread",
-      "Actions: Archive thread",
+      "Actions: Delete thread…",
       "Threads: Thread b",
       "Threads: Fix the build",
       "Threads: Thread a",
+      "Threads: Thread z",
       "Projects: New thread in tondo",
       "Projects: New thread in pi",
-      "Archived threads: Thread z",
     ]);
     expect(items[0]).toMatchObject({ detail: "tondo", shortcut: "⌘N" });
     expect(items[0]!.action).toEqual({ type: "new-thread", projectId: 1 });
     expect(items[3]).toMatchObject({ shortcut: "⌘,", action: { type: "settings" } });
-    expect(items.at(-1)!.action).toEqual({ type: "open-thread", threadId: "z", archived: true });
+    expect(items.find(({ key }) => key === "delete-thread")?.action).toEqual({
+      type: "delete-thread",
+      threadId: "a",
+    });
+    expect(items.find(({ key }) => key === "thread:z")!.action).toEqual({
+      type: "open-thread",
+      threadId: "z",
+    });
   });
 
   test("starts a new thread in the first project when none is open", () => {
@@ -141,8 +148,8 @@ describe("filterItems", () => {
       "Actions: New thread",
       "Threads: Thread b",
       "Threads: Thread a",
+      "Threads: Thread z",
       "Projects: New thread in tondo",
-      "Archived threads: Thread z",
     ]);
   });
 
@@ -152,7 +159,6 @@ describe("filterItems", () => {
       "Actions: New thread",
       "Threads: Thread b",
       "Projects: New thread in tondo",
-      "Archived threads: Thread z",
     ]);
   });
 });

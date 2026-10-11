@@ -118,6 +118,45 @@ describe("migrate", () => {
 });
 
 describe("Store", () => {
+  it("clears only checkpoint metadata while retaining the addressable session and draft", () => {
+    const store = Store.open(":memory:");
+    const { id: projectId } = store.addProject("/work/a", 1);
+    store.addThread({
+      id: "selected",
+      projectId,
+      sessionFile: "/external/selected.jsonl",
+      createdAt: 2,
+    });
+    store.addThread({
+      id: "sibling",
+      projectId,
+      sessionFile: "/external/sibling.jsonl",
+      createdAt: 3,
+    });
+    store.setDraft("selected", "Keep draft");
+    store.setDraftImages("selected", [IMAGE_FIXTURE]);
+    const checkpoint = {
+      turn: 1,
+      startedAt: 1,
+      state: "ready" as const,
+      reason: null,
+      root: "/work/a",
+      baseline: true,
+    };
+    store.saveCheckpoint("selected", checkpoint);
+    store.saveCheckpoint("sibling", checkpoint);
+    store.removeCheckpoints("selected");
+    expect(store.checkpoints("selected")).toEqual([]);
+    expect(store.checkpoints("sibling")).toEqual([checkpoint]);
+    expect(store.thread("selected")).toMatchObject({
+      sessionFile: "/external/selected.jsonl",
+      draft: "Keep draft",
+      visible: true,
+    });
+    expect(store.draftImages("selected")).toEqual([IMAGE_FIXTURE]);
+    store.close();
+  });
+
   it("persists checkpoint metadata and deletes it with its thread", () => {
     const file = path.join(dir, "checkpoints.sqlite");
     let store = Store.open(file);

@@ -57,6 +57,15 @@ describe("keepUnchanged", () => {
 describe("listedThreads", () => {
   const threads = ["a", "b", "c", "d", "e"].map((id) => thread(id));
 
+  test("does not synthesize a row for a hidden current draft", () => {
+    expect(listedThreads(threads, 2, "hidden-draft")).toEqual({
+      listed: threads.slice(0, 2),
+      more: 3,
+    });
+    expect(listedThreads([], 2, "hidden-draft")).toEqual({ listed: [], more: 0 });
+    expect(stepThread(threadOrder([project(1, threads)]), "hidden-draft", 1)).toBe("a");
+  });
+
   test("lists the first threads and counts the rest", () => {
     const { listed, more } = listedThreads(threads, 2, undefined);
     expect(listed.map(({ id }) => id)).toEqual(["a", "b"]);
@@ -69,22 +78,22 @@ describe("listedThreads", () => {
     expect(more).toBe(2);
   });
 
-  test("leaves out archived threads, even the open one", () => {
+  test("keeps legacy archived sessions reachable for deletion", () => {
     const withArchived = [thread("x", { archived: true }), ...threads];
     const { listed, more } = listedThreads(withArchived, 2, "x");
-    expect(listed.map(({ id }) => id)).toEqual(["a", "b"]);
-    expect(more).toBe(3);
+    expect(listed.map(({ id }) => id)).toEqual(["x", "a"]);
+    expect(more).toBe(4);
   });
 });
 
 describe("threadOrder", () => {
-  test("lists the threads of expanded projects, without archived ones", () => {
+  test("lists expanded projects including legacy archived sessions", () => {
     const projects = [
       project(1, [thread("a"), thread("b", { archived: true })]),
       project(2, [thread("c")], true),
       project(3, [thread("d")]),
     ];
-    expect(threadOrder(projects)).toEqual(["a", "d"]);
+    expect(threadOrder(projects)).toEqual(["a", "b", "d"]);
   });
 });
 

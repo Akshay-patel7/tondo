@@ -2,13 +2,24 @@
 // the sidebar over pi's session files, resuming a session, the process pool,
 // what Tondo's store keeps, and the command palette and shortcuts.
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FauxScript } from "../scripts/fixtures/faux-ext";
 import { bringToFront, hostPid, type Tondo } from "./launch";
 import {
   addProject,
+  bashCall,
   composer,
   expectDraft,
   launchWithPi,
@@ -24,12 +35,14 @@ import {
 import { piGroup, piGroups, processesIn } from "./processes";
 import { seedSession, sessionFolder, writeSessions } from "./sessions";
 import { LAST_TRANSCRIPT_ROW, waitForTranscript } from "./timeline";
+import { IMAGE_FIXTURE } from "../src/shared/imageFixture";
 
 test.describe.configure({ timeout: 60_000 });
 
 let workDir: string;
 let project: string;
 let tondo: Tondo | undefined;
+const deletionEvidence = path.resolve(".dev/improvements-20261011/qa/deletion");
 
 test.beforeEach(() => {
   workDir = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-threads-e2e-")));
@@ -75,17 +88,16 @@ test("the sidebar lists a project's 500 pi sessions, newest first", async () => 
     description: `${Math.round(listedMs)} ms from the click on Add project to the newest in the sidebar`,
   });
 
-  // The thread Tondo opened comes first, then the sessions by when they were
-  // last active. The sidebar shows 10 and adds 25 a click.
+  // The empty current draft is hidden. Sessions sort by last activity.
   await expect(threadRows(page)).toHaveCount(10);
-  for (let shown = 10; shown < 501;) {
-    const more = Math.min(501 - shown, 25);
+  for (let shown = 10; shown < 500;) {
+    const more = Math.min(500 - shown, 25);
     shown += more;
     // oxlint-disable-next-line eslint/no-await-in-loop -- each click lists the threads after the ones the click before listed.
     await showMore(page, more, shown);
   }
   await expect(threads(page).getByRole("button", { name: /^Show \d+ more$/ })).toHaveCount(0);
-  expect(await threadTitles(page)).toEqual(["New thread", ...sessions.map(({ title }) => title)]);
+  expect(await threadTitles(page)).toEqual(sessions.map(({ title }) => title));
 });
 
 test("a pi session opens with its whole transcript, and pi carries on in the same file", async () => {
@@ -140,8 +152,8 @@ test("an idle thread's pi stops, and opening the thread starts pi on its session
   await expect(threadRows(page)).toHaveCount(1);
 });
 
-test("threads get renamed, pinned and archived, and the palette brings one back", async () => {
-  const { page, profileDir } = await startThread("First.", "Done.");
+test("confirmed deletion removes only the selected JSONL and never returns through discovery or restart", async () => {
+  const { app, page, profileDir } = await startThread("First.", "Done.");
 
   await chooseThreadAction(page, "First.", "Rename");
   const title = page.getByRole("textbox", { name: "Thread title" });
@@ -153,6 +165,10 @@ test("threads get renamed, pinned and archived, and the palette brings one back"
   // pi saved the name in the session, where the pi TUI finds it too.
   const folder = sessionFolder(profileDir, project);
   await expect.poll(() => savedNames(folder)).toEqual(["Parser rewrite"]);
+  const selectedFile = path.join(
+    folder,
+    readdirSync(folder).find((file) => file.endsWith(".jsonl"))!,
+  );
 
   await page.keyboard.press("ControlOrMeta+n");
   await expect(heading(page)).toHaveText("New thread");
@@ -166,24 +182,230 @@ test("threads get renamed, pinned and archived, and the palette brings one back"
     threadRow(page, "Parser rewrite").getByRole("img", { name: "Pinned" }),
   ).toBeVisible();
 
-  await chooseThreadAction(page, "Parser rewrite", "Archive");
+  const siblingFile = path.join(
+    folder,
+    readdirSync(folder).find(
+      (file) => file.endsWith(".jsonl") && path.join(folder, file) !== selectedFile,
+    )!,
+  );
+  const siblingBytes = readFileSync(siblingFile, "utf8");
+  await chooseThreadAction(page, "Parser rewrite", "Delete…");
+  const confirmation = page.getByRole("alertdialog");
+  await expect(confirmation).toContainText("Permanently delete this pi session");
+  await page.screenshot({ path: path.join(deletionEvidence, "confirmation.png") });
+  await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(threadRow(page, "Parser rewrite")).toBeVisible();
+  expect(existsSync(selectedFile)).toBe(true);
+  await threadRow(page, "Parser rewrite").click();
+  await waitForPi(page);
+  await page.keyboard.press("ControlOrMeta+k");
+  const deletePalette = page.getByRole("dialog", { name: "Command palette" });
+  await deletePalette.getByRole("combobox", { name: "Search" }).fill("Delete thread");
+  await page.keyboard.press("Enter");
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Delete thread", exact: true }).click();
   await expect.poll(() => threadTitles(page)).toEqual(["Second."]);
+  expect(existsSync(selectedFile)).toBe(false);
+  expect(readFileSync(siblingFile, "utf8")).toBe(siblingBytes);
+  await page.screenshot({ path: path.join(deletionEvidence, "deleted.png") });
+  mkdirSync(deletionEvidence, { recursive: true });
+  writeFileSync(
+    path.join(deletionEvidence, "filesystem.json"),
+    JSON.stringify(
+      {
+        selectedFile,
+        selectedExists: existsSync(selectedFile),
+        siblingFile,
+        siblingExists: existsSync(siblingFile),
+        siblingUnchanged: readFileSync(siblingFile, "utf8") === siblingBytes,
+      },
+      null,
+      2,
+    ),
+  );
 
   await page.keyboard.press("ControlOrMeta+k");
   const palette = page.getByRole("dialog", { name: "Command palette" });
   await palette.getByRole("combobox", { name: "Search" }).fill("parser");
-  await expect(palette.getByRole("option")).toHaveCount(1);
-  const archived = palette.getByRole("group", { name: "Archived threads" });
-  await expect(archived.getByRole("option")).toContainText("Parser rewrite");
-  await page.keyboard.press("Enter");
-  await expect(palette).not.toBeAttached();
-  // Choosing it opened it and took it out of the archive, still pinned.
-  await expect(heading(page)).toHaveText("Parser rewrite");
+  await expect(palette.getByRole("option")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  const statuses = await recordStatuses(page);
+  const killed = await hostPid(app);
+  process.kill(killed, "SIGKILL");
+  await expect.poll(() => statuses.jsonValue()).toEqual(["Reconnecting…"]);
+  await expect(page.getByRole("status")).toHaveCount(0);
+  expect(await hostPid(app)).not.toBe(killed);
+  await expect.poll(() => threadTitles(page)).toEqual(["Second."]);
+  await threadRow(page, "Second.").click();
   await expect(message(page, 1)).toHaveText("Done.");
-  await expect.poll(() => threadTitles(page)).toEqual(["Parser rewrite", "Second."]);
-  await expect(
-    threadRow(page, "Parser rewrite").getByRole("img", { name: "Pinned" }),
-  ).toBeVisible();
+  await page.reload();
+  await waitForPi(page);
+  await expect.poll(() => threadTitles(page)).toEqual(["Second."]);
+  expect(existsSync(selectedFile)).toBe(false);
+  expect(readFileSync(siblingFile, "utf8")).toBe(siblingBytes);
+  await page.screenshot({ path: path.join(deletionEvidence, "restart.png") });
+});
+
+test("deletion refuses a busy turn with Stop-first guidance and leaves the session recoverable", async () => {
+  const gate = path.join(workDir, "turn-gate");
+  execFileSync("mkfifo", [gate]);
+  const { page, profileDir } = await launch({
+    responses: [reply("Done."), bashCall(`cat '${gate}'`), reply("Stopped.")],
+  });
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  await ask(page, "Busy session", "Done.");
+  const folder = sessionFolder(profileDir, project);
+  const file = path.join(
+    folder,
+    readdirSync(folder).find((name) => name.endsWith(".jsonl"))!,
+  );
+  await send(page, "Keep working");
+  await expect(page.getByRole("button", { name: "Stop pi", exact: true })).toBeVisible();
+  await chooseThreadAction(page, "Busy session", "Delete…");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete thread", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Stop pi first");
+  expect(existsSync(file)).toBe(true);
+  await expect(threadRow(page, "Busy session")).toBeVisible();
+  await page.screenshot({ path: path.join(deletionEvidence, "busy-refusal.png") });
+  await page.getByRole("button", { name: "Stop pi", exact: true }).click();
+  await waitForIdle(page);
+  await chooseThreadAction(page, "Busy session", "Delete…");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete thread", exact: true })
+    .click();
+  await expect(threadRows(page)).toHaveCount(0);
+  expect(existsSync(file)).toBe(false);
+});
+
+test("a selected session remains deletable after its local checkout disappears", async () => {
+  const { page, profileDir } = await startThread("Missing checkout", "Done.");
+  const folder = sessionFolder(profileDir, project);
+  const file = path.join(
+    folder,
+    readdirSync(folder).find((name) => name.endsWith(".jsonl"))!,
+  );
+  rmSync(project, { recursive: true });
+  await chooseThreadAction(page, "Missing checkout", "Delete…");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete thread", exact: true })
+    .click();
+  await expect(threadRows(page)).toHaveCount(0);
+  expect(existsSync(file)).toBe(false);
+  await page.screenshot({ path: path.join(deletionEvidence, "missing-checkout.png") });
+});
+
+test("explicit worktree removal retains an addressable session for Delete across restart", async () => {
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: project, encoding: "utf8" }).trim();
+  git("init", "-b", "main");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.com");
+  git("config", "commit.gpgsign", "false");
+  writeFileSync(path.join(project, ".gitignore"), "ignored\n");
+  git("add", ".");
+  git("commit", "-m", "initial");
+  const { app, page, profileDir } = await startThread("Local session", "Done.");
+  await page.getByRole("button", { name: "New worktree", exact: true }).click();
+  await page.getByLabel("Branch name", { exact: true }).fill("deletion-preserved");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Create worktree thread", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await waitForPi(page);
+  await expect(threadRow(page, "New thread")).toHaveCount(0);
+  await composer(page).fill("Managed session");
+  await expect(threadRow(page, "New thread")).toBeVisible();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(message(page, 1)).toHaveText("Done.");
+  await waitForIdle(page);
+  const field = git("worktree", "list", "--porcelain", "-z")
+    .split("\0")
+    .find((entry) => entry.startsWith("worktree ") && entry !== `worktree ${project}`);
+  if (!field) throw new Error("No managed checkout");
+  const checkout = field.slice(9);
+  const folder = sessionFolder(profileDir, checkout);
+  const file = path.join(
+    folder,
+    readdirSync(folder).find((name) => name.endsWith(".jsonl"))!,
+  );
+  writeFileSync(path.join(checkout, "ignored"), "Keep ignored files");
+  await chooseThreadAction(page, "Managed session", "Delete…");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete thread", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("managed worktree first");
+  expect(readFileSync(path.join(checkout, "ignored"), "utf8")).toBe("Keep ignored files");
+  expect(existsSync(file)).toBe(true);
+  expect(git("branch", "--list", "deletion-preserved")).toContain("deletion-preserved");
+  await expect(page.getByRole("button", { name: "Remove worktree", exact: true })).toBeEnabled();
+  await page.screenshot({ path: path.join(deletionEvidence, "managed-refusal.png") });
+
+  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  const removal = page.getByRole("alertdialog");
+  await removal.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await expect(removal.getByRole("alert")).toContainText("ignored files");
+  expect(readFileSync(path.join(checkout, "ignored"), "utf8")).toBe("Keep ignored files");
+  expect(existsSync(file)).toBe(true);
+  await page.screenshot({ path: path.join(deletionEvidence, "managed-ignored-refusal.png") });
+  await removal
+    .getByRole("checkbox", { name: "Permanently delete uncommitted and ignored files too" })
+    .check();
+  await removal.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await expect(removal).toBeHidden();
+  expect(existsSync(checkout)).toBe(false);
+  expect(existsSync(file)).toBe(true);
+  expect(git("branch", "--list", "deletion-preserved")).toContain("deletion-preserved");
+  await expect(threadRow(page, "Managed session")).toBeVisible();
+  await page.screenshot({
+    path: path.join(deletionEvidence, "managed-removed-session-retained.png"),
+  });
+
+  await chooseThreadAction(page, "Managed session", "Delete…");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete thread", exact: true })
+    .click();
+  await expect(threadRow(page, "Managed session")).toHaveCount(0);
+  expect(existsSync(file)).toBe(false);
+  expect(git("branch", "--list", "deletion-preserved")).toContain("deletion-preserved");
+  expect(git("worktree", "list", "--porcelain")).not.toContain(checkout);
+  await page.screenshot({ path: path.join(deletionEvidence, "managed-deleted.png") });
+  const statuses = await recordStatuses(page);
+  const killed = await hostPid(app);
+  process.kill(killed, "SIGKILL");
+  // The preceding removal toast also has role=status. Require the observed
+  // reconnect event without depending on when that unrelated toast expires.
+  await expect.poll(() => statuses.jsonValue()).toContain("Reconnecting…");
+  await expect(page.getByRole("status")).toHaveCount(0);
+  expect(await hostPid(app)).not.toBe(killed);
+  await expect(threadRow(page, "Local session")).toBeVisible();
+  await expect(threadRow(page, "Managed session")).toHaveCount(0);
+  expect(existsSync(file)).toBe(false);
+  expect(git("branch", "--list", "deletion-preserved")).toContain("deletion-preserved");
+  await page.screenshot({ path: path.join(deletionEvidence, "managed-deleted-restart.png") });
+  writeFileSync(
+    path.join(deletionEvidence, "managed-filesystem.json"),
+    JSON.stringify(
+      {
+        checkout,
+        checkoutExists: existsSync(checkout),
+        sessionFile: file,
+        sessionExists: existsSync(file),
+        branchKept: git("branch", "--list", "deletion-preserved").includes("deletion-preserved"),
+        listedThreads: await threadTitles(page),
+      },
+      null,
+      2,
+    ),
+  );
 });
 
 test("a project whose folder was deleted from disk can still be removed", async () => {
@@ -283,14 +505,18 @@ test("the keyboard moves through the sidebar, opens threads and their menu, and 
   await expect(palette).not.toBeAttached();
   await expect(beta).toBeFocused();
 
-  // Archiving the focused thread from its menu moves focus to the row beside it.
+  // Confirmed deletion moves focus to the row beside it.
   await page.keyboard.press("ArrowDown");
   await expect(alpha).toBeFocused();
   await page.keyboard.press("Shift+F10");
   await expect(menu.getByRole("menuitem").first()).toBeFocused();
   await page.keyboard.press("ArrowUp");
-  await expect(menu.getByRole("menuitem", { name: "Archive", exact: true })).toBeFocused();
+  await expect(menu.getByRole("menuitem", { name: "Delete…", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete thread", exact: true })
+    .click();
   await expect.poll(() => threadTitles(page)).toEqual(["Beta."]);
   await expect(beta).toBeFocused();
 });
@@ -303,6 +529,7 @@ test("drafts stay with their threads, and Tondo's store keeps them through a hos
   await page.keyboard.press("ControlOrMeta+n");
   await expect(heading(page)).toHaveText("New thread");
   await expectDraft(page, "");
+  await expect(threadRows(page)).toHaveCount(1);
   const first = threadRow(page, "Remember this.");
   await expect(first.getByRole("img", { name: "Unsent draft" })).toBeVisible();
   await composer(page).fill("Another thought");
@@ -319,6 +546,7 @@ test("drafts stay with their threads, and Tondo's store keeps them through a hos
   // The new host reopened the thread that was open, from the store.
   await expect(second).toHaveAttribute("aria-current", "page");
   await expect(heading(page)).toHaveText("New thread");
+  await expectDraft(page, "Another thought");
   await first.click();
   await expect(heading(page)).toHaveText("Remember this.");
   await expectDraft(page, "Half a thought");
@@ -327,6 +555,103 @@ test("drafts stay with their threads, and Tondo's store keeps them through a hos
   // pin and the other draft come from the store too.
   await expect(first.getByRole("img", { name: "Pinned" })).toBeVisible();
   await expect(second.getByRole("img", { name: "Unsent draft" })).toBeVisible();
+});
+
+const draftScreenshots = path.resolve(".dev/improvements-20261011/qa/drafts");
+
+test("empty drafts stay hidden on create, focus and whitespace, then typing reveals before send", async () => {
+  const { page } = await launch({ responses: [] });
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  await expect(threadRows(page)).toHaveCount(0);
+  await composer(page).focus();
+  await composer(page).fill(" \n\t");
+  // Switching flushes whitespace and proves the New thread action still works
+  // without a sidebar row for the current thread.
+  await page.keyboard.press("ControlOrMeta+n");
+  await expectDraft(page, "");
+  await waitForPi(page);
+  await expect(threadRows(page)).toHaveCount(0);
+  await page.screenshot({ path: path.join(draftScreenshots, "empty.png") });
+  await composer(page).pressSequentially("A");
+  await expect(threadRows(page)).toHaveCount(1);
+  await expectDraft(page, "A");
+  await expect(page.locator('[data-index="0"]')).toHaveCount(0);
+  await page.screenshot({ path: path.join(draftScreenshots, "typed.png") });
+  await composer(page).fill("");
+  await page.keyboard.press("ControlOrMeta+n");
+  await expectDraft(page, "");
+  await expect(threadRows(page)).toHaveCount(1);
+});
+
+test("pasted text reveals a draft before send", async () => {
+  const { app, page } = await launch({ responses: [] });
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  await app.evaluate(({ clipboard }) => clipboard.writeText("Pasted thought"));
+  await composer(page).focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  await expectDraft(page, "Pasted thought");
+  await expect(threadRows(page)).toHaveCount(1);
+  await expect(page.locator('[data-index="0"]')).toHaveCount(0);
+  await page.screenshot({ path: path.join(draftScreenshots, "pasted.png") });
+});
+
+test("an image attachment reveals an otherwise empty draft", async () => {
+  const { page } = await launch({ responses: [] });
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  await expect(threadRows(page)).toHaveCount(0);
+  const choosing = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Attach images", exact: true }).click();
+  await (
+    await choosing
+  ).setFiles({
+    name: IMAGE_FIXTURE.name,
+    mimeType: IMAGE_FIXTURE.mimeType,
+    buffer: Buffer.from(IMAGE_FIXTURE.data, "base64"),
+  });
+  await expect(page.getByLabel("Attached images", { exact: true })).toBeVisible();
+  await expect(threadRows(page)).toHaveCount(1);
+  await expectDraft(page, "");
+  await page.screenshot({ path: path.join(draftScreenshots, "image.png") });
+});
+
+test("extension-only text stays hidden until the user sends it without editing", async () => {
+  const extension = path.join(workDir, "draft-extension.ts");
+  writeFileSync(
+    extension,
+    `
+    export default function(pi) {
+      pi.on("session_start", (_event, ctx) => {
+        ctx.ui.setStatus("draft", "Extension ready");
+        ctx.ui.setEditorText("Extension suggestion");
+      });
+    }
+  `,
+  );
+  tondo = await launchWithPi({
+    workDir,
+    script: { responses: [reply("Accepted the suggestion.")] },
+    piArgs: ["-e", extension],
+  });
+  await bringToFront(tondo);
+  const { page } = tondo;
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await expectDraft(page, "Extension suggestion");
+  await expect(threadRows(page)).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+n");
+  await waitForPi(page);
+  await expectDraft(page, "Extension suggestion");
+  await expect(threadRows(page)).toHaveCount(0);
+  await page.screenshot({ path: path.join(draftScreenshots, "extension-only.png") });
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(threadRows(page)).toHaveCount(1);
+  await expect(message(page, 0)).toHaveText("Extension suggestion");
+  await expect(message(page, 1)).toHaveText("Accepted the suggestion.");
+  await waitForIdle(page);
+  await page.screenshot({ path: path.join(draftScreenshots, "extension-sent.png") });
 });
 
 test("shortcuts and the command palette move between threads", async () => {

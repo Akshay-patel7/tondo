@@ -5,7 +5,7 @@
 // for the thread and its last message. It keeps what it read and reads a file
 // again only when its size or modification time changes.
 import type { Stats } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { SessionFolder } from "./sessionFolder";
 
@@ -40,6 +40,26 @@ interface Cached {
 
 export class SessionIndex {
   private readonly cache = new Map<string, Cached>();
+
+  /** Exact files already discovered for this ID, including duplicate saved copies. */
+  files(id: string): string[] {
+    return [...this.cache].flatMap(([file, cached]) => (cached.summary?.id === id ? [file] : []));
+  }
+
+  /** Deletes only a recorded, regular pi session file whose header still has this ID. */
+  async delete(file: string, id: string): Promise<void> {
+    try {
+      const stats = await lstat(file);
+      if (!stats.isFile()) throw new Error(`Refusing to delete a non-file pi session: ${file}`);
+      const text = await readFile(file, "utf8");
+      if (summarize(file, text, stats.mtimeMs)?.id !== id)
+        throw new Error(`The pi session identity changed. Kept ${file}. Refresh and try again.`);
+      await unlink(file);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    this.cache.delete(file);
+  }
 
   /** The sessions pi lists for `project`, read from `folder`. */
   async list(project: string, folder: SessionFolder): Promise<SessionSummary[]> {
