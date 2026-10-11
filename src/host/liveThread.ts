@@ -25,6 +25,7 @@ import type { DraftImage } from "../shared/images";
 import {
   afterPiExit,
   applyEvent,
+  eventProblem,
   threadFromMessages,
   type PiEvent,
   type ThreadState,
@@ -580,6 +581,13 @@ export class LiveThread {
     }
     if (record.type === "extension_error") {
       this.fail(`The extension ${record.extensionPath} failed on ${record.event}: ${record.error}`);
+      return;
+    }
+    const problem = eventProblem(record);
+    if (problem) {
+      this.fail(
+        `pi sent a ${record.type} event Tondo can't read, because ${problem}. Tondo skipped it.`,
+      );
       return;
     }
     const event = record as PiEvent;

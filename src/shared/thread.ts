@@ -82,6 +82,67 @@ export function threadFromMessages(messages: readonly PiMessage[]): ThreadState 
 }
 
 /**
+ * Why `record`, which pi wrote as an event, lacks a field the thread and the
+ * host read from it, or undefined if it has them. pi's types say these fields
+ * are always there, but anything that writes to pi's stdout, an extension
+ * included, can send a record without them.
+ */
+export function eventProblem(record: { readonly type: string }): string | undefined {
+  const event = record as Record<string, unknown>;
+  switch (record.type) {
+    case "message_start":
+    case "message_end":
+      return messageProblem(event.message);
+    case "message_update": {
+      const update = event.assistantMessageEvent;
+      if (!isObject(update) || typeof update.type !== "string") {
+        return "its assistantMessageEvent has no type";
+      }
+      if (update.type === "toolcall_end" && !isObject(update.toolCall)) {
+        return "its toolcall_end has no toolCall";
+      }
+      return undefined;
+    }
+    case "tool_execution_start":
+    case "tool_execution_update":
+    case "tool_execution_end":
+      return typeof event.toolCallId === "string" ? undefined : "it has no toolCallId";
+    case "queue_update":
+      return isTexts(event.steering) && isTexts(event.followUp)
+        ? undefined
+        : "its steering and followUp aren't lists of text";
+    case "session_info_changed":
+      return event.name === undefined || typeof event.name === "string"
+        ? undefined
+        : "its name isn't text";
+    default:
+      return undefined;
+  }
+}
+
+function messageProblem(message: unknown): string | undefined {
+  if (!isObject(message) || typeof message.role !== "string") return "it has no message role";
+  if (
+    (message.role === "assistant" || message.role === "toolResult") &&
+    !Array.isArray(message.content)
+  ) {
+    return `its ${message.role} message has no content list`;
+  }
+  if (message.role === "toolResult" && typeof message.toolCallId !== "string") {
+    return "its toolResult message has no toolCallId";
+  }
+  return undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isTexts(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((text) => typeof text === "string");
+}
+
+/**
  * Returns the thread after `event`. Events that change nothing return the
  * same object, so a subscriber can compare references to skip a render.
  */
