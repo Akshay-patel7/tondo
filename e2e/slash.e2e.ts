@@ -210,7 +210,9 @@ test("pi's built-in commands run in Tondo and never reach pi as text", async () 
   await expect(page.getByRole("alert")).toHaveCount(1);
 
   await send(page, "/hotkeys");
-  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toContainText("Alt+Enter");
+  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toContainText(
+    process.platform === "darwin" ? "Option+Return" : "Alt+Enter",
+  );
   await page.keyboard.press("Escape");
   // /settings opens the settings page, which lists pi's settings files, and Escape goes back.
   await send(page, "/settings");
