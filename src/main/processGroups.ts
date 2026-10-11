@@ -11,7 +11,8 @@ const POLL_MS = 25;
  * asks for an orderly shutdown, so each group first gets `graceMs` to empty
  * by itself, then SIGTERM, then SIGKILL. pi stops its running bash commands,
  * which have groups of their own, when its stdin closes or on SIGTERM, but
- * not on SIGKILL.
+ * not on SIGKILL. The host reports those groups too, so they get the same
+ * treatment.
  * Resolves once every group is empty, or has had SIGKILL's grace too.
  */
 export async function stopProcessGroups(

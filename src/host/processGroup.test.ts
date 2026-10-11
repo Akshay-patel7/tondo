@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
-import { drainGroup, signalGroup } from "./processGroup";
+import { descendantGroups, drainGroup, signalGroup } from "./processGroup";
 
 /**
  * Perl that keeps its group forking: eight processes that each fork a child
@@ -111,4 +111,23 @@ describe("drainGroup", () => {
       }
     },
   );
+});
+
+describe("descendantGroups", () => {
+  it("finds the groups a process's descendants run in, but not its own", async () => {
+    // The leader starts a child in its group, which starts a grandchild in a
+    // group of its own, and prints the grandchild's pid.
+    const { leader, pgid, line } = await startGroup(
+      "const { spawn } = require('node:child_process');" +
+        "const child = spawn(process.execPath, ['-e', \"const g = require('node:child_process').spawn('sleep', ['60'], { detached: true, stdio: 'ignore' }); console.log(g.pid); setInterval(() => {}, 60_000)\"], { stdio: ['ignore', 'inherit', 'inherit'] });" +
+        "setInterval(() => {}, 60_000);",
+    );
+    const grandchild = Number(line);
+    try {
+      expect(await descendantGroups(leader.pid!)).toEqual([grandchild]);
+    } finally {
+      await drainGroup(grandchild, 1_000);
+      await drainGroup(pgid, 1_000);
+    }
+  });
 });

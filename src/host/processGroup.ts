@@ -1,4 +1,8 @@
+import { execFile } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 /** How often a group that's being stopped is checked for members. */
 const POLL_MS = 25;
@@ -18,6 +22,31 @@ export function signalGroup(pgid: number, signal: NodeJS.Signals | 0): boolean {
     if (code === "ESRCH" || code === "EPERM") return false;
     throw error;
   }
+}
+
+/**
+ * The process groups, other than group `pid`, that hold processes descended
+ * from process `pid`. pi starts each bash command in a group of its own, and
+ * once pi has gone, nothing links those groups to it any more.
+ */
+export async function descendantGroups(pid: number): Promise<number[]> {
+  const { stdout } = await execFileAsync("ps", ["-A", "-o", "pid=,ppid=,pgid="]);
+  const children = new Map<number, { pid: number; pgid: number }[]>();
+  for (const line of stdout.split("\n")) {
+    const [child, parent, pgid] = line.trim().split(/\s+/).map(Number);
+    if (child === undefined || parent === undefined || pgid === undefined) continue;
+    if (!Number.isSafeInteger(child) || !Number.isSafeInteger(pgid)) continue;
+    children.set(parent, [...(children.get(parent) ?? []), { pid: child, pgid }]);
+  }
+  const groups = new Set<number>();
+  const parents = [pid];
+  for (let parent = parents.pop(); parent !== undefined; parent = parents.pop()) {
+    for (const child of children.get(parent) ?? []) {
+      if (child.pgid !== pid && child.pgid > 1) groups.add(child.pgid);
+      parents.push(child.pid);
+    }
+  }
+  return [...groups];
 }
 
 /**
