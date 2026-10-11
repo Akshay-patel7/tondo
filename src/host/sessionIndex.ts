@@ -213,7 +213,11 @@ export function messageTitle(message: unknown): string {
 
 function oneLine(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
-  return line.length > TITLE_LENGTH ? `${line.slice(0, TITLE_LENGTH - 1)}…` : line;
+  // Cut by code point, so an emoji at the cut is never split into a lone surrogate.
+  const characters = Array.from(line);
+  return characters.length > TITLE_LENGTH
+    ? `${characters.slice(0, TITLE_LENGTH - 1).join("")}…`
+    : line;
 }
 
 /** Maps `items` with at most `limit` calls running at once, keeping their order. */
