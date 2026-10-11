@@ -43,6 +43,48 @@ test("navigating to another site is blocked, and the link opens in the browser",
   expect(await page.evaluate(() => document.body.dataset.sameDocument)).toBe("yes");
 });
 
+test("navigating to about:blank restores the app without opening anything", async () => {
+  const { app, page } = tondo;
+  // Subscribe before navigating: the app must finish a fresh load, not merely
+  // still have its old URL before Chromium commits about:blank.
+  await app.evaluate(({ BrowserWindow, shell }) => {
+    const state = globalThis as typeof globalThis & {
+      restoredApp?: Promise<void>;
+      openedUrls?: string[];
+    };
+    const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+    const urls: string[] = [];
+    state.openedUrls = urls;
+    shell.openExternal = async (url) => {
+      urls.push(url);
+    };
+    state.restoredApp = new Promise((resolve) => {
+      const finished = () => {
+        if (contents.getURL() !== "tondo://app/") return;
+        contents.removeListener("did-finish-load", finished);
+        resolve();
+      };
+      contents.on("did-finish-load", finished);
+    });
+  });
+
+  await page.evaluate(() => {
+    location.href = "about:blank";
+  });
+
+  await app.evaluate(
+    () => (globalThis as typeof globalThis & { restoredApp?: Promise<void> }).restoredApp,
+  );
+  expect(page.url()).toBe("tondo://app/");
+  expect(
+    await app.evaluate(
+      () => (globalThis as typeof globalThis & { openedUrls?: string[] }).openedUrls,
+    ),
+  ).toEqual([]);
+  await expect(page.getByRole("navigation", { name: "Threads" })).toContainText("No projects yet.");
+  expect(app.windows()).toHaveLength(1);
+});
+
 test("window.open is denied, and the link opens in the browser", async () => {
   const { app, page } = tondo;
   const openedUrl = await captureOpenExternal(app);
