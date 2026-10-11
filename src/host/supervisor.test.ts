@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HostConfig } from "../shared/protocol";
 import { DEFAULT_SETTINGS } from "../shared/settings";
-import { piLaunch, Supervisor } from "./supervisor";
+import { piLaunch, Supervisor, TrustNotSavedError } from "./supervisor";
 
 const piPackage = path.resolve(
   import.meta.dirname,
@@ -40,6 +40,24 @@ function create(file: string, content = ""): void {
 }
 
 describe("Supervisor", () => {
+  it("says a trust answer it can't save is about the settings file, and names it", () => {
+    const file = path.join(config.userData, "settings.json");
+    create(file, "{");
+    const supervisor = new Supervisor(config, () => {});
+
+    let error: unknown;
+    try {
+      supervisor.saveTrustAnswer(project, true);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(TrustNotSavedError);
+    expect((error as TrustNotSavedError).file).toBe(file);
+    expect((error as Error).message).toContain(
+      `Tondo couldn't save your answer. Tondo's settings file ${file} isn't valid JSON`,
+    );
+  });
+
   it("reads what it can of a settings file with a mistake in it, for starting pi", () => {
     create(
       path.join(config.userData, "settings.json"),

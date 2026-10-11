@@ -57,6 +57,12 @@ export const useHost = create<{
   settingsFileError: string | null;
   /** settings.json, which the page may show in Finder while settingsFileError is set. */
   settingsFilePath: string | null;
+  /** Why the host couldn't keep your answer to a thread's trust question, and a file to show. */
+  trustError: {
+    readonly threadId: string;
+    readonly message: string;
+    readonly reveal?: string;
+  } | null;
   /** The pi Tondo would run, or null until the host has looked. */
   piEnv: PiDiscovery | null;
   /** pi's config files, or null until requestPiConfigFiles is answered. */
@@ -77,6 +83,7 @@ export const useHost = create<{
   settingsError: null,
   settingsFileError: null,
   settingsFilePath: null,
+  trustError: null,
   piEnv: null,
   piConfigFiles: null,
   piAccounts: null,
@@ -149,8 +156,28 @@ export function usePi(): PiStatus {
 const v = PROTOCOL_VERSION;
 let port: MessagePort | undefined;
 
+/** The thread whose trust answer the host hasn't taken yet. */
+let answeringTrust: string | undefined;
+
+/**
+ * Shows an error on the trust question if it's about the answer you just gave.
+ * The question covers the banners, and an error left in a banner or a toast
+ * would outlive the answer that later succeeds.
+ */
+function failTrustAnswer(message: string, reveal?: string): boolean {
+  const thread = useHost.getState().thread;
+  const answering = answeringTrust;
+  answeringTrust = undefined;
+  if (answering === undefined || thread?.id !== answering || !thread.askingTrust) return false;
+  useHost.setState({
+    trustError: { threadId: thread.id, message, ...(reveal === undefined ? {} : { reveal }) },
+  });
+  return true;
+}
+
 function fail(message: string): void {
   console.error(`Tondo Host: ${message}`);
+  if (failTrustAnswer(message)) return;
   useHost.setState(({ errors }) =>
     errors.includes(message) ? {} : { errors: [...errors, message] },
   );
@@ -299,6 +326,7 @@ function receive(message: HostMessage): void {
       break;
     case "toast": {
       const { level, message: text, thread, reveal } = message;
+      if (level === "error" && failTrustAnswer(text, reveal)) break;
       addToast({
         level,
         message: text,
@@ -337,6 +365,7 @@ function receive(message: HostMessage): void {
 }
 
 function accept(next: MessagePort): void {
+  answeringTrust = undefined;
   resetTerminals();
   useCheckpoints.setState(({ id }) => ({
     turns: [],
@@ -455,7 +484,10 @@ export function toggleSidebar(): void {
 }
 
 export function answerTrust(trusted: boolean): void {
-  send({ v, type: "trust", threadId: requireShownId(), trusted });
+  const threadId = requireShownId();
+  answeringTrust = threadId;
+  useHost.setState({ trustError: null });
+  send({ v, type: "trust", threadId, trusted });
 }
 
 /** Starts a scan for a newly opened file menu. Filtering the returned index happens in the page. */

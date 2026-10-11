@@ -35,7 +35,7 @@ import { PiCommandError } from "./piRpc";
 import { choosePiToStop, POOL_LIMITS, type PoolLimits } from "./pool";
 import { messageTitle, SessionIndex, type SessionSummary } from "./sessionIndex";
 import type { Store, StoredProject, StoredThread } from "./store";
-import type { Supervisor } from "./supervisor";
+import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { canonical } from "./trust";
 import { Terminals } from "./terminals";
 
@@ -352,7 +352,16 @@ export class Workspace {
         this.run(() => this.refresh());
         break;
       case "trust":
-        this.run(() => this.running(message.threadId).trust(message.trusted));
+        this.run(async () => {
+          try {
+            await this.running(message.threadId).trust(message.trusted);
+          } catch (error) {
+            if (!(error instanceof TrustNotSavedError)) throw error;
+            // A toast shows over the trust question too, which stays up so you can answer again.
+            this.offered.add(error.file);
+            this.toast("error", error.message, error.file);
+          }
+        });
         break;
       case "prompt":
         this.run(() => this.prompt(message));

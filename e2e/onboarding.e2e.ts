@@ -307,6 +307,33 @@ test("the pi setup screen names a settings.json mistake as the file's problem", 
   await expect(setup).not.toContainText("didn't save that change");
 });
 
+test("a trust answer Tondo can't save says why on the question, and goes once it's saved", async () => {
+  mkdirSync(path.join(project, ".pi"));
+  writeFileSync(
+    path.join(project, ".pi", "settings.json"),
+    JSON.stringify({ defaultThinkingLevel: "low" }),
+  );
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  await bringToFront(tondo);
+  const { page, profileDir } = tondo;
+  await addProject(tondo, project);
+  const question = page.getByRole("region", { name: "Trust project folder?" });
+  await expect(question).toBeVisible();
+
+  const file = path.join(profileDir, "settings.json");
+  const good = readFileSync(file, "utf8");
+  writeFileSync(file, "{ broken");
+  await question.getByRole("button", { name: "Trust", exact: true }).click();
+  await expect(question.getByRole("alert")).toContainText("isn't valid JSON");
+
+  writeFileSync(file, good);
+  await question.getByRole("button", { name: "Trust", exact: true }).click();
+  await waitForPi(page);
+  await expect(question).not.toBeAttached();
+  await expect(page.getByRole("alert").filter({ hasText: "isn't valid JSON" })).toHaveCount(0);
+  expect(readSettings(tondo).projectTrust).toEqual({ [project]: true });
+});
+
 test("a broken settings.json is the file's problem, with the file to show, not pi's or a change's", async () => {
   const profileDir = path.join(workDir, "profile");
   mkdirSync(profileDir);

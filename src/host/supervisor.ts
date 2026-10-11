@@ -65,6 +65,17 @@ function piEnv(loginEnv: Record<string, string>, config: HostConfig): Record<str
   return config.piAgentDir ? { ...loginEnv, PI_CODING_AGENT_DIR: config.piAgentDir } : loginEnv;
 }
 
+/** Your answer to whether to trust a project, which Tondo couldn't write to settings.json. */
+export class TrustNotSavedError extends Error {
+  /** Tondo's settings.json. */
+  readonly file: string;
+
+  constructor(file: string, cause: unknown) {
+    super(`Tondo couldn't save your answer. ${(cause as Error).message}`, { cause });
+    this.file = file;
+  }
+}
+
 export class Supervisor {
   private readonly config: HostConfig;
   private readonly reportGroups: (pgids: number[]) => void;
@@ -183,7 +194,11 @@ export class Supervisor {
 
   /** Remembers whether you trust the project in `cwd`, for every pi started there later. */
   saveTrustAnswer(cwd: string, trusted: boolean): void {
-    saveTrustAnswer(this.settingsFile, cwd, trusted);
+    try {
+      saveTrustAnswer(this.settingsFile, cwd, trusted);
+    } catch (error) {
+      throw new TrustNotSavedError(this.settingsFile, error);
+    }
   }
 
   /** Who settles whether pi in `cwd` trusts the project, and your answer if it's yours. */
