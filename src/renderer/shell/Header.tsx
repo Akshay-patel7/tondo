@@ -1,7 +1,7 @@
 import { PanelLeft, Search } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { ShortcutCommand } from "../../shared/settings";
-import { openTerminal, useHost } from "../connection";
+import { openTerminal, requestPiAccounts, useHost } from "../connection";
 import { toggleDiffPanel, useDiffPanel } from "../diffs/DiffPanel";
 import { folderName } from "../format";
 import { togglePalette } from "../palette/store";
@@ -19,6 +19,20 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
   const project = useHost((host) => host.thread?.project);
   const connection = useHost((host) => host.connection);
   const changesOpen = useDiffPanel((open) => open);
+  // pi has no model you have credentials for. Until pi is ready Tondo can't
+  // tell, so a thread you're signed in to doesn't flash sign-in as it starts.
+  const needsSignIn = useHost((host) => {
+    const pi = host.thread?.pi;
+    return pi?.state === "ready" && !pi.session.signedIn;
+  });
+  // pi's auth.json saves no sign-in either. That's unknown until the host has
+  // listed them, so sign-in waits for the list, and one Tondo couldn't read
+  // counts as empty. They're read again each time pi starts without a model,
+  // since you may have signed in or out in pi's terminal meanwhile.
+  const noneSaved = useHost((host) => host.piAccounts?.accounts.length === 0);
+  useEffect(() => {
+    if (needsSignIn) requestPiAccounts();
+  }, [needsSignIn]);
   return (
     // The header gets its own compositing layer. In the page's layer its text
     // would need a raster tile as wide as the window, 3.9 MiB at 2x, redrawn
@@ -77,15 +91,18 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
             >
               Terminal
             </Button>
-            <Button
-              variant="quiet"
-              size="xs"
-              onClick={() => openTerminal("login")}
-              className="app-no-drag"
-            >
-              {/* A narrow header, as at 200% zoom, shows "Sign in". Screen readers hear it all. */}
-              Sign in<span className="@max-md:sr-only"> to a provider</span>
-            </Button>
+            {/* Once a provider is set up, Settings > Accounts signs in to another. */}
+            {needsSignIn && noneSaved ? (
+              <Button
+                variant="quiet"
+                size="xs"
+                onClick={() => openTerminal("login")}
+                className="app-no-drag"
+              >
+                {/* A narrow header, as at 200% zoom, shows "Sign in". Screen readers hear it all. */}
+                Sign in<span className="@max-md:sr-only"> to a provider</span>
+              </Button>
+            ) : null}
           </>
         )}
         {connection === "reconnecting" ? (

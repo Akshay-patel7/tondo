@@ -1,7 +1,8 @@
 // Onboarding with the real pi, offline: a pi Tondo can't find or can't use, pi
-// with no model you have credentials for, a project that needs trust, and the
+// with no model you have credentials for, the header's sign-in, which shows
+// only while no provider is set up, a project that needs trust, and the
 // welcome on first launch.
-import { expect, test, type ElectronApplication, type Locator } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -23,6 +24,9 @@ test.describe.configure({ timeout: 60_000 });
 
 /** The oldest pi Tondo runs (MIN_PI_VERSION in src/host/findPi.ts). */
 const REQUIRED_PI = "0.87.1";
+
+/** Where the accounts work's QA screenshots go. */
+const ACCOUNTS_QA = path.resolve(__dirname, "../.dev/improvements-20261011/qa/accounts");
 
 const PI_VERSION = (
   JSON.parse(readFileSync(path.resolve(PI_CLI, "../../../package.json"), "utf8")) as {
@@ -65,9 +69,20 @@ function installPi(bin: string): string {
   return path.join(bin, "pi");
 }
 
-/** Tondo with a pi that has no model you can use: no faux extension or provider, and nothing in the scratch pi setup is signed in. */
-function launchSignedOut(): Promise<Tondo> {
+/**
+ * Tondo with a pi that has no model of its own: no faux extension or provider.
+ * Nothing in the scratch pi setup is signed in, unless `auth` is the auth.json
+ * pi saves sign-ins in.
+ */
+function launchSignedOut(auth?: Record<string, unknown>): Promise<Tondo> {
+  // Unpackaged Tondo gives pi <profile>/pi-agent as its agent folder.
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(path.join(profileDir, "pi-agent"), { recursive: true });
+  if (auth !== undefined) {
+    writeFileSync(path.join(profileDir, "pi-agent", "auth.json"), JSON.stringify(auth));
+  }
   return launchTondo({
+    profileDir,
     settings: { piPath: installPi(path.join(workDir, "bin")) },
     env: {
       TONDO_PI_ARGS: JSON.stringify([
@@ -99,6 +114,33 @@ function oldPi(): string {
   symlinkSync(path.join(pkg, "cli.js"), path.join(bin, "pi"));
   symlinkSync(process.execPath, path.join(bin, "node"));
   return path.join(bin, "pi");
+}
+
+/** The header's sign-in, which opens the sign-in terminal while no provider is set up. */
+function headerSignIn(page: Page): Locator {
+  return page.locator("header").getByRole("button", { name: "Sign in to a provider", exact: true });
+}
+
+/** Whether the header has offered sign-in at any point from now on, even too briefly to poll for. */
+function watchHeaderForSignIn(page: Page) {
+  return page.evaluateHandle((label) => {
+    const offers = (node: Node | null) =>
+      node instanceof Element &&
+      [node, ...node.querySelectorAll("button")].some(
+        (element) => element.tagName === "BUTTON" && element.textContent?.startsWith(label),
+      );
+    const seen = { found: offers(document.querySelector("header")) };
+    new MutationObserver((records) => {
+      // A button the header gained counts even if a change in the same batch took it away.
+      const added = records.flatMap((record) =>
+        record.target instanceof Element && record.target.closest("header")
+          ? [...record.addedNodes]
+          : [],
+      );
+      if (offers(document.querySelector("header")) || added.some(offers)) seen.found = true;
+    }).observe(document.body, { subtree: true, childList: true });
+    return seen;
+  }, "Sign in");
 }
 
 test("a pi Tondo can't find says so, and the pi you choose starts", async () => {
@@ -194,6 +236,8 @@ for (const size of ["default", "minimum"] as const) {
     const prompt = page.getByRole("region", { name: "Sign in to a provider" });
     await expect(prompt).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
     await expect(page.getByRole("toolbar", { name: "Git" })).toBeVisible();
+    // With nothing set up, the header offers sign-in too.
+    await expect(headerSignIn(page)).toBeVisible();
     await prompt.getByRole("button", { name: "Open sign-in terminal" }).click();
     const drawer = page.getByRole("region", { name: "Terminal", exact: true });
     const output = drawer.locator(".xterm-accessibility-tree");
@@ -211,19 +255,120 @@ for (const size of ["default", "minimum"] as const) {
     const layout = await page.evaluate(() => ({
       scrollTop: document.scrollingElement!.scrollTop,
       headerTop: document.querySelector("header")!.getBoundingClientRect().top,
+      headerButtonsEnd: Math.max(
+        ...[...document.querySelectorAll("header button")].map(
+          (button) => button.getBoundingClientRect().right,
+        ),
+      ),
       drawerBottom: document
         .querySelector('section[aria-label="Terminal"]')!
         .getBoundingClientRect().bottom,
+      windowWidth: window.innerWidth,
       windowHeight: window.innerHeight,
     }));
     await page.screenshot({ path: `test-results/sign-in-drawer-${size}.png` });
     expect.soft(layout.scrollTop, "the page scrolled").toBe(0);
     expect.soft(layout.headerTop, "the header left the window").toBeGreaterThanOrEqual(0);
     expect
+      .soft(layout.headerButtonsEnd, "the header's buttons end past the window")
+      .toBeLessThanOrEqual(layout.windowWidth + 0.5);
+    expect
       .soft(layout.drawerBottom, "the drawer ends below the window")
       .toBeLessThanOrEqual(layout.windowHeight);
   });
 }
+
+test("with nothing set up, the header offers sign-in too, and it opens the sign-in terminal", async () => {
+  tondo = await launchSignedOut();
+  await bringToFront(tondo);
+  const { page } = tondo;
+  await addProject(tondo, project);
+
+  await expect(page.getByRole("region", { name: "Sign in to a provider" })).toBeVisible({
+    timeout: PI_START_TIMEOUT_MS,
+  });
+  await expect(headerSignIn(page)).toBeVisible();
+  await page.screenshot({
+    path: path.join(ACCOUNTS_QA, "header-signed-out.png"),
+    animations: "disabled",
+  });
+  await headerSignIn(page).click();
+  const terminal = page.getByRole("region", { name: "Terminal", exact: true });
+  await expect(terminal.getByRole("heading", { name: "Provider sign-in" })).toBeVisible();
+  // pi warns that it has no models once its startup is done and it takes /login.
+  await expect(terminal.locator(".xterm-accessibility-tree")).toContainText("No models available", {
+    timeout: PI_START_TIMEOUT_MS,
+  });
+});
+
+// pi lists Anthropic's models offline for either kind of saved sign-in.
+const SAVED_SIGN_INS = [
+  {
+    kind: "an API key",
+    screenshot: "header-saved-api-key.png",
+    auth: { anthropic: { type: "api_key", key: "synthetic-offline-test-key" } },
+  },
+  {
+    kind: "an account",
+    screenshot: "header-saved-account.png",
+    auth: {
+      anthropic: {
+        type: "oauth",
+        access: "synthetic-access",
+        refresh: "synthetic-refresh",
+        expires: 4102444800000,
+      },
+    },
+  },
+];
+
+for (const { kind, screenshot, auth } of SAVED_SIGN_INS) {
+  test(`with ${kind} saved, the header never offers sign-in`, async () => {
+    tondo = await launchSignedOut(auth);
+    await bringToFront(tondo);
+    const { page } = tondo;
+    const offers = await watchHeaderForSignIn(page);
+    await addProject(tondo, project);
+
+    await waitForPi(page);
+    // pi has a model you can use: Claude, from the saved sign-in.
+    await expect(page.getByLabel("Model")).toBeEnabled();
+    await expect(
+      page.locator("header").getByRole("button", { name: "Terminal", exact: true }),
+    ).toBeVisible();
+    await expect(headerSignIn(page)).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Sign in to a provider" })).toHaveCount(0);
+    // Not even while pi started, before it had said which models you can use.
+    expect(await offers.evaluate((seen) => seen.found)).toBe(false);
+    await page.screenshot({ path: path.join(ACCOUNTS_QA, screenshot), animations: "disabled" });
+  });
+}
+
+test("a saved sign-in hides the header's sign-in even for a provider pi has no model for", async () => {
+  tondo = await launchSignedOut({
+    "tondo-e2e": { type: "api_key", key: "synthetic-offline-test-key" },
+  });
+  await bringToFront(tondo);
+  const { page } = tondo;
+  const offers = await watchHeaderForSignIn(page);
+  await addProject(tondo, project);
+
+  // pi has no model to use, so the prompt still offers sign-in...
+  await expect(page.getByRole("region", { name: "Sign in to a provider" })).toBeVisible({
+    timeout: PI_START_TIMEOUT_MS,
+  });
+  // ...but auth.json, which Accounts lists, has a sign-in, so the header has none.
+  await expect(
+    page.locator("header").getByRole("button", { name: "Terminal", exact: true }),
+  ).toBeVisible();
+  await expect(headerSignIn(page)).toHaveCount(0);
+  // Not even before the host had listed the saved sign-ins.
+  expect(await offers.evaluate((seen) => seen.found)).toBe(false);
+  await page.screenshot({
+    path: path.join(ACCOUNTS_QA, "header-saved-no-model.png"),
+    animations: "disabled",
+  });
+});
 
 test("a project that needs trust asks first, and Tondo keeps the answer", async () => {
   mkdirSync(path.join(project, ".pi"));
