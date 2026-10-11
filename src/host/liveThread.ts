@@ -30,7 +30,7 @@ import {
   type PiEvent,
   type ThreadState,
 } from "../shared/thread";
-import { applyUiRequest, readUiRequest, responseTo, withoutDialog } from "./extensionUi";
+import { applyUiRequest, hasDialog, readUiRequest, responseTo, withoutDialog } from "./extensionUi";
 import { PiNotFoundError } from "./findPi";
 import { PiExitError, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
@@ -630,6 +630,14 @@ export class LiveThread {
     switch (request.kind) {
       case "dialog": {
         const { dialog, options } = request;
+        if (hasDialog(this.extensionUi, dialog.id)) {
+          // Tondo answers and closes dialogs by id, so it keeps the open one and cancels this.
+          console.error(
+            `Tondo Host: an extension in ${this.project} asked again with the open dialog id ${dialog.id}.`,
+          );
+          this.pi?.rpc.send({ type: "extension_ui_response", id: dialog.id, cancelled: true });
+          break;
+        }
         this.extensionUi = applyUiRequest(this.extensionUi, request);
         if (options) this.selectOptions.set(dialog.id, options);
         if (dialog.expiresAt !== null) {

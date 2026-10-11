@@ -175,6 +175,26 @@ test("an extension's composer text keeps the draft you typed", async () => {
   ).toBeVisible();
   await expectDraft(page, "my precious draft\n\nText from the extension");
 });
+
+test("a second dialog with an open dialog's id leaves the first one open", async () => {
+  const extension = path.join(workDir, "edge-ext.ts");
+  writeFileSync(extension, EDGE_EXTENSION);
+  tondo = await launchWithPi({ workDir, script: { responses: [] }, piArgs: ["-e", extension] });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "/tondo-duplicate");
+  // The notify comes after both requests, so the host has read the second by now.
+  await expect(page.getByRole("status").filter({ hasText: "Asked twice" })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(page.getByRole("dialog", { name: "First with the id" })).toBeVisible();
+  await expect(page.getByText("1/2")).toBeHidden();
+  await page.keyboard.press("1");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(composer(page)).toBeVisible();
+});
+
 test("an extension's question in a thread off screen badges it and raises a notification", async () => {
   const release = path.join(workDir, "release");
   tondo = await launchWithPi({
