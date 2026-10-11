@@ -51,6 +51,20 @@ function visibleRows() {
   return tondo.page.locator(".xterm-accessibility-tree > div").allTextContents();
 }
 
+/** Drags the drawer's grip to the window's `edge`; the drawer clamps the height it ends at. */
+async function dragGrip(edge: "top" | "bottom") {
+  const bounds = (await tondo.page
+    .getByRole("separator", { name: "Resize terminal" })
+    .boundingBox())!;
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await tondo.page.mouse.move(x, y);
+  await tondo.page.mouse.down();
+  const bottom = await tondo.page.evaluate(() => window.innerHeight - 1);
+  await tondo.page.mouse.move(x, edge === "top" ? 0 : bottom, { steps: 5 });
+  await tondo.page.mouse.up();
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -80,10 +94,14 @@ test("a real shell runs in the thread folder, resizes, survives reload and close
     return Math.max(screen.bottom - bounds.bottom, screen.right - bounds.right);
   });
   expect(overflow, "xterm's last row and column must fit inside its view").toBeLessThanOrEqual(0);
+  // Start from the shortest drawer: in a small window the tallest one must
+  // leave the thread its transcript, so there may be little room to grow.
+  const grip = page.getByRole("separator", { name: "Resize terminal" });
+  await dragGrip("bottom");
+  await expect(grip).toHaveAttribute("aria-valuenow", "160");
   await command('stty size | awk \'{print "SIZE=" $1 ":" $2}\'');
   await expect(output()).toContainText(/SIZE=\d+:\d+/);
   const before = /SIZE=(\d+):(\d+)/.exec(await output().innerText())!;
-  const grip = page.getByRole("separator", { name: "Resize terminal" });
   await grip.focus();
   await grip.press("ArrowUp");
   await grip.press("ArrowUp");
@@ -153,6 +171,36 @@ test("Terminal starts a new shell in place of one that exited", async () => {
   await command("printf 'FRESH_%s\\n' SHELL");
   await expect(output()).toContainText("FRESH_SHELL");
 });
+
+test("at the minimum window size the tallest terminal leaves the transcript and a whole footer", async () => {
+  const { app, page } = tondo;
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(840, 620));
+  await page.waitForFunction(() => window.innerWidth === 840 && window.innerHeight === 620);
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  const grip = page.getByRole("separator", { name: "Resize terminal" });
+  await expect(grip).toBeVisible();
+  await dragGrip("top");
+  const tallest = await grip.getAttribute("aria-valuemax");
+  await expect(grip).toHaveAttribute("aria-valuenow", tallest!);
+  const layout = await page.evaluate(() => {
+    const footer = document.querySelector(
+      'section[aria-label="Terminal"]',
+    )!.previousElementSibling!;
+    const bounds = footer.getBoundingClientRect();
+    const padding = parseFloat(getComputedStyle(footer).paddingBottom);
+    return {
+      transcript: footer.previousElementSibling!.getBoundingClientRect().height,
+      contentBottom: footer.firstElementChild!.getBoundingClientRect().bottom,
+      footerContentEnd: bounds.bottom - padding,
+    };
+  });
+  await page.screenshot({ path: "test-results/terminal-tallest-minimum.png" });
+  expect(layout.transcript, "the transcript keeps its room").toBeGreaterThanOrEqual(119);
+  expect(layout.contentBottom, "the footer is cut off").toBeLessThanOrEqual(
+    layout.footerContentEnd + 0.5,
+  );
+});
+
 test("provider sign-in runs a separate interactive pi in the isolated profile", async () => {
   const { page } = tondo;
   await send(page, "/login");
