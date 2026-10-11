@@ -115,6 +115,21 @@ test("a real shell runs in the thread folder, resizes, survives reload and close
   expect(errors).toEqual([]);
 });
 
+test("text inserted without a keydown, as by the emoji picker or dictation, reaches the shell", async () => {
+  const { page } = tondo;
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  const file = path.join(workDir, "inserted");
+  await command(`cat > '${file}'`);
+  // The shell creates the file before cat starts reading the terminal.
+  await expect.poll(() => existsSync(file)).toBe(true);
+  const input = page.locator(".xterm-helper-textarea");
+  await input.focus();
+  await page.keyboard.insertText("abc é 👍 漢字");
+  await input.press("Enter");
+  await input.press("Control+d");
+  await expect.poll(() => readFileSync(file, "utf8")).toBe("abc é 👍 漢字\n");
+});
 test("provider sign-in runs a separate interactive pi in the isolated profile", async () => {
   const { page } = tondo;
   await send(page, "/login");

@@ -281,6 +281,24 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(element);
+    // In screen reader mode xterm drops text inserted without a keydown: the
+    // emoji picker, dictation and the Character Viewer. Typed keys arrive with
+    // a keydown that xterm has already sent, so only the rest is forwarded.
+    const textarea = terminal.textarea!;
+    let keyDown = false;
+    const pressed = () => {
+      keyDown = true;
+    };
+    const released = () => {
+      keyDown = false;
+    };
+    const inserted = (event: Event) => {
+      if (!(event instanceof InputEvent) || event.inputType !== "insertText") return;
+      if (event.data && !keyDown && !event.isComposing) terminal.input(event.data);
+    };
+    textarea.addEventListener("keydown", pressed);
+    textarea.addEventListener("keyup", released);
+    textarea.addEventListener("input", inserted);
     let webgl: WebglAddon | undefined;
     try {
       webgl = new WebglAddon();
@@ -369,6 +387,9 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     return () => {
       disposed = true;
       dark.removeEventListener("change", retheme);
+      textarea.removeEventListener("keydown", pressed);
+      textarea.removeEventListener("keyup", released);
+      textarea.removeEventListener("input", inserted);
       unread();
       observer.disconnect();
       input.dispose();
