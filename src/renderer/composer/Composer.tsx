@@ -26,6 +26,7 @@ import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
 import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
 import { useThread } from "../thread/store";
+import { isMac } from "../platform";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -44,7 +45,7 @@ function placeholder(pi: PiStatus, working: boolean): string {
   if (pi.state === "starting") return "Starting pi…";
   if (pi.state !== "ready") return "pi isn't running";
   return working
-    ? "Steer pi with Enter, or queue a follow-up with Alt+Enter"
+    ? `Steer pi with ${isMac ? "Return" : "Enter"}, or queue a follow-up with ${isMac ? "Option+Return" : "Alt+Enter"}`
     : "Message pi, or type / for commands";
 }
 

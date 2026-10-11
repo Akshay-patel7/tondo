@@ -243,11 +243,13 @@ function HotkeysSheet() {
         </Row>
       </Rows>
       <Rows heading="Composer">
-        <Row label={<Kbd>Enter</Kbd>}>Send, or steer pi while it works</Row>
-        <Row label={<Kbd>Alt+Enter</Kbd>}>Queue a follow-up</Row>
-        <Row label={<Kbd>Alt+Up</Kbd>}>Take queued messages back to edit</Row>
+        <Row label={<Kbd>{isMac ? "Return" : "Enter"}</Kbd>}>Send, or steer pi while it works</Row>
+        <Row label={<Kbd>{isMac ? "Option+Return" : "Alt+Enter"}</Kbd>}>Queue a follow-up</Row>
+        <Row label={<Kbd>{isMac ? "Option+Up" : "Alt+Up"}</Kbd>}>
+          Take queued messages back to edit
+        </Row>
         <Row label={<Kbd>Escape</Kbd>}>Stop pi</Row>
-        <Row label={<Kbd>Shift+Enter</Kbd>}>New line</Row>
+        <Row label={<Kbd>{isMac ? "Shift+Return" : "Shift+Enter"}</Kbd>}>New line</Row>
         <Row label={<Kbd>/</Kbd>}>Slash commands: Tab completes one, Enter runs it</Row>
       </Rows>
       <Rows heading="Extension dialogs">
