@@ -9,6 +9,7 @@ import { useThread } from "../thread/store";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { stripAnsi } from "./ansi";
 
 // Alert centers its icon and button on the whole text unless there's a
 // description, so each banner keeps them on the first line of its text. Beside
@@ -17,8 +18,8 @@ import { Spinner } from "../ui/spinner";
 // down, as Alert puts it beside a description. One line looks as it did.
 
 function PiStopped({ error }: { error: string }) {
-  // PiExitError puts the exit on the first line and pi's stderr after it.
-  const [summary, ...rest] = error.split("\n");
+  // PiExitError puts the exit on the first line and pi's stderr, colors and all, after it.
+  const [summary, ...rest] = stripAnsi(error).split("\n");
   const details = rest.join("\n").trim();
   return (
     <Alert variant="destructive" role="alert">

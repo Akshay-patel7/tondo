@@ -264,6 +264,22 @@ test("the welcome says whether Tondo found pi, and the pi you choose fixes it", 
   expect(readSettings(tondo).piPath).toBe(pi);
 });
 
+test("pi's stderr in the pi stopped banner reads as plain text, without terminal colors", async () => {
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  await bringToFront(tondo);
+  const { page } = tondo;
+  // A script the faux extension can't parse makes pi print colored errors and exit as it starts.
+  writeFileSync(path.join(workDir, "script.json"), "not json");
+  await addProject(tondo, project);
+
+  const banner = page.getByRole("alert").filter({ hasText: "Restart pi" });
+  await expect(banner).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
+  await banner.getByText("Details", { exact: true }).click();
+  const details = banner.locator("pre");
+  await expect(details).toContainText("Failed to load extension");
+  expect(await details.textContent()).not.toContain("\u001b");
+});
+
 /** The alert in `where` that says settings.json is broken. */
 function fileProblem(where: Locator): Locator {
   return where.getByRole("alert").filter({ hasText: "Tondo can't use its settings file" });
