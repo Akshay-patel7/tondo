@@ -27,7 +27,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -283,6 +283,8 @@ export type ClientMessage = Versioned<
   | { type: "set-draft-images"; threadId: string; images: readonly DraftImage[] }
   /** List project files for @ completion, correlated so stale scans can't replace a new menu. */
   | { type: "list-files"; threadId: string; id: number }
+  /** Search every project file when list-files' index was truncated. `id` is that menu's. */
+  | { type: "find-files"; threadId: string; id: number; query: string }
   | { type: "list-checkpoints"; threadId: string }
   | { type: "read-checkpoint"; threadId: string; turn: number; id: number }
   | { type: "set-sidebar-hidden"; hidden: boolean }
@@ -358,6 +360,8 @@ export type HostMessage = Versioned<
   | { type: "status"; thread: OpenThread }
   | { type: "sidebar"; projects: SidebarProject[] }
   | { type: "files"; threadId: string; id: number; index: FileIndex }
+  /** The best matches for find-files' `query`, ranked as the page ranks an index. */
+  | { type: "file-matches"; threadId: string; id: number; query: string; paths: readonly string[] }
   | {
       type: "checkpoints";
       threadId: string;
@@ -388,9 +392,15 @@ export type HostMessage = Versioned<
   | { type: "error"; message: string }
   /**
    * Tondo's settings, sent to each new port and after every set-settings.
-   * `error` says why the last change wasn't saved, or why the file can't be read.
+   * `error` says why the last change wasn't saved. `fileProblem` says why
+   * Tondo can't read settings.json, whose `path` the page may reveal.
    */
-  | { type: "settings"; settings: AppSettings; error: string | null }
+  | {
+      type: "settings";
+      settings: AppSettings;
+      error: string | null;
+      fileProblem: { readonly path: string; readonly message: string } | null;
+    }
   /** The pi Tondo runs, sent to each new port and whenever Tondo looks for pi again. */
   | { type: "pi-env"; pi: PiDiscovery }
   | { type: "pi-config-files"; files: readonly SettingsFile[] }
@@ -461,6 +471,9 @@ export type ParseResult = { ok: true; message: ClientMessage } | { ok: false; er
 
 /** Longer than any session or request id pi or Tondo makes, and short enough to log. */
 const MAX_ID = 200;
+
+/** Longer than any path an @ mention would search for. */
+const MAX_QUERY = 4096;
 
 /**
  * Checks a message from the page and returns a fresh copy of it. Anything
@@ -604,6 +617,24 @@ export function parseClientMessage(data: unknown): ParseResult {
         return invalid(`list-files: id must be a nonnegative integer, not ${describe(id)}`);
       }
       return exactly(message, { v, type, threadId: threadId as string, id: id as number });
+    }
+    case "find-files": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id, query } = message;
+      if (!Number.isSafeInteger(id) || (id as number) < 0) {
+        return invalid(`find-files: id must be a nonnegative integer, not ${describe(id)}`);
+      }
+      if (typeof query !== "string" || query.length > MAX_QUERY) {
+        return invalid(`find-files: query must be a string of at most ${MAX_QUERY} characters`);
+      }
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        id: id as number,
+        query,
+      });
     }
     case "list-checkpoints": {
       const bad = badThreadId(type, threadId);

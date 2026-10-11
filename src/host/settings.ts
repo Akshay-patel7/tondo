@@ -10,8 +10,9 @@ import {
   POOL_RANGES,
   type AppSettings,
   type SettingsPatch,
+  type ShortcutCommand,
 } from "../shared/settings";
-import { formatChord, parseChord } from "../shared/shortcuts";
+import { formatChord, parseChord, shortcutProblems } from "../shared/shortcuts";
 import { canonical } from "./trust";
 
 export interface Settings extends AppSettings {
@@ -19,9 +20,54 @@ export interface Settings extends AppSettings {
   readonly projectTrust: Readonly<Record<string, boolean>>;
 }
 
+/** The settings a missing file holds. */
+const DEFAULTS: Settings = { ...DEFAULT_SETTINGS, projectTrust: {} };
+
 /** Reads the settings in `file`, with defaults for what it leaves out. A missing file holds the defaults. */
 export function readSettings(file: string): Settings {
   return check(readObject(file), (what) => problem(file, what));
+}
+
+/** Settings Tondo can go on with, and what's wrong with the file they came from. */
+export interface SettingsRead {
+  readonly settings: Settings;
+  /** What's wrong with the file, naming it, or null if nothing is. */
+  readonly problem: string | null;
+}
+
+/**
+ * Reads the settings in `file` for starting pi and showing them: each setting
+ * the file gets wrong takes its default instead of failing the rest, and a
+ * file Tondo can't read at all holds the defaults.
+ */
+export function readSettingsLeniently(file: string): SettingsRead {
+  let saved: Record<string, unknown>;
+  try {
+    saved = readObject(file);
+  } catch (error) {
+    return { settings: DEFAULTS, problem: (error as Error).message };
+  }
+  const problems: string[] = [];
+  const settings = parse(saved, (what) => problems.push(what));
+  return { settings, problem: problems.length === 0 ? null : problem(file, problems[0]!).message };
+}
+
+/**
+ * The shortcut problems `patch` brings to the bindings in `saved`. Problems
+ * the bindings already had, such as two commands a hand edit gave one chord,
+ * don't count against a change that leaves them as they were.
+ */
+export function newShortcutProblems(
+  saved: Settings["shortcuts"],
+  patch: NonNullable<SettingsPatch["shortcuts"]>,
+): string[] {
+  const shortcuts: Record<string, string | null> = { ...saved };
+  for (const [command, text] of Object.entries(patch)) {
+    if (text === "default") delete shortcuts[command];
+    else if (text !== undefined) shortcuts[command] = text;
+  }
+  const had = new Set(shortcutProblems(saved));
+  return shortcutProblems(shortcuts).filter((found) => !had.has(found));
 }
 
 /**
@@ -103,7 +149,8 @@ function readObject(file: string): Record<string, unknown> {
   }
   let settings: unknown;
   try {
-    settings = JSON.parse(text);
+    // Some editors start a UTF-8 file with a byte order mark, which JSON doesn't allow.
+    settings = JSON.parse(text.startsWith("\uFEFF") ? text.slice(1) : text);
   } catch (error) {
     throw problem(file, `isn't valid JSON: ${(error as Error).message}`);
   }
@@ -113,6 +160,17 @@ function readObject(file: string): Record<string, unknown> {
 
 /** The settings `saved` holds, or the error `fail` makes of what's wrong with them. */
 function check(saved: Record<string, unknown>, fail: (what: string) => Error): Settings {
+  return parse(saved, (what) => {
+    throw fail(what);
+  });
+}
+
+/**
+ * The settings `saved` holds. `report` hears what's wrong with each setting,
+ * which then takes its default. Shortcuts for commands this version doesn't
+ * know, which a newer Tondo may have saved, are left out without a word.
+ */
+function parse(saved: Record<string, unknown>, report: (what: string) => void): Settings {
   const {
     piPath,
     projectTrust = {},
@@ -120,50 +178,48 @@ function check(saved: Record<string, unknown>, fail: (what: string) => Error): S
     pool = {},
     shortcuts = {},
   } = saved;
-  if (piPath !== undefined && (typeof piPath !== "string" || !path.isAbsolute(piPath))) {
-    throw fail(`has a piPath that isn't an absolute path: ${JSON.stringify(piPath)}`);
+  let pi: string | null = null;
+  if (piPath !== undefined) {
+    if (typeof piPath === "string" && path.isAbsolute(piPath)) pi = piPath;
+    else report(`has a piPath that isn't an absolute path: ${JSON.stringify(piPath)}`);
   }
-  if (
-    !isObject(projectTrust) ||
-    Object.values(projectTrust).some((answer) => typeof answer !== "boolean")
-  ) {
-    throw fail("has a projectTrust that isn't an object of true and false answers");
-  }
-  if (!isThemeSetting(theme)) {
-    throw fail(`has a theme that isn't system, light or dark: ${JSON.stringify(theme)}`);
-  }
-  if (!isObject(pool)) throw fail("has a pool that isn't an object");
-  const {
-    maxLive = DEFAULT_SETTINGS.pool.maxLive,
-    idleMinutes = DEFAULT_SETTINGS.pool.idleMinutes,
-  } = pool;
-  for (const [key, value] of [
-    ["maxLive", maxLive],
-    ["idleMinutes", idleMinutes],
-  ] as const) {
-    const { min, max } = POOL_RANGES[key];
-    if (!isPoolValue(key, value)) {
-      throw fail(
-        `has a pool.${key} that isn't a whole number from ${min} to ${max}: ${JSON.stringify(value)}`,
-      );
+  const trust: Record<string, boolean> = {};
+  if (isObject(projectTrust)) {
+    for (const [project, answer] of Object.entries(projectTrust)) {
+      if (typeof answer === "boolean") trust[project] = answer;
     }
   }
-  if (!isObject(shortcuts)) throw fail("has shortcuts that aren't an object");
-  for (const [command, text] of Object.entries(shortcuts)) {
-    if (!isShortcutCommand(command)) {
-      throw fail(`has a shortcut for ${JSON.stringify(command)}, which isn't a command`);
-    }
-    if (text !== null && (typeof text !== "string" || parseChord(text) === null)) {
-      throw fail(`has a ${command} shortcut that isn't one: ${JSON.stringify(text)}`);
+  if (!isObject(projectTrust) || Object.keys(trust).length !== Object.keys(projectTrust).length) {
+    report("has a projectTrust that isn't an object of true and false answers");
+  }
+  let chosenTheme = DEFAULT_SETTINGS.theme;
+  if (isThemeSetting(theme)) chosenTheme = theme;
+  else report(`has a theme that isn't system, light or dark: ${JSON.stringify(theme)}`);
+  if (!isObject(pool)) report("has a pool that isn't an object");
+  const limits = { ...DEFAULT_SETTINGS.pool };
+  if (isObject(pool)) {
+    for (const key of ["maxLive", "idleMinutes"] as const) {
+      const { min, max } = POOL_RANGES[key];
+      const value = pool[key] === undefined ? DEFAULT_SETTINGS.pool[key] : pool[key];
+      if (isPoolValue(key, value)) limits[key] = value;
+      else {
+        report(
+          `has a pool.${key} that isn't a whole number from ${min} to ${max}: ${JSON.stringify(value)}`,
+        );
+      }
     }
   }
-  return {
-    piPath: piPath ?? null,
-    theme,
-    pool: { maxLive: maxLive as number, idleMinutes: idleMinutes as number },
-    shortcuts: shortcuts as Settings["shortcuts"],
-    projectTrust: projectTrust as Record<string, boolean>,
-  };
+  const bindings: Partial<Record<ShortcutCommand, string | null>> = {};
+  if (!isObject(shortcuts)) report("has shortcuts that aren't an object");
+  else {
+    for (const [command, text] of Object.entries(shortcuts)) {
+      if (!isShortcutCommand(command)) continue;
+      if (text === null || (typeof text === "string" && parseChord(text) !== null)) {
+        bindings[command] = text;
+      } else report(`has a ${command} shortcut that isn't one: ${JSON.stringify(text)}`);
+    }
+  }
+  return { piPath: pi, theme: chosenTheme, pool: limits, shortcuts: bindings, projectTrust: trust };
 }
 
 function problem(file: string, what: string): Error {

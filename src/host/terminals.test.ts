@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostMessage } from "../shared/protocol";
 import { TERMINAL_WINDOW_BYTES } from "../shared/terminal";
@@ -73,6 +75,19 @@ describe("terminal sessions", () => {
     expect(fake.drain).toHaveBeenCalledWith(987654, 1_000);
   });
 
+  it("reports a deleted project folder instead of starting a shell that exits at once", async () => {
+    const gone = path.join(os.tmpdir(), `tondo-gone-${process.pid}`);
+    const { terminals, messages } = setup(async () => ({ ...launch, cwd: gone }));
+    await terminals.handle({ type: "terminal-open", threadId: "thread", kind: "shell" });
+    expect(fake.spawn).not.toHaveBeenCalled();
+    expect(messages.findLast((m) => m.type === "terminal-state")).toMatchObject({
+      terminal: {
+        status: "exited",
+        error: `Couldn't start the terminal: the folder ${gone} no longer exists.`,
+      },
+    });
+  });
+
   it("pauses until parsed output is acknowledged, and rejects stale acknowledgements", async () => {
     const { terminals, open, messages } = setup();
     const session = await open();
@@ -126,6 +141,20 @@ describe("terminal sessions", () => {
     expect(terminals.has(session.threadId)).toBe(true);
     await terminals.close(session.threadId);
     expect(messages.at(-1)).toMatchObject({ terminal: null });
+  });
+
+  it("replaces an exited terminal when it is opened again", async () => {
+    const { terminals, messages, open } = setup();
+    const first = await open();
+    fake.exit({ exitCode: 3 });
+    const second = await open();
+    expect(second.terminalId).not.toBe(first.terminalId);
+    expect(fake.spawn).toHaveBeenCalledTimes(2);
+    expect(messages).toContainEqual(expect.objectContaining({ terminal: null }));
+    expect(messages.at(-1)).toMatchObject({
+      terminal: { id: second.terminalId, status: "running", exitCode: null },
+    });
+    await terminals.close(second.threadId);
   });
 
   it.each(["closed", "replaced"])("ignores late exits from %s sessions", async (state) => {

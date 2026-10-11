@@ -29,7 +29,7 @@ import {
   type StreamingBehavior,
   type ThinkingLevel,
 } from "../shared/protocol";
-import { joinDrafts, setDraft, useDraft, useDraftImages } from "./composer/draft";
+import { editorText, joinDrafts, setDraft, useDraft, useDraftImages } from "./composer/draft";
 import { showExtensionUi } from "./extensionUi/store";
 import { closeSheet, openSheet } from "./sheets/store";
 import { keepUnchanged } from "./sidebar/model";
@@ -53,6 +53,16 @@ export const useHost = create<{
   settings: AppSettings | null;
   /** Why the host refused the last settings change, or null if it took it. */
   settingsError: string | null;
+  /** Why Tondo can't use settings.json, or null if it can. */
+  settingsFileError: string | null;
+  /** settings.json, which the page may show in Finder while settingsFileError is set. */
+  settingsFilePath: string | null;
+  /** Why the host couldn't keep your answer to a thread's trust question, and a file to show. */
+  trustError: {
+    readonly threadId: string;
+    readonly message: string;
+    readonly reveal?: string;
+  } | null;
   /** The pi Tondo would run, or null until the host has looked. */
   piEnv: PiDiscovery | null;
   /** pi's config files, or null until requestPiConfigFiles is answered. */
@@ -71,14 +81,23 @@ export const useHost = create<{
   errors: [],
   settings: null,
   settingsError: null,
+  settingsFileError: null,
+  settingsFilePath: null,
+  trustError: null,
   piEnv: null,
   piConfigFiles: null,
   piAccounts: null,
 }));
 
-export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => ({
+export const useFiles = create<{
+  id: number;
+  index: FileIndex | null;
+  /** The host's search of every file, for an index that was truncated. */
+  found: { readonly query: string; readonly paths: readonly string[] } | null;
+}>()(() => ({
   id: 0,
   index: null,
+  found: null,
 }));
 
 export const useCheckpoints = create<{
@@ -143,8 +162,31 @@ export function usePi(): PiStatus {
 const v = PROTOCOL_VERSION;
 let port: MessagePort | undefined;
 
+/** The thread whose trust answer the host hasn't taken yet. */
+let answeringTrust: string | undefined;
+
+/** The composer text an extension last set in the thread on screen. */
+let extensionText: string | undefined;
+
+/**
+ * Shows an error on the trust question if it's about the answer you just gave.
+ * The question covers the banners, and an error left in a banner or a toast
+ * would outlive the answer that later succeeds.
+ */
+function failTrustAnswer(message: string, reveal?: string): boolean {
+  const thread = useHost.getState().thread;
+  const answering = answeringTrust;
+  answeringTrust = undefined;
+  if (answering === undefined || thread?.id !== answering || !thread.askingTrust) return false;
+  useHost.setState({
+    trustError: { threadId: thread.id, message, ...(reveal === undefined ? {} : { reveal }) },
+  });
+  return true;
+}
+
 function fail(message: string): void {
   console.error(`Tondo Host: ${message}`);
+  if (failTrustAnswer(message)) return;
   useHost.setState(({ errors }) =>
     errors.includes(message) ? {} : { errors: [...errors, message] },
   );
@@ -159,6 +201,17 @@ export function openTerminal(kind: TerminalKind = "shell", provider?: string): v
   const thread = useHost.getState().thread;
   if (!thread || thread.askingTrust) return;
   const existing = useTerminals.getState().get(thread.id);
+  // The host replaces an exited terminal, whatever its kind.
+  if (existing?.status === "exited") {
+    send({
+      v,
+      type: "terminal-open",
+      threadId: thread.id,
+      kind,
+      ...(provider === undefined ? {} : { provider }),
+    });
+    return;
+  }
   if (existing && existing.kind !== kind) {
     addToast({
       level: "info",
@@ -226,6 +279,7 @@ function receive(message: HostMessage): void {
       useHost.setState({ connection: "connected", thread: message.thread });
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) {
+        extensionText = undefined;
         useGit.setState({ status: null, error: null });
         setDraft(message.draft);
         useDraftImages.setState(message.images, true);
@@ -253,6 +307,11 @@ function receive(message: HostMessage): void {
     case "files":
       if (message.threadId === shownId() && message.id === useFiles.getState().id) {
         useFiles.setState({ index: message.index });
+      }
+      break;
+    case "file-matches":
+      if (message.threadId === shownId() && message.id === useFiles.getState().id) {
+        useFiles.setState({ found: { query: message.query, paths: message.paths } });
       }
       break;
     case "checkpoints":
@@ -289,10 +348,15 @@ function receive(message: HostMessage): void {
       if (message.threadId === shownId()) showExtensionUi(message.ui);
       break;
     case "editor-text":
-      if (message.threadId === shownId()) editDraft(message.text);
+      if (message.threadId === shownId()) {
+        const text = editorText(useDraft.getState(), message.text, extensionText);
+        extensionText = message.text;
+        editDraft(text);
+      }
       break;
     case "toast": {
       const { level, message: text, thread, reveal } = message;
+      if (level === "error" && failTrustAnswer(text, reveal)) break;
       addToast({
         level,
         message: text,
@@ -305,7 +369,13 @@ function receive(message: HostMessage): void {
       if (message.threadId === shownId()) openSheet(message.sheet);
       break;
     case "settings":
-      useHost.setState({ settings: message.settings, settingsError: message.error });
+      useHost.setState({
+        settings: message.settings,
+        // A change refused because the file is broken shows as the file's problem.
+        settingsError: message.error === message.fileProblem?.message ? null : message.error,
+        settingsFileError: message.fileProblem?.message ?? null,
+        settingsFilePath: message.fileProblem?.path ?? null,
+      });
       break;
     case "pi-env":
       useHost.setState({ piEnv: message.pi });
@@ -325,6 +395,7 @@ function receive(message: HostMessage): void {
 }
 
 function accept(next: MessagePort): void {
+  answeringTrust = undefined;
   resetTerminals();
   useCheckpoints.setState(({ id }) => ({
     turns: [],
@@ -361,6 +432,8 @@ export function connectToHost(): void {
   window.addEventListener("focus", () => {
     if (port) send({ v, type: "refresh" });
   });
+  // Closing the window, quitting or reloading would otherwise drop text typed in the last moments.
+  window.addEventListener("pagehide", saveDraft);
 }
 
 /** How long the composer waits after you stop typing to save the draft. */
@@ -443,14 +516,22 @@ export function toggleSidebar(): void {
 }
 
 export function answerTrust(trusted: boolean): void {
-  send({ v, type: "trust", threadId: requireShownId(), trusted });
+  const threadId = requireShownId();
+  answeringTrust = threadId;
+  useHost.setState({ trustError: null });
+  send({ v, type: "trust", threadId, trusted });
 }
 
 /** Starts a scan for a newly opened file menu. Filtering the returned index happens in the page. */
 export function listFiles(): void {
   const id = useFiles.getState().id + 1;
-  useFiles.setState({ id, index: null });
+  useFiles.setState({ id, index: null, found: null });
   send({ v, type: "list-files", threadId: requireShownId(), id });
+}
+
+/** Asks the host to search every project file for `query`, when the menu's index is truncated. */
+export function findFiles(query: string): void {
+  send({ v, type: "find-files", threadId: requireShownId(), id: useFiles.getState().id, query });
 }
 
 /** Attach to the thread that began the read, never to one opened while decoding. */

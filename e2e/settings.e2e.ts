@@ -233,6 +233,70 @@ test("pi's settings files show in Finder", async () => {
   expect(await revealed()).toBe(global);
 });
 
+test("after an outside edit to settings.json, a change in the app applies the file's theme", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  tondo = await launchWithPi({
+    workDir,
+    script: { responses: [] },
+    profileDir,
+    settings: { theme: "dark" },
+  });
+  const { page } = tondo;
+  await page.emulateMedia({ colorScheme: null });
+  await expect.poll(() => prefersDark(page)).toBe(true);
+
+  // You edit the file while Tondo runs, then change something else in the app.
+  writeFileSync(
+    path.join(profileDir, "settings.json"),
+    JSON.stringify({ ...saved(profileDir), theme: "light" }),
+  );
+  const settings = await openSettings(page);
+  await section(settings, "Threads").click();
+  const kept = settings.getByLabel("pi processes kept running", { exact: true });
+  await kept.fill("2");
+  await kept.press("Tab");
+  await expect.poll(() => saved(profileDir).pool?.maxLive).toBe(2);
+
+  await section(settings, "Appearance").click();
+  await expect(
+    settings
+      .getByRole("group", { name: "Theme", exact: true })
+      .getByRole("button", { name: "Light", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => prefersDark(page)).toBe(false);
+});
+
+test("pi starts though settings.json has mistakes, and Tondo offers to show the file", async () => {
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  const { app, page, profileDir } = tondo;
+  const file = path.join(profileDir, "settings.json");
+  // A newer Tondo's shortcut, and values this version refuses, written while Tondo runs.
+  writeFileSync(
+    file,
+    JSON.stringify({
+      ...saved(profileDir),
+      theme: "sepia",
+      pool: { maxLive: 9999 },
+      shortcuts: { "toggle-terminal": "mod+j" },
+    }),
+  );
+  const revealed = await captureReveal(app);
+  const project = path.join(workDir, "project");
+  mkdirSync(project);
+  await addProject(tondo, project);
+  await waitForPi(page);
+
+  const toast = page
+    .getByRole("status")
+    .filter({ hasText: `Tondo's settings file ${file} has a theme that isn't` });
+  await expect(toast).toBeVisible();
+  await toast
+    .getByRole("button", { name: isMac ? "Show in Finder" : "Show in folder", exact: true })
+    .click();
+  expect(await revealed()).toBe(file);
+});
+
 /** The settings page. */
 function settingsPage(page: Page): Locator {
   return page.getByRole("region", { name: "Settings", exact: true });

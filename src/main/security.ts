@@ -43,7 +43,10 @@ function withCsp(response: Response): Response {
 /**
  * Keeps every web page inside the app: navigation away from the renderer is
  * cancelled, new windows are refused, and http(s) links open in the default
- * browser instead.
+ * browser instead. Chromium sends no `will-navigate` for some targets, such
+ * as about:blank, so a page that has shown the app loads it again if one of
+ * those navigations commits. This recovery loses document state. Pages that
+ * never showed the app, like DevTools, are left alone.
  */
 export function hardenWebContents(
   contents: WebContents,
@@ -53,6 +56,21 @@ export function hardenWebContents(
     if (isRendererUrl(event.url)) return;
     event.preventDefault();
     openExternally(event.url);
+  });
+  let appUrl: string | undefined;
+  // did-start-navigation is a notification, not a cancellation point. Calling
+  // stop() inside it can terminate Electron, even before will-navigate cancels
+  // an ordinary https link. Recover unguarded commits instead.
+  contents.on("did-navigate", (_event, url) => {
+    if (isRendererUrl(url)) {
+      appUrl = url;
+      return;
+    }
+    if (appUrl === undefined) return;
+    console.error(`Tondo's page left the app for ${url}. Loading the app again.`);
+    contents.loadURL(appUrl).catch((error: unknown) => {
+      console.error(`Tondo couldn't load ${appUrl}:`, error);
+    });
   });
   contents.setWindowOpenHandler(({ url }) => {
     openExternally(url);

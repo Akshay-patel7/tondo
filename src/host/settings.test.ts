@@ -12,7 +12,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../shared/settings";
-import { readSettings, saveTrustAnswer, updateSettings } from "./settings";
+import {
+  newShortcutProblems,
+  readSettings,
+  readSettingsLeniently,
+  saveTrustAnswer,
+  updateSettings,
+} from "./settings";
 
 const DEFAULTS = { ...DEFAULT_SETTINGS, projectTrust: {} };
 
@@ -85,7 +91,6 @@ describe("readSettings", () => {
       "has a pool.idleMinutes that isn't a whole number from 1 to 240: 241",
     ],
     ['{"shortcuts":[]}', "has shortcuts that aren't an object"],
-    ['{"shortcuts":{"quit":"mod+q"}}', `has a shortcut for "quit", which isn't a command`],
     ['{"shortcuts":{"palette":"mod+"}}', `has a palette shortcut that isn't one: "mod+"`],
     ['{"shortcuts":{"palette":5}}', "has a palette shortcut that isn't one: 5"],
   ])("names the file and the problem for %s", (content, problem) => {
@@ -93,9 +98,86 @@ describe("readSettings", () => {
     expect(() => readSettings(file)).toThrow(`Tondo's settings file ${file} ${problem}`);
   });
 
+  it("reads a file that starts with a byte order mark", () => {
+    writeFileSync(file, `\uFEFF${JSON.stringify({ theme: "dark" })}`);
+    expect(readSettings(file).theme).toBe("dark");
+  });
+
+  it("leaves out a shortcut for a command this version doesn't know, and reads the rest", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({
+        theme: "dark",
+        shortcuts: { "toggle-terminal": "mod+j", later: "not a chord", palette: "mod+p" },
+      }),
+    );
+    expect(readSettings(file)).toEqual({
+      ...DEFAULTS,
+      theme: "dark",
+      shortcuts: { palette: "mod+p" },
+    });
+  });
+
   it("passes on errors other than a missing file", () => {
     mkdirSync(file);
     expect(() => readSettings(file)).toThrow(/EISDIR/);
+  });
+});
+
+describe("readSettingsLeniently", () => {
+  it("reads a valid file with no problem", () => {
+    writeFileSync(file, JSON.stringify({ theme: "light", projectTrust: { "/work/a": true } }));
+    expect(readSettingsLeniently(file)).toEqual({
+      settings: { ...DEFAULTS, theme: "light", projectTrust: { "/work/a": true } },
+      problem: null,
+    });
+  });
+
+  it("gives each setting the file gets wrong its default, keeps the rest, and names the first problem", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({
+        piPath: "/opt/pi/bin/pi",
+        theme: "sepia",
+        pool: { maxLive: 9999, idleMinutes: 30 },
+        shortcuts: { palette: "mod+", settings: "mod+j" },
+        projectTrust: { "/work/a": true, "/work/b": "yes" },
+      }),
+    );
+    expect(readSettingsLeniently(file)).toEqual({
+      settings: {
+        piPath: "/opt/pi/bin/pi",
+        theme: "system",
+        pool: { maxLive: 4, idleMinutes: 30 },
+        shortcuts: { settings: "mod+j" },
+        projectTrust: { "/work/a": true },
+      },
+      problem: `Tondo's settings file ${file} has a projectTrust that isn't an object of true and false answers`,
+    });
+  });
+
+  it("holds the defaults when the file isn't JSON, and says so", () => {
+    writeFileSync(file, "{");
+    const { settings, problem } = readSettingsLeniently(file);
+    expect(settings).toEqual(DEFAULTS);
+    expect(problem).toContain(`Tondo's settings file ${file} isn't valid JSON: `);
+  });
+});
+
+describe("newShortcutProblems", () => {
+  it("lets a change through when the bindings already had a problem it leaves as it was", () => {
+    // Command palette on mod+n clashes with New thread's default.
+    expect(newShortcutProblems({ palette: "mod+n" }, { settings: "mod+j" })).toEqual([]);
+  });
+
+  it("refuses a change that brings a problem of its own", () => {
+    expect(newShortcutProblems({ palette: "mod+n" }, { "add-project": "mod+b" })).toEqual([
+      "Toggle sidebar and Add project both use mod+b.",
+    ]);
+  });
+
+  it("lets a change through that fixes the problem", () => {
+    expect(newShortcutProblems({ palette: "mod+n" }, { palette: "default" })).toEqual([]);
   });
 });
 
@@ -153,6 +235,17 @@ describe("updateSettings", () => {
     );
     expect(readFileSync(file, "utf8")).toBe(content);
     expect(readdirSync(dir)).toEqual(["settings.json"]);
+  });
+
+  it("saves a change, and keeps a shortcut for a command this version doesn't know", () => {
+    writeFileSync(file, JSON.stringify({ shortcuts: { "toggle-terminal": "mod+j" } }));
+
+    updateSettings(file, { theme: "dark", shortcuts: { palette: "mod+p" } });
+
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      theme: "dark",
+      shortcuts: { "toggle-terminal": "mod+j", palette: "mod+p" },
+    });
   });
 
   it("names the file when it was already invalid", () => {

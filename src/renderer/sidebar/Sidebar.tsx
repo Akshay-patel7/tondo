@@ -36,7 +36,6 @@ import {
   removeProject,
   renameThread,
   setCollapsed,
-  toggleSidebar,
   useHost,
 } from "../connection";
 import { folderName, formatAge } from "../format";
@@ -64,6 +63,7 @@ import {
 } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { toggleSidebarShown } from "./layout";
 import { listedThreads, MORE_SIZE, PAGE_SIZE } from "./model";
 import { endRename, startRename, useFocusedRow, useRenaming } from "./store";
 
@@ -231,7 +231,7 @@ export function Sidebar() {
             label="Hide sidebar"
             command="toggle-sidebar"
             disabled={!connected}
-            onClick={toggleSidebar}
+            onClick={toggleSidebarShown}
           >
             <PanelLeft aria-hidden />
           </ShellButton>
@@ -587,19 +587,22 @@ function ThreadRow({ thread, open, now }: { thread: SidebarThread; open: boolean
                 {formatAge(thread.updatedAt, now)}
               </span>
             </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<Button variant="ghost" size="icon-sm" />}
-                aria-label="Thread actions"
-                tabIndex={tabIndex}
-                // Its menu renders outside the row, so it stays shown while
-                // the menu is open, and closing the menu can focus it again.
-                className="invisible absolute inset-y-0 right-0 my-auto group-focus-within:visible group-hover:visible group-data-popup-open:visible data-popup-open:visible"
-              >
-                <Ellipsis aria-hidden />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">{items}</DropdownMenuContent>
-            </DropdownMenu>
+            {/* It fades out rather than hides, like the project's buttons, so
+                Shift+Tab reaches it as Tab does. Its menu renders outside the
+                row, so it stays shown while the menu is open, and closing the
+                menu can focus it again. */}
+            <div className="absolute inset-y-0 right-0 flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 group-data-popup-open:opacity-100 has-data-popup-open:opacity-100">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<Button variant="ghost" size="icon-sm" />}
+                  aria-label="Thread actions"
+                  tabIndex={tabIndex}
+                >
+                  <Ellipsis aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">{items}</DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </>
         )}
       </ContextMenuTrigger>

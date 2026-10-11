@@ -80,13 +80,28 @@ export function BranchToolbar() {
   const [actionOpen, setActionOpen] = useState(false);
   const branchPicker = useRef<HTMLButtonElement>(null);
   const [focused, setFocused] = useState<Control | null>(null);
+  const disabled = busy || !connected;
   if (!status?.root)
     return (
-      <p className="mt-2 text-xs text-muted-foreground">
-        {error ?? (status ? "Not a Git checkout" : "Reading Git status…")}
-      </p>
+      <div className="mt-2 flex items-center gap-1">
+        <p className="text-xs text-muted-foreground">
+          {error ?? (status ? "Not a Git checkout" : "Reading Git status…")}
+        </p>
+        {error ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Refresh Git"
+            disabled={disabled}
+            onClick={refreshGit}
+          >
+            <RefreshCw aria-hidden />
+          </Button>
+        ) : null}
+        {/* A worktree whose folder was deleted outside Tondo must stay removable. */}
+        {worktree ? <RemoveMissingWorktree disabled={disabled} cwd={cwd ?? ""} /> : null}
+      </div>
     );
-  const disabled = busy || !connected;
   const open = (kind: Action["kind"], branch?: string) => {
     setAction({
       id: (action?.id ?? 0) + 1,
@@ -102,12 +117,17 @@ export function BranchToolbar() {
       : status.branches;
   const branchItems = branches.map((branch) => ({ value: branch, label: branch }));
   const pr = status.github.pr;
+  const inProgress = progressLabel(status);
   // A control that isn't shown counts as disabled.
   const isDisabled: Record<Control, boolean> = {
     branch: disabled,
     "create-branch": disabled,
     "new-worktree": disabled,
-    commit: disabled || status.changes === 0 || !status.branch,
+    commit:
+      disabled ||
+      (status.changes === 0 && !status.untrackedHidden) ||
+      !status.branch ||
+      Boolean(status.conflicts),
     push: disabled || !status.branch || !status.remote,
     pr: !pr,
     "create-pr":
@@ -189,7 +209,8 @@ export function BranchToolbar() {
           </Button>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1">
-          <Badge variant="secondary">{changesLabel(status.changes)}</Badge>
+          <Badge variant="secondary">{changesLabel(status)}</Badge>
+          {inProgress ? <Badge variant="warning">{inProgress}</Badge> : null}
           <Button
             variant="ghost"
             size="xs"
@@ -318,9 +339,24 @@ function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
   controls[next]?.focus();
 }
 
-function changesLabel(changes: number): string {
+function changesLabel({ changes, untrackedHidden }: GitStatus): string {
+  if (untrackedHidden) return "Too many untracked files to count";
   if (changes === 0) return "No changes";
   return changes === 1 ? "1 change" : `${changes} changes`;
+}
+
+const OPERATIONS: Record<NonNullable<GitStatus["operation"]>, string> = {
+  merge: "Merge",
+  rebase: "Rebase",
+  "cherry-pick": "Cherry-pick",
+  revert: "Revert",
+};
+
+function progressLabel({ operation, conflicts = 0 }: GitStatus): string | null {
+  const running = operation ? `${OPERATIONS[operation]} in progress` : null;
+  const unresolved = conflicts ? (conflicts === 1 ? "1 conflict" : `${conflicts} conflicts`) : null;
+  if (running && unresolved) return `${running}, ${unresolved}`;
+  return running ?? unresolved;
 }
 
 function trackingLabel({ ahead, behind }: GitStatus, upstream: string): string {
@@ -359,7 +395,7 @@ function describe({ kind, branch, status }: Action, worktree: boolean): string {
     case "new-worktree":
       return "Start a new thread in a separate checkout. Uncommitted changes are not copied. This thread stays where it is.";
     case "commit":
-      return `Stage all ${status.changes} changed paths in this checkout and commit. This includes untracked files that Git does not ignore. Git hooks and your signing settings still apply.`;
+      return `Stage all ${status.untrackedHidden ? "" : `${status.changes} `}changed paths in this checkout and commit. This includes untracked files that Git does not ignore. ${status.operation ? `This concludes the ${status.operation} in progress. ` : ""}Git hooks and your signing settings still apply.`;
     case "push":
       return `Push ${status.branch} to ${status.remote} and set its upstream. This publishes committed changes. No force push.`;
     case "create-pr":
@@ -369,12 +405,98 @@ function describe({ kind, branch, status }: Action, worktree: boolean): string {
   }
 }
 
+/** `required` accepts spaces, and the host rejects a blank name or message. */
+const BLANK: Record<string, string> = {
+  branch: "Enter a branch name.",
+  base: "Enter a base branch.",
+  title: "Enter a pull request title.",
+  message: "Enter a commit message.",
+};
+
 function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
       {children}
     </div>
+  );
+}
+
+/** Removal for a worktree thread whose checkout Git can't read, such as a deleted folder. */
+function RemoveMissingWorktree({ disabled, cwd }: { disabled: boolean; cwd: string }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      await performGit({ kind: "remove-worktree", force: false }, null);
+      setOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+    setPending(false);
+  };
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="xs"
+        disabled={disabled}
+        onClick={() => {
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        <Trash2 aria-hidden />
+        Remove worktree
+      </Button>
+      <AlertDialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next && !pending) setOpen(false);
+        }}
+      >
+        <AlertDialogPopup initialFocus={cancel} className="max-w-md">
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{TITLES["remove-worktree"]}</AlertDialogTitle>
+              <p className="font-mono text-xs break-all text-muted-foreground">{cwd}</p>
+              <AlertDialogDescription>
+                Forget this thread in Tondo and clear Git&apos;s record of its checkout if the
+                folder is gone. The branch and external pi session file stay. A folder that still
+                exists is removed only if it has no uncommitted or ignored files.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {error ? (
+              <Alert variant="destructive" role="alert">
+                <CircleAlert aria-hidden />
+                <AlertTitle>{FAILURES["remove-worktree"]}</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel ref={cancel} disabled={pending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction type="submit" variant="destructive" disabled={pending}>
+                {pending ? (
+                  <>
+                    <Spinner size="sm" />
+                    Working…
+                  </>
+                ) : (
+                  TITLES["remove-worktree"]
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </form>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -412,6 +534,11 @@ function ActionDialog({
     event.preventDefault();
     const values = new FormData(event.currentTarget);
     const value = (name: string) => String(values.get(name) ?? "");
+    const blank = Object.keys(BLANK).find((name) => values.has(name) && !value(name).trim());
+    if (blank) {
+      setError(BLANK[blank]!);
+      return;
+    }
     let gitAction: GitAction;
     switch (kind) {
       case "switch":

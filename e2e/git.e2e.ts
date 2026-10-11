@@ -24,6 +24,7 @@ import {
   reply,
   send,
   threadRows,
+  threads,
   waitForIdle,
   waitForPi,
   waitForFileCommand,
@@ -342,4 +343,82 @@ test("gh login failures are shown and recover after explicit refresh", async () 
   rmSync(path.join(dir, "logged-out"));
   await page.getByRole("button", { name: "Refresh Git" }).click();
   await expect(page.getByRole("button", { name: "Create PR", exact: true })).toBeEnabled();
+});
+
+test("an unresolved merge is shown and Commit waits until its conflicts are resolved", async () => {
+  git(project, "switch", "-c", "topic");
+  writeFileSync(path.join(project, "README.md"), "topic side\n");
+  git(project, "commit", "-am", "topic");
+  git(project, "switch", "main");
+  writeFileSync(path.join(project, "README.md"), "main side\n");
+  git(project, "commit", "-am", "main");
+  expect(() => git(project, "merge", "topic")).toThrow();
+  const { page } = await start([reply("Hello")]);
+  const commit = page.getByRole("button", { name: "Commit", exact: true });
+  await expect(page.getByText("Merge in progress, 1 conflict", { exact: true })).toBeVisible();
+  await expect(commit).toBeDisabled();
+  writeFileSync(path.join(project, "README.md"), "resolved\n");
+  git(project, "add", "README.md");
+  await page.getByRole("button", { name: "Refresh Git" }).click();
+  await expect(page.getByText("Merge in progress", { exact: true })).toBeVisible();
+  await commit.click();
+  await page.getByLabel("Commit message").fill("merge topic");
+  await submit("Stage all and commit");
+  await expect(page.getByText("Merge in progress", { exact: true })).toBeHidden();
+  expect(git(project, "show", "HEAD:README.md")).toBe("resolved");
+  expect(git(project, "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).toHaveLength(3);
+});
+
+test("a blank commit message or branch name is refused in the dialog instead of hanging", async () => {
+  writeFileSync(path.join(project, "new.txt"), "new\n");
+  const { page } = await start([reply("Hello")]);
+  const dialog = page.getByRole("dialog");
+  const commit = page.getByRole("button", { name: "Commit", exact: true });
+  await commit.click();
+  await dialog.getByLabel("Commit message").fill("   \n  ");
+  await dialog.getByRole("button", { name: "Stage all and commit", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Enter a commit message.");
+  await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(git(project, "log", "-1", "--format=%s")).toBe("initial");
+  await page.getByRole("button", { name: "New branch", exact: true }).click();
+  await dialog.getByLabel("Branch name", { exact: true }).fill("   ");
+  await dialog.getByRole("button", { name: "Create branch", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Enter a branch name.");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(commit).toBeEnabled();
+  expect(git(project, "branch", "--show-current")).toBe("main");
+});
+
+test("a worktree whose folder was deleted outside Tondo can be removed, and then its project", async () => {
+  const { page } = await start();
+  await page.getByRole("button", { name: "New worktree", exact: true }).click();
+  await page.getByLabel("Branch name", { exact: true }).fill("feature/gone");
+  await submit("Create worktree thread");
+  await waitForPi(page);
+  await expectPicked(page, "Git branch", "feature/gone");
+  await expect(threadRows(page)).toHaveCount(2);
+  const checkout = worktreePath();
+  rmSync(checkout, { recursive: true, force: true });
+
+  await page.getByRole("button", { name: "Refresh Git", exact: true }).click();
+  await expect(page.getByText("This worktree's folder was deleted outside Tondo")).toBeVisible();
+  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await submit("Remove worktree and forget thread");
+  await expect(threadRows(page)).toHaveCount(1);
+  expect(git(project, "worktree", "list", "--porcelain")).not.toContain(checkout);
+  expect(git(project, "branch", "--list", "feature/gone")).toContain("feature/gone");
+
+  await threads(page).getByRole("button", { name: "project", exact: true }).click({
+    button: "right",
+  });
+  await page.getByRole("menuitem", { name: "Remove project…" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Remove project", exact: true })
+    .click();
+  await expect(threads(page).getByRole("button", { name: "project", exact: true })).toHaveCount(0);
+  await expect(threadRows(page)).toHaveCount(0);
 });

@@ -1,6 +1,6 @@
 // Conservative cleanup checks follow T3 Code's apps/server/src/storageCleanup.ts at 53456bc0.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { lstat, mkdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath, rmdir } from "node:fs/promises";
 import path from "node:path";
 import type { Git } from "./git";
 import type { Store, StoredWorktree } from "./store";
@@ -40,7 +40,21 @@ export class Worktrees {
     const worktree = { path: path.join(root, threadId), repository, branch, threadId };
     // Reserve ownership before Git creates a folder. A crash leaves a recoverable orphan.
     this.store.addWorktree(worktree);
-    await this.git.run(repository, ["worktree", "add", "-b", branch, "--", worktree.path, commit]);
+    try {
+      await this.git.run(repository, [
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        "--",
+        worktree.path,
+        commit,
+      ]);
+    } catch (error) {
+      // Without a folder there is nothing to own. A folder Git left behind stays for cleanup.
+      if (await missing(worktree.path)) this.store.forgetWorktree(worktree.path);
+      throw error;
+    }
     return worktree;
   }
 
@@ -52,7 +66,7 @@ export class Worktrees {
       path.dirname(worktree.path) !== root ||
       path.basename(worktree.path) !== worktree.threadId ||
       (await realpath(worktree.path)) !== worktree.path ||
-      !(await lstat(path.join(worktree.path, ".git"))).isFile()
+      !(await lstat(path.join(worktree.path, ".git")).catch(() => null))?.isFile()
     ) {
       throw new Error("Refusing to remove a folder that is not Tondo's managed linked worktree.");
     }
@@ -110,36 +124,55 @@ export class Worktrees {
         await this.cleanupOne(worktree);
       } catch (error) {
         report(
-          `Kept abandoned worktree ${worktree.path}: ${error instanceof Error ? error.message : String(error)}`,
+          `Kept abandoned worktree ${worktree.path}: ${error instanceof Error ? error.message : String(error)} If you don't need its files, delete the folder and Tondo forgets it at the next start.`,
         );
       }
     }
   }
 
   private async cleanupOne(worktree: StoredWorktree): Promise<void> {
-    try {
-      await lstat(worktree.path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // A missing folder may still have Git registration. Let Git remove that entry by path.
-      const listing = await this.git.run(worktree.repository, [
-        "worktree",
-        "list",
-        "--porcelain",
-        "-z",
-      ]);
-      if (listing.split("\0").includes(`worktree ${worktree.path}`)) {
-        await this.git.run(worktree.repository, ["worktree", "remove", "--", worktree.path]);
-        await this.git.run(worktree.repository, ["worktree", "prune"]);
-      }
-      this.store.forgetWorktree(worktree.path);
-      return;
-    }
+    // A crash right after Git made the folder leaves it empty. Only an empty folder goes.
+    if (
+      path.dirname(worktree.path) === (await realpath(this.root).catch(() => null)) &&
+      path.basename(worktree.path) === worktree.threadId
+    )
+      await rmdir(worktree.path).catch(() => {});
+    if (await this.forgetIfMissing(worktree)) return;
     await this.validate(worktree);
     const state = await this.git.status(worktree.path, false);
     if (state.changes || state.branch !== worktree.branch)
       throw new Error("It has changes or its branch changed.");
     await this.remove(worktree, false);
+  }
+
+  /**
+   * Forgets a worktree whose folder is gone, and Git's registration of it.
+   * Returns false, changing nothing, while the folder exists. The branch is kept.
+   */
+  async forgetIfMissing(worktree: StoredWorktree): Promise<boolean> {
+    if (!(await missing(worktree.path))) return false;
+    // A missing folder may still have Git registration. Let Git remove that entry by path.
+    // A repository that is gone too has no registration left.
+    const listing = (await missing(worktree.repository))
+      ? ""
+      : await this.git.run(worktree.repository, ["worktree", "list", "--porcelain", "-z"]);
+    if (listing.split("\0").includes(`worktree ${worktree.path}`)) {
+      await this.git.run(worktree.repository, ["worktree", "remove", "--", worktree.path]);
+      await this.git.run(worktree.repository, ["worktree", "prune"]);
+    }
+    this.store.forgetWorktree(worktree.path);
+    return true;
+  }
+}
+
+/** Whether nothing exists at `file`. Other errors, like a denied permission, throw. */
+export async function missing(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return true;
   }
 }
 

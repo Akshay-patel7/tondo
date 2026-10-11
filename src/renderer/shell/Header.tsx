@@ -1,12 +1,13 @@
 import { PanelLeft, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ShortcutCommand } from "../../shared/settings";
-import { openTerminal, toggleSidebar, useHost } from "../connection";
+import { openTerminal, useHost } from "../connection";
 import { toggleDiffPanel, useDiffPanel } from "../diffs/DiffPanel";
 import { folderName } from "../format";
 import { togglePalette } from "../palette/store";
 import { isMac } from "../platform";
 import { shortcutLabelFor } from "../shortcuts";
+import { toggleSidebarShown } from "../sidebar/layout";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -24,7 +25,7 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
     // with every new title. With a thread open, the rest of the page's layer
     // is one solid color, which needs no tiles.
     <header
-      className={`app-drag flex h-10 shrink-0 items-center gap-2 px-3 text-sm will-change-transform ${
+      className={`app-drag @container flex h-10 shrink-0 items-center gap-2 px-3 text-sm will-change-transform ${
         sidebarHidden && isMac ? "pl-20" : ""
       }`}
     >
@@ -34,7 +35,7 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
             label="Show sidebar"
             command="toggle-sidebar"
             disabled={connection !== "connected"}
-            onClick={toggleSidebar}
+            onClick={toggleSidebarShown}
           >
             <PanelLeft aria-hidden />
           </ShellButton>
@@ -49,8 +50,9 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
         </div>
       ) : null}
       {title === undefined ? null : <h1 className="min-w-0 truncate font-medium">{title}</h1>}
+      {/* The folder name gets only the room the title leaves, so a long one gives way first. */}
       {project === undefined ? null : (
-        <span title={project} className="shrink-0 text-muted-foreground">
+        <span title={project} className="min-w-0 max-w-fit flex-1 truncate text-muted-foreground">
           {folderName(project)}
         </span>
       )}
@@ -66,10 +68,11 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
             >
               Changes
             </Button>
+            {/* openTerminal replaces a terminal that has exited with a new one. */}
             <Button
               variant="quiet"
               size="xs"
-              onClick={() => openTerminal()}
+              onClick={() => openTerminal("shell")}
               className="app-no-drag"
             >
               Terminal
@@ -80,7 +83,8 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
               onClick={() => openTerminal("login")}
               className="app-no-drag"
             >
-              Sign in to a provider
+              {/* A narrow header, as at 200% zoom, shows "Sign in". Screen readers hear it all. */}
+              Sign in<span className="@max-md:sr-only"> to a provider</span>
             </Button>
           </>
         )}

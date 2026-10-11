@@ -10,6 +10,7 @@ import {
   dequeue,
   editDraft,
   editImages,
+  findFiles,
   listFiles,
   prompt,
   stop,
@@ -112,6 +113,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const [selection, setSelection] = useState({ from: 0, to: 0 });
   const caret = selection.from;
   const fileIndex = useFiles((state) => state.index);
+  const found = useFiles((state) => state.found);
   const [highlighted, setHighlighted] = useState(0);
   /** The text you closed the menu on with Escape. It stays closed until the text changes. */
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -131,7 +133,15 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const query = menuHidden ? null : slashQuery(draft, caret);
   const mention = menuHidden ? null : fileQuery(draft, caret);
   const listingFiles = mention !== null;
-  const paths = mention && fileIndex ? matchingFiles(fileIndex.paths, mention.query) : [];
+  // A truncated index lacks files, so the host searches all of them. Until it
+  // answers, the menu shows what the index has.
+  const searchQuery = mention && fileIndex?.truncated ? mention.query : null;
+  let paths: readonly string[] = [];
+  if (mention && fileIndex)
+    paths =
+      searchQuery !== null && found?.query === searchQuery
+        ? found.paths
+        : matchingFiles(fileIndex.paths, mention.query);
   const items = query === null ? [] : searchSlash(slashItems(commands), query);
   const current = Math.min(highlighted, (listingFiles ? paths.length : items.length) - 1);
   const picked = items[current];
@@ -144,6 +154,10 @@ export function Composer({ hidden }: { hidden: boolean }) {
   useLayoutEffect(() => {
     if (listingFiles && connection === "connected") listFiles();
   }, [listingFiles, connection]);
+
+  useEffect(() => {
+    if (searchQuery !== null && connection === "connected") findFiles(searchQuery);
+  }, [searchQuery, connection]);
 
   // The composer takes focus back when a dialog that took its place closes.
   const wasHidden = useRef(hidden);

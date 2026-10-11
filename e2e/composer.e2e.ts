@@ -251,3 +251,55 @@ test("a multiline Markdown draft survives quitting and restarting the entire app
   await composer(tondo.page).press("ControlOrMeta+z");
   await expectDraft(tondo.page, source);
 });
+
+test("a draft typed right before quitting survives the restart", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  tondo = await launchWithPi({ workDir, profileDir, script: { responses: [] } });
+  recordErrors(tondo.page);
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(tondo.page);
+  const source = "Typed right before quit";
+  await composer(tondo.page).fill(source);
+  await expectDraft(tondo.page, source);
+  // Quits at once, inside the composer's save delay. It's app.quit(), as Cmd+Q is.
+  await tondo.close();
+  const db = new DatabaseSync(path.join(profileDir, "tondo.sqlite"), { readOnly: true });
+  try {
+    expect(db.prepare("SELECT draft FROM threads").get()?.draft).toBe(source);
+  } finally {
+    db.close();
+  }
+
+  const secondRun = path.join(workDir, "second-run");
+  mkdirSync(secondRun);
+  tondo = await launchWithPi({ workDir: secondRun, profileDir, script: { responses: [] } });
+  recordErrors(tondo.page);
+  await bringToFront(tondo);
+  await waitForPi(tondo.page);
+  await expectDraft(tondo.page, source);
+});
+
+test("@ completion in a project of over 10,000 files finds files past the index by name", async () => {
+  execFileSync("git", ["init", "-q"], { cwd: project });
+  mkdirSync(path.join(project, "bulk"));
+  for (let n = 0; n < 12_000; n++)
+    writeFileSync(path.join(project, "bulk", `f${String(n).padStart(5, "0")}.txt`), "");
+  mkdirSync(path.join(project, "src"));
+  writeFileSync(path.join(project, "src", "main.ts"), "");
+  const page = await start();
+  await composer(page).focus();
+  await page.keyboard.type("@");
+  const menu = page.getByRole("listbox", { name: "Files" });
+  await expect(menu).toContainText("over 10,000 files");
+  await page.keyboard.type("main.ts");
+  await expect(menu.getByRole("option")).toHaveText(["src/main.ts"]);
+  await composer(page).press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await expectDraft(page, "");
+  await page.keyboard.type("@f11999");
+  await expect(menu.getByRole("option")).toHaveText(["bulk/f11999.txt"]);
+  await page.keyboard.press("Enter");
+  await expectDraft(page, "@bulk/f11999.txt ");
+});

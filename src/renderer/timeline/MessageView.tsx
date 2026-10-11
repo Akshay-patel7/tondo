@@ -1,15 +1,22 @@
-import { code } from "@streamdown/code";
 import { ChevronRight } from "lucide-react";
-import { Streamdown } from "streamdown";
+import { Streamdown, type LinkSafetyConfig } from "streamdown";
 import type { AssistantMessage, PiMessage, ToolResultMessage } from "../../shared/thread";
 import { outputText } from "../tools/model";
 import { OutputView } from "../tools/OutputView";
 import { ToolCard } from "../tools/ToolCard";
 import { ImagePreview } from "../composer/ImagePreview";
+import { codeHighlighter } from "./codeHighlighter";
+import { LinkDialog } from "./LinkDialog";
 import { REMARK_PLUGINS } from "./reuseParses";
 
 /** Code blocks are highlighted by Shiki with its JavaScript regex engine, so no WASM. */
-const MARKDOWN_PLUGINS = { code };
+const MARKDOWN_PLUGINS = { code: codeHighlighter };
+
+/** A link in a reply asks before it opens, in a ui Dialog. */
+const LINK_SAFETY: LinkSafetyConfig = {
+  enabled: true,
+  renderModal: (props) => <LinkDialog {...props} />,
+};
 
 type UserContent = Extract<PiMessage, { role: "user" }>["content"];
 type ContentBlock = AssistantMessage["content"][number];
@@ -99,6 +106,7 @@ function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming
         <Streamdown
           plugins={MARKDOWN_PLUGINS}
           remarkPlugins={REMARK_PLUGINS}
+          linkSafety={LINK_SAFETY}
           isAnimating={streaming}
         >
           {block.text}

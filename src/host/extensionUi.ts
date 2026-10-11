@@ -133,7 +133,10 @@ function readDialog(
 export function applyUiRequest(ui: ExtensionUi, request: UiRequest): ExtensionUi {
   switch (request.kind) {
     case "dialog":
-      return { ...ui, dialogs: [...ui.dialogs, request.dialog] };
+      // Answering or closing goes by id, so a second dialog with an open id can't be shown.
+      return hasDialog(ui, request.dialog.id)
+        ? ui
+        : { ...ui, dialogs: [...ui.dialogs, request.dialog] };
     case "status": {
       const { key, text } = request;
       const statuses = setEntry(ui.statuses, key, text === null ? null : { key, text }, sameStatus);
@@ -179,6 +182,11 @@ export function responseTo(
       if (!("value" in answer)) throw new Error(`"${dialog.title}" needs text.`);
       return { type: "extension_ui_response", id, value: answer.value };
   }
+}
+
+/** Whether a dialog with `id` is open. */
+export function hasDialog(ui: ExtensionUi, id: string): boolean {
+  return ui.dialogs.some((dialog) => dialog.id === id);
 }
 
 /** `ui` without the dialog `id`. It's the same object if the dialog wasn't there. */

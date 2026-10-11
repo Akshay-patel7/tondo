@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { IPty } from "node-pty";
 import { PROTOCOL_VERSION, type HostMessage, type TerminalRequest } from "../shared/protocol";
@@ -114,10 +115,13 @@ export class Terminals {
     }
   }
 
-  /** A reused terminal ignores `provider`: only a new pi can be typed into safely. */
+  /** A reused terminal ignores `provider`: only a new pi can be typed into safely. An exited one is replaced. */
   private open(threadId: string, kind: TerminalKind, provider?: string): Promise<void> {
     if (this.stopping) throw new Error("Tondo is stopping its terminals.");
     const existing = this.sessions.get(threadId);
+    // An exited terminal runs nothing, so opening one replaces it.
+    if (existing?.state.status === "exited")
+      return this.close(threadId).then(() => this.open(threadId, kind, provider));
     if (existing) {
       if (existing.state.kind !== kind)
         throw new Error("Close this thread's terminal before opening a different one.");
@@ -148,7 +152,14 @@ export class Terminals {
     try {
       const launch = await this.launch(session.threadId, session.state.kind);
       const { spawn } = await import("node-pty");
+      // node-pty doesn't throw for a missing cwd: the shell starts and exits with code 1.
+      const folder = await stat(launch.cwd).then(
+        (found) => found.isDirectory(),
+        () => false,
+      );
       if (session.state.status === "closing") return;
+      if (!folder)
+        throw new Error(`Couldn't start the terminal: the folder ${launch.cwd} no longer exists.`);
       const pty = spawn(launch.command, launch.args, {
         cwd: launch.cwd,
         env: { ...launch.env, TERM: "xterm-256color" },

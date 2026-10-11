@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HostConfig } from "../shared/protocol";
 import { DEFAULT_SETTINGS } from "../shared/settings";
-import { piLaunch } from "./supervisor";
+import { piLaunch, Supervisor, TrustNotSavedError } from "./supervisor";
 
 const piPackage = path.resolve(
   import.meta.dirname,
@@ -38,6 +38,40 @@ function create(file: string, content = ""): void {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, content);
 }
+
+describe("Supervisor", () => {
+  it("says a trust answer it can't save is about the settings file, and names it", () => {
+    const file = path.join(config.userData, "settings.json");
+    create(file, "{");
+    const supervisor = new Supervisor(config, () => {});
+
+    let error: unknown;
+    try {
+      supervisor.saveTrustAnswer(project, true);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(TrustNotSavedError);
+    expect((error as TrustNotSavedError).file).toBe(file);
+    expect((error as Error).message).toContain(
+      `Tondo couldn't save your answer. Tondo's settings file ${file} isn't valid JSON`,
+    );
+  });
+
+  it("reads what it can of a settings file with a mistake in it, for starting pi", () => {
+    create(
+      path.join(config.userData, "settings.json"),
+      JSON.stringify({
+        theme: "sepia",
+        shortcuts: { "toggle-terminal": "mod+j" },
+        projectTrust: { [project]: true },
+      }),
+    );
+    const { settings, problem } = new Supervisor(config, () => {}).readableSettings();
+    expect(settings.projectTrust).toEqual({ [project]: true });
+    expect(problem).toContain("has a theme that isn't system, light or dark");
+  });
+});
 
 describe("piLaunch", () => {
   it("runs the node beside pi on pi's cli.js, in RPC mode on the session, with the extra arguments last", () => {

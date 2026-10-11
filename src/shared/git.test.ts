@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { isGitAction, type GitAction } from "./git";
+import { gitRequestOf, isGitAction, type GitAction } from "./git";
 import { parseClientMessage, PROTOCOL_VERSION as v } from "./protocol";
 
 it("accepts only bounded literal Git actions and exact request fields", () => {
@@ -51,4 +51,27 @@ it("rejects malformed actions and identities before they cross into the host", (
         action: { kind: "push", remote: "origin" },
       }).ok,
     ).toBe(false);
+});
+
+it("keeps the request identity of a rejected Git action so the host can answer it", () => {
+  const message = {
+    v,
+    type: "git-action",
+    threadId: "thread",
+    id: 4,
+    expectedBranch: "main",
+    action: { kind: "commit", message: "   \n  " },
+  };
+  expect(parseClientMessage(message).ok).toBe(false);
+  expect(gitRequestOf(message)).toEqual({ threadId: "thread", id: 4 });
+  for (const bad of [
+    null,
+    [],
+    { ...message, type: "git-refresh" },
+    { ...message, id: -1 },
+    { ...message, id: "4" },
+    { ...message, threadId: 4 },
+    { ...message, threadId: "" },
+  ])
+    expect(gitRequestOf(bad)).toBeNull();
 });

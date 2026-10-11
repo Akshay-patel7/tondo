@@ -53,6 +53,11 @@ export interface Host {
   /** The process groups the running host has reported. */
   readonly processGroups: readonly number[];
   /**
+   * Says the app is quitting, before the window closes and `stop` runs. A host
+   * that exits from then on, as when the whole app gets SIGTERM, isn't restarted.
+   */
+  quitting(): void;
+  /**
    * Stops the host for good, as the app quits. Resolves once the host has
    * exited and the process groups it reported are gone.
    */
@@ -71,6 +76,7 @@ export function startHost(options: HostOptions): Host {
   let restarts = 0;
   let restartTimer: NodeJS.Timeout | undefined;
   let stopping: Promise<void> | undefined;
+  let quitting = false;
 
   const connectPage = () => {
     if (!child || !ready || !page || page.isDestroyed()) return;
@@ -151,7 +157,7 @@ export function startHost(options: HostOptions): Host {
       });
       groupsStopped = Promise.all([groupsStopped, stopped]);
       processGroups = [];
-      if (stopping) return;
+      if (stopping || quitting) return;
       const delay = Math.min(FIRST_RESTART_DELAY_MS * 2 ** restarts, MAX_RESTART_DELAY_MS);
       restarts++;
       console.error(`Tondo Host exited with code ${code}. Restarting it in ${delay} ms.`);
@@ -191,6 +197,9 @@ export function startHost(options: HostOptions): Host {
     },
     get processGroups() {
       return processGroups;
+    },
+    quitting() {
+      quitting = true;
     },
     stop() {
       stopping ??= (async () => {

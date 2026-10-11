@@ -20,7 +20,8 @@ import {
   type AppSettings,
   type PoolSettings,
 } from "../../shared/settings";
-import { updateSettings, useHost } from "../connection";
+import { revealFile, updateSettings, useHost } from "../connection";
+import { isMac } from "../platform";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
@@ -37,7 +38,7 @@ import { AccountsSettings } from "./AccountsSettings";
 import { PiSettings } from "./PiSettings";
 import { Loading, SectionHeading, SettingsGroup, SettingsRow } from "./rows";
 import { ShortcutSettings } from "./ShortcutSettings";
-import { closeSettings, useSettingsPage, type SettingsSection } from "./store";
+import { closeSettings, takeSettingsOpener, useSettingsPage, type SettingsSection } from "./store";
 
 const SECTIONS: readonly {
   readonly id: SettingsSection;
@@ -61,18 +62,30 @@ export function SettingsPage() {
   const titleId = useId();
   const section = useSettingsPage((page) => page.section);
   const settingsError = useHost((host) => host.settingsError);
+  const settingsFileError = useHost((host) => host.settingsFileError);
+  const settingsFile = useHost((host) => host.settingsFilePath);
   const page = useRef<HTMLElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
 
   // Focus starts on the title, and goes back to what opened the page, such as
   // the sidebar's Settings button, if it's still there when the page closes.
+  // An opener in the thread, such as the composer, left with the thread, so
+  // the thread's composer takes focus once the thread is back. The title
+  // shows focus if the opener did, as when a shortcut opened the page.
   useLayoutEffect(() => {
-    const opener = document.activeElement;
-    title.current?.focus();
+    const { element: opener, focusVisible } = takeSettingsOpener();
+    title.current?.focus({ focusVisible });
     return () => {
-      if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) {
+      if (!(opener instanceof HTMLElement) || opener === document.body) return;
+      if (opener.isConnected) {
         opener.focus();
+        return;
       }
+      // The thread comes back in the same commit that removes the page.
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]')?.focus();
+      });
     };
   }, []);
 
@@ -142,6 +155,25 @@ export function SettingsPage() {
             </nav>
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-6 @3xl:pt-10">
+            {settingsFileError === null ? null : (
+              <Alert variant="destructive" role="alert">
+                <CircleAlert aria-hidden />
+                <AlertTitle>Tondo can't use its settings file</AlertTitle>
+                <AlertDescription className="break-words">
+                  {settingsFileError}. Tondo uses the defaults for what it can't read.{" "}
+                  {settingsFile === null ? null : (
+                    <Button
+                      variant="link"
+                      size="xs"
+                      className="-ml-2"
+                      onClick={() => revealFile(settingsFile)}
+                    >
+                      {isMac ? "Show in Finder" : "Show in folder"}
+                    </Button>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
             {settingsError === null ? null : (
               <Alert variant="destructive" role="alert">
                 <CircleAlert aria-hidden />

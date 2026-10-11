@@ -1,5 +1,6 @@
-// The timeline on a 1,000-message thread while pi streams a 20,000-token reply.
+// The timeline on a 1,000-message thread, and while pi streams a 20,000-token reply.
 import { expect, test } from "@playwright/test";
+import { captureOpenExternal } from "./launch";
 import { longReply, send, waitForIdle } from "./pi";
 import {
   FOLLOW_THRESHOLD_PX,
@@ -30,6 +31,39 @@ test("the transcript opens at the bottom", async () => {
   await expect(page.locator(`[data-index="${LAST_TRANSCRIPT_ROW}"]`)).toBeInViewport();
   await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
   await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "true");
+});
+
+test("a link in a reply asks before it opens, in a dialog that takes focus", async () => {
+  const { app, page } = tondo;
+  const opened = await captureOpenExternal(app);
+  // The last reply links to the design note twice.
+  const link = page
+    .locator(`[data-index="${LAST_TRANSCRIPT_ROW}"]`)
+    .getByRole("button", { name: "the design note" })
+    .first();
+  const dialog = page.getByRole("dialog", { name: "Open external link?" });
+  const transcript = page.getByRole("region", { name: "Transcript" });
+
+  // Focus moves into the dialog, and screen readers can't reach the transcript behind it.
+  await link.click();
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(dialog).toContainText("https://example.com/notes/streaming");
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await expect(transcript).toHaveCount(0);
+
+  // Escape closes it, and focus goes back to the link.
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeAttached();
+  await expect(link).toBeFocused();
+  await expect(transcript).toHaveCount(1);
+
+  // Open link hands the address to the browser, and the window stays on Tondo.
+  const url = page.url();
+  await link.click();
+  await dialog.getByRole("button", { name: "Open link" }).click();
+  expect(await opened()).toBe("https://example.com/notes/streaming");
+  await expect(dialog).not.toBeAttached();
+  expect(page.url()).toBe(url);
 });
 
 test("the timeline stays at the bottom while pi streams", async () => {

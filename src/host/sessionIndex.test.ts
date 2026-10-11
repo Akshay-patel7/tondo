@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SessionIndex, TITLE_LENGTH } from "./sessionIndex";
+import { messageTitle, SessionIndex, TITLE_LENGTH } from "./sessionIndex";
 
 let dir: string;
 let folder: { dir: string; shared: boolean };
@@ -142,6 +142,15 @@ describe("SessionIndex", () => {
       `${long.trim().slice(0, TITLE_LENGTH - 1)}…`,
       "",
     ]);
+  });
+
+  it("cuts a title by character, so an emoji at the cut stays whole", () => {
+    const title = messageTitle({ role: "user", content: `${"x".repeat(98)}😀😀😀` });
+    expect(title).toBe(`${"x".repeat(98)}😀…`);
+    expect(title.isWellFormed()).toBe(true);
+    expect(messageTitle({ role: "user", content: `${"x".repeat(99)}😀` })).toBe(
+      `${"x".repeat(99)}😀`,
+    );
   });
 
   it("dates a thread by its last message from you or pi", async () => {

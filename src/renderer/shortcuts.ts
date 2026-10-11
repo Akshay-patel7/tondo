@@ -2,7 +2,7 @@
 // your settings. mod is Command on macOS and Control elsewhere. mod+1 to
 // mod+9 open the sidebar's threads and can't be changed.
 import { SHORTCUT_COMMANDS, type ShortcutCommand } from "../shared/settings";
-import { chordFromKeyEvent, chordLabel, formatChord, resolveShortcuts } from "../shared/shortcuts";
+import { checkShortcuts, chordFromKeyEvent, chordLabel, formatChord } from "../shared/shortcuts";
 import { useHost } from "./connection";
 
 export type AppCommand =
@@ -35,9 +35,13 @@ const COMMANDS: Readonly<Record<ShortcutCommand, AppCommand>> = {
   settings: { type: "settings" },
 };
 
-/** Each command's chord, read from the settings on every call so changes apply at once. */
+/**
+ * Each command's chord, read from the settings on every call so changes apply
+ * at once. A binding from settings.json that can't work, such as one without
+ * mod that would take a letter from the composer, is off.
+ */
 function currentShortcuts() {
-  return resolveShortcuts(useHost.getState().settings?.shortcuts ?? {});
+  return checkShortcuts(useHost.getState().settings?.shortcuts ?? {}).usable;
 }
 
 /** The app command `press` runs, or null if it isn't a shortcut. */

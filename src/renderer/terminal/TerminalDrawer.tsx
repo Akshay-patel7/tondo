@@ -16,6 +16,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { readTerminal } from "./store";
+import { GraphemeUnicode } from "./unicode";
 
 type ThemeColor = Exclude<keyof ITheme, "extendedAnsi">;
 
@@ -79,8 +80,29 @@ function minimumContrast(dark: MediaQueryList): number {
   return dark.matches ? 1 : 4.5;
 }
 
-function clampHeight(height: number): number {
-  return Math.max(160, Math.min(height, window.innerHeight * 0.65));
+const MIN_HEIGHT = 160;
+// What a tall shell drawer leaves the thread's transcript, above the footer.
+const MIN_TRANSCRIPT = 120;
+
+function clampHeight(height: number, max: number): number {
+  return Math.max(MIN_HEIGHT, Math.min(height, max));
+}
+
+/**
+ * The tallest the drawer may be: 65% of the window and, for a shell, short
+ * enough that the footer before it keeps its full height and the transcript
+ * keeps MIN_TRANSCRIPT. A sign-in drawer needs its rows for pi's provider list
+ * more than the thread needs its transcript, so it only takes the window cap.
+ */
+function maxHeight(region: HTMLElement, kind: TerminalState["kind"]): number {
+  const cap = window.innerHeight * 0.65;
+  const column = region.parentElement;
+  const footer = region.previousElementSibling;
+  if (kind === "login" || !column || !footer) return cap;
+  const style = getComputedStyle(footer);
+  let needed = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  for (const child of Array.from(footer.children)) needed += child.getBoundingClientRect().height;
+  return Math.min(cap, column.clientHeight - needed - MIN_TRANSCRIPT);
 }
 
 // pi's /login provider list needs up to 20 terminal rows: a 17-row selector
@@ -110,8 +132,11 @@ export default function TerminalDrawer({
   session: TerminalState;
 }) {
   const [height, setHeight] = useState(() =>
-    session.kind === "login" ? clampHeight(LOGIN_CHROME + LOGIN_ROWS * ROW_HEIGHT) : 280,
+    session.kind === "login"
+      ? clampHeight(LOGIN_CHROME + LOGIN_ROWS * ROW_HEIGHT, window.innerHeight * 0.65)
+      : 280,
   );
+  const [max, setMax] = useState(() => window.innerHeight * 0.65);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const opener = useRef<Element | null>(null);
   const region = useRef<HTMLElement>(null);
@@ -145,11 +170,21 @@ export default function TerminalDrawer({
       });
     };
   }, []);
-  useEffect(() => {
-    const resize = () => setHeight((current) => clampHeight(current));
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, []);
+  // The column follows the window, and the footer's content grows with
+  // banners or a narrower column, so either change moves the cap.
+  useLayoutEffect(() => {
+    const element = region.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => {
+      const next = maxHeight(element, session.kind);
+      setMax(next);
+      setHeight((current) => clampHeight(current, next));
+    });
+    if (element.parentElement) observer.observe(element.parentElement);
+    for (const child of Array.from(element.previousElementSibling?.children ?? []))
+      observer.observe(child);
+    return () => observer.disconnect();
+  }, [session.kind]);
   const status = statusLabel(session);
   const failed = session.status === "exited" && session.exitCode !== null && session.exitCode !== 0;
   const close = () => {
@@ -168,14 +203,14 @@ export default function TerminalDrawer({
         aria-label="Resize terminal"
         aria-orientation="horizontal"
         aria-valuenow={Math.round(height)}
-        aria-valuemin={160}
-        aria-valuemax={Math.round(window.innerHeight * 0.65)}
+        aria-valuemin={MIN_HEIGHT}
+        aria-valuemax={Math.round(Math.max(MIN_HEIGHT, max))}
         tabIndex={0}
         className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center justify-center focus-visible:focus-ring"
         onKeyDown={(event) => {
           if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
           event.preventDefault();
-          setHeight((current) => clampHeight(current + (event.key === "ArrowUp" ? 32 : -32)));
+          setHeight((current) => clampHeight(current + (event.key === "ArrowUp" ? 32 : -32), max));
         }}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
@@ -185,7 +220,7 @@ export default function TerminalDrawer({
         }}
         onPointerMove={(event) => {
           if (drag.current)
-            setHeight(clampHeight(drag.current.height + drag.current.y - event.clientY));
+            setHeight(clampHeight(drag.current.height + drag.current.y - event.clientY, max));
         }}
         onPointerUp={(event) => {
           drag.current = null;
@@ -274,13 +309,34 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       scrollback: 1_000,
       screenReaderMode: true,
-      allowProposedApi: false,
+      // For terminal.unicode, which takes Tondo's grapheme widths.
+      allowProposedApi: true,
       theme: terminalTheme(),
       minimumContrastRatio: minimumContrast(dark),
     });
+    terminal.unicode.register(new GraphemeUnicode());
+    terminal.unicode.activeVersion = "tondo-graphemes";
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(element);
+    // In screen reader mode xterm drops text inserted without a keydown: the
+    // emoji picker, dictation and the Character Viewer. Typed keys arrive with
+    // a keydown that xterm has already sent, so only the rest is forwarded.
+    const textarea = terminal.textarea!;
+    let keyDown = false;
+    const pressed = () => {
+      keyDown = true;
+    };
+    const released = () => {
+      keyDown = false;
+    };
+    const inserted = (event: Event) => {
+      if (!(event instanceof InputEvent) || event.inputType !== "insertText") return;
+      if (event.data && !keyDown && !event.isComposing) terminal.input(event.data);
+    };
+    textarea.addEventListener("keydown", pressed);
+    textarea.addEventListener("keyup", released);
+    textarea.addEventListener("input", inserted);
     let webgl: WebglAddon | undefined;
     try {
       webgl = new WebglAddon();
@@ -369,6 +425,9 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     return () => {
       disposed = true;
       dark.removeEventListener("change", retheme);
+      textarea.removeEventListener("keydown", pressed);
+      textarea.removeEventListener("keyup", released);
+      textarea.removeEventListener("input", inserted);
       unread();
       observer.disconnect();
       input.dispose();

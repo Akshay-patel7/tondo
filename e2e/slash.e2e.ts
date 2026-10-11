@@ -244,6 +244,29 @@ test("pi's built-in commands run in Tondo and never reach pi as text", async () 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("New thread");
 });
 
+test("keys typed right after Cmd+K go to the palette's search, not the composer", async () => {
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  // No pause after the shortcut, at instant and at human typing speed.
+  const typeAhead = async (delay: number) => {
+    await composer(page).focus();
+    await page.keyboard.press("ControlOrMeta+k");
+    await page.keyboard.type("settings", { delay });
+    await expect(palette.getByRole("combobox", { name: "Search" })).toHaveValue("settings");
+    await page.keyboard.press("Escape");
+    await expect(palette).not.toBeAttached();
+    await expectDraft(page, "");
+  };
+  await typeAhead(0);
+  await typeAhead(40);
+  await typeAhead(0);
+  await typeAhead(40);
+});
+
 test("/trust changes your answer, and pi starts again with it", async () => {
   // pi asks about a project with its own .pi settings, and applies them only
   // in a project it trusts, so the thinking level shows what pi was told.

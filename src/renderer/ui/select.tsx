@@ -2,14 +2,33 @@ import { Select as SelectPrimitive } from "@base-ui/react/select";
 import type { HTMLProps } from "@base-ui/react/types";
 import { cva, type VariantProps } from "class-variance-authority";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { createContext, useContext, useId } from "react";
 import { cn } from "../lib/cn";
+
+// The Select's id, which Base UI gives its trigger. The open list takes its
+// name from a hidden copy of the trigger's aria-label, "<id>-name". It can't
+// point at the trigger itself: a combobox that names something else lends it
+// its chosen option, not its own label.
+const SelectIdContext = createContext<string | undefined>(undefined);
 
 /**
  * A picker. Give it `items`, a list of `{ value, label }`, so the trigger can
  * show the chosen item's label before the list has ever opened. Name the
- * trigger with aria-label: e2e finds a picker as the combobox of that name.
+ * trigger with aria-label: e2e finds a picker as the combobox of that name,
+ * and screen readers hear the open list by the same name.
  */
-const Select = SelectPrimitive.Root;
+function Select<Value, Multiple extends boolean | undefined = false>({
+  id,
+  ...props
+}: SelectPrimitive.Root.Props<Value, Multiple>) {
+  const generatedId = useId();
+  const selectId = id ?? generatedId;
+  return (
+    <SelectIdContext value={selectId}>
+      <SelectPrimitive.Root<Value, Multiple> id={selectId} {...props} />
+    </SelectIdContext>
+  );
+}
 
 const selectTriggerVariants = cva(
   "flex w-fit min-w-0 items-center justify-between gap-1.5 rounded-control border whitespace-nowrap transition-colors outline-none select-none app-no-drag focus-visible:focus-ring data-disabled:pointer-events-none data-disabled:opacity-50 data-placeholder:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
@@ -46,19 +65,28 @@ type TriggerProps = Omit<SelectPrimitive.Trigger.Props, "className" | "render"> 
 
 /** Put a SelectValue inside it. */
 function SelectTrigger({ className, variant, size, children, ...props }: TriggerProps) {
+  const selectId = useContext(SelectIdContext);
+  const label = props["aria-label"];
   return (
-    <SelectPrimitive.Trigger
-      data-slot="select-trigger"
-      className={cn(selectTriggerVariants({ variant, size }), className)}
-      render={renderTrigger}
-      {...props}
-    >
-      {children}
-      {/* As children, not the render prop: Icon's default children, a "▼", would end up in the svg and in the trigger's text. */}
-      <SelectPrimitive.Icon className="flex">
-        <ChevronDownIcon aria-hidden />
-      </SelectPrimitive.Icon>
-    </SelectPrimitive.Trigger>
+    <>
+      <SelectPrimitive.Trigger
+        data-slot="select-trigger"
+        className={cn(selectTriggerVariants({ variant, size }), className)}
+        render={renderTrigger}
+        {...props}
+      >
+        {children}
+        {/* As children, not the render prop: Icon's default children, a "▼", would end up in the svg and in the trigger's text. */}
+        <SelectPrimitive.Icon className="flex">
+          <ChevronDownIcon aria-hidden />
+        </SelectPrimitive.Icon>
+      </SelectPrimitive.Trigger>
+      {label === undefined || selectId === undefined ? null : (
+        <span id={`${selectId}-name`} hidden>
+          {label}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -100,6 +128,7 @@ function SelectContent({
   alignItemWithTrigger = true,
   ...props
 }: ContentProps) {
+  const selectId = useContext(SelectIdContext);
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -121,7 +150,10 @@ function SelectContent({
           <SelectPrimitive.ScrollUpArrow className={cn(SCROLL_ARROW, "top-0")}>
             <ChevronUpIcon aria-hidden />
           </SelectPrimitive.ScrollUpArrow>
-          <SelectPrimitive.List className="min-h-0 scroll-py-1 overflow-y-auto p-1">
+          <SelectPrimitive.List
+            aria-labelledby={selectId === undefined ? undefined : `${selectId}-name`}
+            className="min-h-0 scroll-py-1 overflow-y-auto p-1"
+          >
             {children}
           </SelectPrimitive.List>
           <SelectPrimitive.ScrollDownArrow className={cn(SCROLL_ARROW, "bottom-0")}>

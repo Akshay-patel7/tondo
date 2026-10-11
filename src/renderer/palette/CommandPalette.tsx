@@ -6,6 +6,7 @@ import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "re
 import { runPaletteAction } from "../commands";
 import { useHost } from "../connection";
 import { isMac } from "../platform";
+import { useSidebarShown } from "../sidebar/layout";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -34,7 +35,7 @@ function groupItems(items: readonly PaletteItem[]): Group[] {
 export function CommandPalette() {
   const projects = useHost((host) => host.projects);
   const open = useHost((host) => host.thread);
-  const sidebarHidden = useHost((host) => host.sidebarHidden);
+  const sidebarHidden = !useSidebarShown();
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -47,6 +48,24 @@ export function CommandPalette() {
   useLayoutEffect(() => {
     document.getElementById(`${id}-option-${current}`)?.scrollIntoView({ block: "nearest" });
   }, [id, current]);
+
+  // The dialog moves focus to the search field a little after it opens. Until
+  // then the composer still has focus, so characters typed right after the
+  // shortcut are caught here and go to the search instead.
+  useLayoutEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const field = input.current;
+      if (event.target === field || event.isComposing) return;
+      if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setQuery((typed) => typed + event.key);
+      setHighlighted(0);
+      field?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;

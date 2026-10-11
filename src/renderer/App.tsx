@@ -13,7 +13,7 @@ import { StatusLine, Widgets } from "./extensionUi/Widgets";
 import { PiSetup } from "./onboarding/PiSetup";
 import { SignInPrompt } from "./onboarding/SignInPrompt";
 import { CommandPalette } from "./palette/CommandPalette";
-import { usePalette } from "./palette/store";
+import { closePalette, usePalette } from "./palette/store";
 import { isMac } from "./platform";
 import { NoThread } from "./project/NoThread";
 import { TrustPrompt } from "./project/TrustPrompt";
@@ -21,6 +21,7 @@ import { SettingsPage } from "./settings/SettingsPage";
 import { useSettingsPage } from "./settings/store";
 import { Sheets } from "./sheets/Sheets";
 import { appCommand } from "./shortcuts";
+import { toggleSidebarShown, useChangesPanelShown, useSidebarShown } from "./sidebar/layout";
 import { Sidebar } from "./sidebar/Sidebar";
 import { Header } from "./shell/Header";
 import { useThreadKey } from "./thread/store";
@@ -30,7 +31,7 @@ import { Toasts } from "./toasts/Toasts";
 const TerminalDrawer = lazy(() => import("./terminal/TerminalDrawer"));
 
 export function App() {
-  const sidebarHidden = useHost((host) => host.sidebarHidden);
+  const sidebarShown = useSidebarShown();
   const paletteOpen = usePalette((open) => open);
   const title = useExtensionUi((ui) => ui.title);
 
@@ -48,6 +49,12 @@ export function App() {
       const command = appCommand(event, isMac);
       if (!command) return;
       event.preventDefault();
+      // Like the sidebar's buttons, its shortcut also shows it in a window too narrow for it.
+      if (command.type === "sidebar" && useHost.getState().connection === "connected") {
+        closePalette();
+        toggleSidebarShown();
+        return;
+      }
       runAppCommand(command);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -56,9 +63,9 @@ export function App() {
 
   return (
     <div className="flex h-screen bg-background font-sans text-foreground">
-      {sidebarHidden ? null : <Sidebar />}
+      {sidebarShown ? <Sidebar /> : null}
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header sidebarHidden={sidebarHidden} />
+        <Header sidebarHidden={!sidebarShown} />
         <Body />
       </div>
       <Toasts />
@@ -92,6 +99,7 @@ function Thread() {
   const terminal = useTerminals((terminals) => (threadId ? terminals.get(threadId) : undefined));
   const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
   const changesOpen = useDiffPanel((open) => open);
+  useChangesPanelShown(changesOpen);
   const needsSignIn = useHost((host) => {
     const pi = host.thread?.pi;
     return pi?.state === "ready" && !pi.session.signedIn;
@@ -99,7 +107,8 @@ function Thread() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="min-h-0 flex-1">
+        {/* Toasts stay inside the transcript's box (toast-stack in index.css). */}
+        <main className="min-h-0 flex-1 [anchor-name:--transcript]">
           <Timeline key={threadKey} />
         </main>
         {/* When the terminal drawer needs the room, the footer gives up height and clips. The

@@ -186,6 +186,25 @@ test("threads get renamed, pinned and archived, and the palette brings one back"
   ).toBeVisible();
 });
 
+test("a project whose folder was deleted from disk can still be removed", async () => {
+  const { page } = await startThread("Before removal.", "Done.");
+  rmSync(project, { recursive: true, force: true });
+  await page.keyboard.press("ControlOrMeta+n");
+  await expect(heading(page)).toHaveText("New thread");
+
+  await threads(page).getByRole("button", { name: "project", exact: true }).click({
+    button: "right",
+  });
+  await page.getByRole("menuitem", { name: "Remove project…" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Remove project", exact: true })
+    .click();
+  // Git can't start in the missing folder, and that must not stop the removal.
+  await expect(threads(page).getByRole("button", { name: "project", exact: true })).toHaveCount(0);
+  await expect(threadRows(page)).toHaveCount(0);
+});
+
 test("a thread's menu closes on Escape or on a click outside the sidebar", async () => {
   const { page } = await startThread("First.", "Done.");
   const menu = page.getByRole("menu", { name: "Thread actions" });

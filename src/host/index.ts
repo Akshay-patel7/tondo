@@ -12,6 +12,7 @@ import {
   type HostToMainMessage,
   type MainToHostMessage,
 } from "../shared/protocol";
+import { gitRequestOf } from "../shared/git";
 import { watchCheckpointGroups } from "./checkpoints";
 import { Store } from "./store";
 import { Supervisor } from "./supervisor";
@@ -51,6 +52,17 @@ function serve(port: MessagePortMain, workspace: Workspace): void {
       workspace.handle(result.message);
     } else {
       console.error(`Tondo Host rejected a message from the page: ${result.error}`);
+      // The page waits on a Git action's id, so answer the request, not just the page.
+      const request = gitRequestOf(data);
+      if (request) {
+        port.postMessage({
+          v: PROTOCOL_VERSION,
+          type: "git-result",
+          ...request,
+          error: "Tondo rejected this Git action. A field is blank, too long or not allowed.",
+        } satisfies HostMessage);
+        return;
+      }
       port.postMessage({
         v: PROTOCOL_VERSION,
         type: "error",

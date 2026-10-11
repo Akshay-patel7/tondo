@@ -39,7 +39,7 @@ export function FileMenu({
       ) : null}
       {index?.truncated ? (
         <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
-          Showing the first 10,000 paths in this project.
+          This project has over 10,000 files. Keep typing to search all of them by name or path.
         </p>
       ) : null}
       {paths.map((path, row) => (

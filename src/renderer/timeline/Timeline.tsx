@@ -44,8 +44,13 @@ function Row({ index }: { index: number }) {
   const streaming = useThread(
     (thread) => index >= thread.messages.length && thread.streaming !== null,
   );
+  // A long path or URL breaks rather than running past a narrow transcript, which clips it.
   return (
-    <div className="mx-auto max-w-3xl" data-index={index} data-streaming={streaming || undefined}>
+    <div
+      className="mx-auto max-w-3xl break-words"
+      data-index={index}
+      data-streaming={streaming || undefined}
+    >
       {message ? <MessageView message={message} streaming={streaming} /> : null}
     </div>
   );

@@ -1,7 +1,7 @@
 // Onboarding with the real pi, offline: a pi Tondo can't find or can't use, pi
 // with no model you have credentials for, a project that needs trust, and the
 // welcome on first launch.
-import { expect, test, type ElectronApplication } from "@playwright/test";
+import { expect, test, type ElectronApplication, type Locator } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -262,4 +262,123 @@ test("the welcome says whether Tondo found pi, and the pi you choose fixes it", 
   await expect(welcome).toContainText(`Found pi ${PI_VERSION} at the path in Settings.`);
   await expect(welcome.getByRole("button", { name: "Choose pi…" })).toHaveCount(0);
   expect(readSettings(tondo).piPath).toBe(pi);
+});
+
+test("pi's stderr in the pi stopped banner reads as plain text, without terminal colors", async () => {
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  await bringToFront(tondo);
+  const { page } = tondo;
+  // A script the faux extension can't parse makes pi print colored errors and exit as it starts.
+  writeFileSync(path.join(workDir, "script.json"), "not json");
+  await addProject(tondo, project);
+
+  const banner = page.getByRole("alert").filter({ hasText: "Restart pi" });
+  await expect(banner).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
+  await banner.getByText("Details", { exact: true }).click();
+  const details = banner.locator("pre");
+  await expect(details).toContainText("Failed to load extension");
+  expect(await details.textContent()).not.toContain("\u001b");
+});
+
+/** The alert in `where` that says settings.json is broken. */
+function fileProblem(where: Locator): Locator {
+  return where.getByRole("alert").filter({ hasText: "Tondo can't use its settings file" });
+}
+
+test("a settings.json Tondo can't read is named as the file's problem, and stays named", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  writeFileSync(path.join(profileDir, "settings.json"), '{ "theme": "dark", ');
+  tondo = await launchTondo({ profileDir });
+  const { page } = tondo;
+
+  const welcome = page.getByRole("main");
+  await expect(fileProblem(welcome)).toContainText("isn't valid JSON");
+  await expect(welcome).not.toContainText("didn't save that change");
+  // Whatever pi this machine has, the file's problem isn't reported as pi's too.
+  await expect(welcome.getByText("isn't valid JSON")).toHaveCount(1);
+
+  // Closing Settings forgets a refused change, not the broken file.
+  const settings = page.getByRole("region", { name: "Settings", exact: true });
+  const openAndClose = async () => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(fileProblem(settings)).toContainText("isn't valid JSON");
+    await expect(settings).not.toContainText("Your change wasn't saved");
+    await page.keyboard.press("Escape");
+    await expect(settings).not.toBeAttached();
+  };
+  await openAndClose();
+  await openAndClose();
+  await expect(fileProblem(welcome)).toContainText("isn't valid JSON");
+});
+
+test("the pi setup screen names a settings.json mistake as the file's problem", async () => {
+  tondo = await launchTondo({ settings: { piPath: "/nonexistent/pi", theme: "neon" } });
+  const { page } = tondo;
+  await expect(fileProblem(page.getByRole("main"))).toContainText("settings.json");
+  await addProject(tondo, project);
+
+  const setup = page.getByRole("region", { name: "pi isn't installed" });
+  await expect(setup).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
+  await expect(fileProblem(setup)).toContainText("settings.json");
+  await expect(setup).not.toContainText("didn't save that change");
+});
+
+test("a trust answer Tondo can't save says why on the question, and goes once it's saved", async () => {
+  mkdirSync(path.join(project, ".pi"));
+  writeFileSync(
+    path.join(project, ".pi", "settings.json"),
+    JSON.stringify({ defaultThinkingLevel: "low" }),
+  );
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  await bringToFront(tondo);
+  const { page, profileDir } = tondo;
+  await addProject(tondo, project);
+  const question = page.getByRole("region", { name: "Trust project folder?" });
+  await expect(question).toBeVisible();
+
+  const file = path.join(profileDir, "settings.json");
+  const good = readFileSync(file, "utf8");
+  writeFileSync(file, "{ broken");
+  await question.getByRole("button", { name: "Trust", exact: true }).click();
+  await expect(question.getByRole("alert")).toContainText("isn't valid JSON");
+
+  writeFileSync(file, good);
+  await question.getByRole("button", { name: "Trust", exact: true }).click();
+  await waitForPi(page);
+  await expect(question).not.toBeAttached();
+  await expect(page.getByRole("alert").filter({ hasText: "isn't valid JSON" })).toHaveCount(0);
+  expect(readSettings(tondo).projectTrust).toEqual({ [project]: true });
+});
+
+test("a broken settings.json is the file's problem, with the file to show, not pi's or a change's", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  const settingsFile = path.join(profileDir, "settings.json");
+  writeFileSync(settingsFile, "{ not json");
+  tondo = await launchTondo({ profileDir });
+  const { app, page } = tondo;
+  await app.evaluate(({ shell }) => {
+    const state = globalThis as typeof globalThis & { tondoRevealed?: string[] };
+    state.tondoRevealed = [];
+    shell.showItemInFolder = (file) => state.tondoRevealed!.push(file);
+  });
+  const alert = page.getByRole("alert").filter({ hasText: "Tondo can't use its settings file" });
+  await expect(alert).toContainText(settingsFile);
+  await expect(page.getByText("Tondo didn't save that change")).toHaveCount(0);
+  // Whatever pi this machine has, the file's problem isn't reported as pi's too.
+  await expect(page.getByText("isn't valid JSON")).toHaveCount(1);
+  await alert
+    .getByRole("button", {
+      name: process.platform === "darwin" ? "Show in Finder" : "Show in folder",
+      exact: true,
+    })
+    .click();
+  await expect
+    .poll(() =>
+      app.evaluate(
+        () => (globalThis as typeof globalThis & { tondoRevealed?: string[] }).tondoRevealed,
+      ),
+    )
+    .toEqual([settingsFile]);
 });

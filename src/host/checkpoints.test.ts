@@ -44,7 +44,7 @@ function commit(): void {
 function refs(): string {
   return git("for-each-ref", "--format=%(refname)", "refs/tondo");
 }
-function capture(turn: number): Promise<void> {
+function capture(turn: number): Promise<string[]> {
   return captureCheckpoint(folder, thread, turn);
 }
 
@@ -79,7 +79,9 @@ describe("Git checkpoints", () => {
 
   test("distinguishes non-Git and missing folders, and resolves the whole checkout", async () => {
     expect(await checkpointRoot(folder)).toBeNull();
-    await expect(checkpointRoot(path.join(folder, "missing"))).rejects.toThrow();
+    await expect(checkpointRoot(path.join(folder, "missing"))).rejects.toThrow(
+      `Checkpoint git rev-parse: the folder ${path.join(folder, "missing")} no longer exists`,
+    );
     git("init", "-q");
     mkdirSync(path.join(folder, "sub"));
     expect(await checkpointRoot(path.join(folder, "sub"))).toBe(await checkpointRoot(folder));
@@ -280,11 +282,46 @@ describe("Git checkpoints", () => {
       "-qm",
       "nested",
     );
-    await capture(0);
+    expect(await capture(0)).toEqual(["empty [repo]"]);
     const tree = git("ls-tree", checkpointRef(thread, 0));
     expect(tree).not.toContain("empty [repo]");
     expect(tree).toContain("160000 commit");
     expect(tree).toContain("normal.txt");
+    // Edits inside a committed nested repository stay out of the parent's checkpoint.
+    write("committed/file.txt", "edited\n");
+    expect(await capture(1)).toEqual(["empty [repo]", "committed"]);
+  });
+
+  test("reports a submodule with uncommitted or untracked changes", async () => {
+    const library = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-submodule-")));
+    try {
+      execFileSync("git", ["init", "-q", library]);
+      writeFileSync(path.join(library, "README.md"), "library\n");
+      execFileSync("git", ["-C", library, "add", "."]);
+      execFileSync("git", [
+        "-C",
+        library,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@localhost",
+        "commit",
+        "-qm",
+        "library",
+      ]);
+      git("init", "-q");
+      git("-c", "protocol.file.allow=always", "submodule", "add", "-q", library, "libs/sub");
+      commit();
+      expect(await capture(0)).toEqual([]);
+      write("libs/sub/README.md", "library\nedited\n");
+      write("top.txt", "top\n");
+      expect(await capture(1)).toEqual(["libs/sub"]);
+      expect((await checkpointFiles(folder, thread, 0, 1)).map((file) => file.path)).toEqual([
+        "top.txt",
+      ]);
+    } finally {
+      rmSync(library, { recursive: true, force: true });
+    }
   });
 
   test("bounds patches at 10,000,000 bytes rather than returning a partial diff", async () => {
@@ -296,6 +333,28 @@ describe("Git checkpoints", () => {
     await expect(diffCheckpoints(folder, thread, 0, 1)).rejects.toThrow(
       "output exceeds 10,000,000 bytes",
     );
+  });
+
+  test("lists an oversized file without its patch and keeps the turn's other files readable", async () => {
+    git("init", "-q");
+    write("huge.txt", "before\n");
+    write("small.txt", "before\n");
+    write("old name.txt", "rename me intact\n");
+    await capture(0);
+    write("huge.txt", "a".repeat(12_000_000) + "\n");
+    write("small.txt", "after\n");
+    write("added.txt", "added\n");
+    renameSync(path.join(folder, "old name.txt"), path.join(folder, "new name.txt"));
+    await capture(1);
+    const files = await checkpointFiles(folder, thread, 0, 1);
+    expect(files.map(({ path: name, status, patch }) => [name, status, patch === ""])).toEqual([
+      ["added.txt", "A", false],
+      ["huge.txt", "M", true],
+      ["new name.txt", "R", false],
+      ["small.txt", "M", false],
+    ]);
+    expect(files.find((file) => file.path === "small.txt")?.patch).toContain("-before\n+after");
+    expect(files.find((file) => file.path === "new name.txt")?.previousPath).toBe("old name.txt");
   });
 
   test("missing checkpoints are errors, never an invented HEAD baseline", async () => {

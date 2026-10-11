@@ -1,5 +1,5 @@
-// Toasts in the window's top right corner: an extension's notify, and how a
-// slash command went. Info and warnings close after a while, unless the
+// Toasts in the transcript's top right corner: an extension's notify, and how
+// a slash command went. Info and warnings close after a while, unless the
 // pointer or focus is on them. Errors stay until you close them.
 import { CircleAlert, Info, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -19,8 +19,13 @@ export function Toasts() {
   const toasts = useToasts((all) => all);
   if (toasts.length === 0) return null;
   return (
-    <div className="pointer-events-none fixed top-12 right-3 z-30 flex w-88 flex-col gap-2">
-      {toasts.map((toast) => (
+    // The stack stays inside the transcript (toast-stack in index.css), so
+    // toasts never cover the composer, an extension's dialog, the terminal or
+    // the Changes panel. Toasts that don't fit scroll up out of view, oldest
+    // first: the stack runs bottom to top, newest first. Its padding holds the
+    // toasts' shadows.
+    <div className="toast-stack pointer-events-none fixed z-30 flex w-96 flex-col-reverse gap-2 overflow-y-auto px-4 pb-6 [scrollbar-width:none]">
+      {toasts.toReversed().map((toast) => (
         <ToastView key={toast.id} toast={toast} />
       ))}
     </div>

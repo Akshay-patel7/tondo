@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { PiProblem } from "../../shared/protocol";
-import { choosePiPath, retryPi, useHost } from "../connection";
+import { choosePiPath, revealFile, retryPi, useHost } from "../connection";
+import { isMac } from "../platform";
 import { openSettings } from "../settings/store";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -46,6 +47,8 @@ function whatTondoTried(problem: PiProblem): string {
 export function PiSetup({ problem }: { problem: PiProblem }) {
   const connected = useHost((host) => host.connection === "connected");
   const settingsError = useHost((host) => host.settingsError);
+  const settingsFileError = useHost((host) => host.settingsFileError);
+  const settingsFile = useHost((host) => host.settingsFilePath);
   const title = useRef<HTMLHeadingElement>(null);
   // Focus moves to the heading, so a screen reader starts with what's wrong.
   useEffect(() => {
@@ -81,6 +84,25 @@ export function PiSetup({ problem }: { problem: PiProblem }) {
           {INSTALL_PI}
         </code>
       </div>
+      {settingsFileError ? (
+        <Alert variant="destructive" role="alert">
+          <CircleAlert aria-hidden />
+          <AlertTitle>Tondo can't use its settings file</AlertTitle>
+          <AlertDescription className="break-words">
+            {settingsFileError}{" "}
+            {settingsFile === null ? null : (
+              <Button
+                variant="link"
+                size="xs"
+                className="-ml-2"
+                onClick={() => revealFile(settingsFile)}
+              >
+                {isMac ? "Show in Finder" : "Show in folder"}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {settingsError ? (
         <Alert variant="destructive" role="alert">
           <CircleAlert aria-hidden />

@@ -324,6 +324,52 @@ test("killing the host during capture reaps Git and its filter and leaves a vali
   expect(existsSync(path.join(project, ".git/index.lock"))).toBe(false);
 });
 
+test("an oversized file and a nested repository's edits are explained, not hidden", async () => {
+  git("init", "-q");
+  const nested = path.join(project, "nested");
+  execFileSync("git", ["init", "-q", nested]);
+  writeFileSync(path.join(nested, "README.md"), "nested\n");
+  execFileSync("git", ["-C", nested, "add", "."]);
+  execFileSync("git", [
+    "-C",
+    nested,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@localhost",
+    "commit",
+    "-qm",
+    "nested",
+  ]);
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      responses: [
+        bashCall(
+          "head -c 12000000 /dev/zero | tr '\\0' a > huge.txt; printf 'small\\n' > small.txt; printf 'edited\\n' >> nested/README.md",
+        ),
+        reply("Wrote the files."),
+      ],
+    },
+  });
+  const { page } = tondo;
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "Turn changes" });
+  await send(page, "Write the files.");
+  await expect(page.getByText("Wrote the files.", { exact: true })).toBeVisible();
+  await expect(panel).toContainText("Changed files (2)");
+  await expect(panel).toContainText(
+    "Uncommitted changes inside nested repositories and submodules aren't shown: nested.",
+  );
+  await panel.getByRole("button", { name: "Show diff for huge.txt" }).click();
+  await expect(panel).toContainText("This file's diff is too large to preview.");
+  await panel.getByRole("button", { name: "Show diff for small.txt" }).click();
+  await expect(panel.locator("diffs-container")).toContainText("small");
+  await page.screenshot({ path: test.info().outputPath("oversized.png"), animations: "disabled" });
+});
+
 test("a non-Git folder explains why the panel has no diffs", async () => {
   tondo = await launchWithPi({ workDir, script: { responses: [reply("No file changes.")] } });
   const { page } = tondo;

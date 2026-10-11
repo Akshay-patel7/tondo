@@ -1,7 +1,8 @@
 import { CircleAlert, CircleCheck, FolderPlus, MessageSquarePlus, Plus } from "lucide-react";
 import type { PiProblem } from "../../shared/protocol";
-import { addProject, choosePiPath, newThread, useHost } from "../connection";
+import { addProject, choosePiPath, newThread, revealFile, useHost } from "../connection";
 import { folderName } from "../format";
+import { isMac } from "../platform";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
@@ -69,14 +70,39 @@ function missing(problem: PiProblem): string {
 function PiStatus({ connected }: { connected: boolean }) {
   const pi = useHost((host) => host.piEnv);
   const settingsError = useHost((host) => host.settingsError);
+  const settingsFileError = useHost((host) => host.settingsFileError);
+  const settingsFile = useHost((host) => host.settingsFilePath);
   // The line keeps its height while the host looks for pi, so the welcome doesn't shift.
   if (pi === null) return <div className="h-6" />;
+  // A settings.json Tondo can't read is the file's problem, whether or not pi is found.
+  const fileAlert = settingsFileError ? (
+    <Alert variant="destructive" role="alert">
+      <CircleAlert aria-hidden />
+      <AlertTitle>Tondo can't use its settings file</AlertTitle>
+      <AlertDescription className="break-words">
+        {settingsFileError}{" "}
+        {settingsFile === null ? null : (
+          <Button
+            variant="link"
+            size="xs"
+            className="-ml-2"
+            onClick={() => revealFile(settingsFile)}
+          >
+            {isMac ? "Show in Finder" : "Show in folder"}
+          </Button>
+        )}
+      </AlertDescription>
+    </Alert>
+  ) : null;
   if (pi.state === "found")
     return (
-      <p className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
-        <CircleCheck aria-hidden className="size-3.5 text-success" />
-        Found pi {pi.version} {pi.source === "path" ? "on your PATH" : "at the path in Settings"}.
-      </p>
+      <>
+        <p className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
+          <CircleCheck aria-hidden className="size-3.5 text-success" />
+          Found pi {pi.version} {pi.source === "path" ? "on your PATH" : "at the path in Settings"}.
+        </p>
+        {fileAlert}
+      </>
     );
   return (
     <>
@@ -87,6 +113,7 @@ function PiStatus({ connected }: { connected: boolean }) {
           Choose pi…
         </Button>
       </div>
+      {fileAlert}
       {settingsError ? (
         <Alert variant="destructive" role="alert">
           <CircleAlert aria-hidden />

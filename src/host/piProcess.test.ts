@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiExitError, startPi, type PiProcess, type StopTimings } from "./piProcess";
 import { PiCommandError, type PiRecord } from "./piRpc";
+import { drainGroup, signalGroup } from "./processGroup";
 
 const fakePi = path.resolve(import.meta.dirname, "../../scripts/fixtures/fake-pi.mts");
 /** What fake pi replays after a prompt: fixtures/tools.jsonl without its response. */
@@ -195,5 +196,87 @@ describe("PiProcess with fake pi", () => {
     ).rejects.toThrow(
       `Couldn't start pi with /nonexistent/pi in ${import.meta.dirname}: spawn /nonexistent/pi ENOENT`,
     );
+  });
+
+  it("says the project folder is gone rather than blaming pi's command", async () => {
+    const missing = path.join(import.meta.dirname, "no-such-project");
+    await expect(
+      startPi(
+        { command: process.execPath, args: [fakePi], cwd: missing, env: {} },
+        { onRecord: () => {}, onGroup: () => {} },
+      ),
+    ).rejects.toThrow(`Couldn't start pi: the project folder ${missing} no longer exists.`);
+  });
+});
+
+/**
+ * A pi that, like pi's bash tool, starts a command in a group of its own,
+ * says it's running a tool, and exits when its stdin closes.
+ */
+const TOOL_PI =
+  "const job = require('node:child_process').spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });" +
+  "job.unref();" +
+  "process.stdout.write(JSON.stringify({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'bash', args: { job: job.pid } }) + '\\n');" +
+  "process.stdin.on('end', () => process.exit(0)); process.stdin.resume();";
+
+/** Starts TOOL_PI and resolves once PiProcess has listed its tool's group. */
+async function startToolPi() {
+  const groups: [number, boolean][] = [];
+  const job = Promise.withResolvers<number>();
+  const listed = Promise.withResolvers<void>();
+  let jobPid: number | undefined;
+  const pi = await startPi(
+    {
+      command: process.execPath,
+      args: ["-e", TOOL_PI],
+      cwd: import.meta.dirname,
+      env: process.env,
+    },
+    {
+      onRecord: (record) => {
+        if (record.type === "tool_execution_start") {
+          jobPid = (record as unknown as { args: { job: number } }).args.job;
+          job.resolve(jobPid);
+        }
+      },
+      onGroup: (pgid, isRunning) => groups.push([pgid, isRunning]),
+      onToolGroups: (pgids) => {
+        if (jobPid !== undefined && pgids.includes(jobPid)) listed.resolve();
+      },
+    },
+    timings,
+  );
+  running.push(pi);
+  const pid = await job.promise;
+  await listed.promise;
+  return { pi, groups, job: pid };
+}
+
+describe("PiProcess with a tool running", () => {
+  it("stops the groups pi's tools run in when pi is killed", async () => {
+    const { pi, groups, job } = await startToolPi();
+    expect(job).not.toBe(pi.pid);
+    expect(signalGroup(job, 0)).toBe(true);
+    process.kill(pi.pid, "SIGKILL");
+    expect((await pi.exited).signal).toBe("SIGKILL");
+    expect(signalGroup(job, 0)).toBe(false);
+    expect(groups).toEqual([
+      [pi.pid, true],
+      [pi.pid, false],
+    ]);
+  });
+
+  it("leaves a tool's group to pi when pi exits by itself", async () => {
+    const { pi, groups, job } = await startToolPi();
+    try {
+      expect(await pi.stop()).toEqual({ code: 0, signal: null, stderrTail: "" });
+      expect(signalGroup(job, 0)).toBe(true);
+      expect(groups).toEqual([
+        [pi.pid, true],
+        [pi.pid, false],
+      ]);
+    } finally {
+      await drainGroup(job, 1_000);
+    }
   });
 });

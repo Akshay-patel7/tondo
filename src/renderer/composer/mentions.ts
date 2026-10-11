@@ -1,5 +1,8 @@
 import { fileMention } from "../../shared/files";
 
+// The host ranks a search of a project too big to send the same way.
+export { matchingFiles } from "../../shared/fileMatches";
+
 export interface FileQuery {
   readonly from: number;
   readonly to: number;
@@ -29,20 +32,4 @@ export function completeFile(
     text: text.slice(0, query.from) + value + text.slice(end),
     caret: query.from + value.length,
   };
-}
-
-/** Filename prefixes first, then matching path substrings. At most 20 rows reach the menu. */
-export function matchingFiles(paths: readonly string[], query: string): string[] {
-  const needle = query.toLowerCase();
-  const starts = (path: string) =>
-    path
-      .slice(path.lastIndexOf("/") + 1)
-      .toLowerCase()
-      .startsWith(needle);
-  return paths
-    .filter((path) => path.toLowerCase().includes(needle))
-    .toSorted((a, b) => {
-      return Number(starts(b)) - Number(starts(a)) || a.length - b.length || a.localeCompare(b);
-    })
-    .slice(0, 20);
 }

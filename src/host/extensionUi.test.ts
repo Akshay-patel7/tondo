@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { NO_EXTENSION_UI as NO_UI } from "../shared/protocol";
-import { applyUiRequest, readUiRequest, responseTo, stripAnsi, withoutDialog } from "./extensionUi";
+import {
+  applyUiRequest,
+  hasDialog,
+  readUiRequest,
+  responseTo,
+  stripAnsi,
+  withoutDialog,
+} from "./extensionUi";
 import type { PiRecord } from "./piRpc";
 
 const NOW = 1_000_000;
@@ -213,6 +220,22 @@ describe("applyUiRequest", () => {
     expect(ui.dialogs.map((dialog) => dialog.id)).toEqual(["a", "b"]);
     expect(withoutDialog(ui, "a").dialogs.map((dialog) => dialog.id)).toEqual(["b"]);
     expect(withoutDialog(ui, "missing")).toBe(ui);
+  });
+
+  it("keeps the open dialog when another asks with its id", () => {
+    const first = readUiRequest(
+      request({ id: "dup", method: "select", title: "First", options: ["a", "b"] }),
+      NOW,
+    );
+    const second = readUiRequest(
+      request({ id: "dup", method: "select", title: "Second", options: ["x", "y"] }),
+      NOW,
+    );
+    const ui = applyUiRequest(NO_UI, first);
+    expect(hasDialog(ui, "dup")).toBe(true);
+    expect(hasDialog(ui, "other")).toBe(false);
+    expect(applyUiRequest(ui, second)).toBe(ui);
+    expect(ui.dialogs.map((dialog) => dialog.title)).toEqual(["First"]);
   });
 });
 

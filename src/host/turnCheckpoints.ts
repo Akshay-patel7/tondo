@@ -6,6 +6,13 @@ function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** A ready turn's reason is a caveat about what its diff can't show. */
+function nestedNote(paths: readonly string[]): string | null {
+  if (!paths.length) return null;
+  const more = paths.length > 3 ? ` and ${paths.length - 3} more` : "";
+  return `Uncommitted changes inside nested repositories and submodules aren't shown: ${paths.slice(0, 3).join(", ")}${more}.`;
+}
+
 /** Orders Git around pi. Prompt preparation finishes before the host sends RPC. */
 export class TurnCheckpoints {
   private records: StoredCheckpoint[];
@@ -145,7 +152,7 @@ export class TurnCheckpoints {
       }
       // Git can be initialized during a turn. Keep its completion for the next
       // turn, but never manufacture the missing before-image from HEAD.
-      await captureCheckpoint(root, this.threadId, record.turn);
+      const nested = await captureCheckpoint(root, this.threadId, record.turn);
       const boundaryError = this.overlapping.has(record.turn)
         ? "Pi started another run before the completion checkpoint finished."
         : record.reason;
@@ -154,7 +161,9 @@ export class TurnCheckpoints {
         ...record,
         root,
         state: available ? "ready" : "unavailable",
-        reason: available ? null : (boundaryError ?? "No baseline was captured before this turn."),
+        reason: available
+          ? nestedNote(nested)
+          : (boundaryError ?? "No baseline was captured before this turn."),
       });
     } catch (error) {
       this.save({

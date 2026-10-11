@@ -40,7 +40,7 @@ Each thread runs its own `pi --mode rpc` process in the project folder or its ma
 
 - pi finds your configuration in `~/.pi/agent` and in project folders the same way it does in the terminal, so there is nothing to import.
 - A crash or hang in one thread's extensions stays inside that thread's process.
-- Processes start when a thread needs one and stop when it goes idle. For scale: a bare pi 0.87.1 RPC process with no extensions answered its first command in 120 to 180 ms and used 134 to 141 MB of memory on one Mac. Extensions add to both.
+- Processes start when a thread needs one and stop when it goes idle. For scale: a bare pi 0.87.1 RPC process with no extensions answered its first command in 120 to 149 ms on one Mac, with a footprint of 80 to 86 MB and an RSS of 125 to 131 MB ([measurements](docs/stack.md#measurements)). Extensions add to both.
 - Extension dialogs (select, confirm, input, editor) and the notifications, status lines and widgets that pi forwards over RPC become native UI.
 
 ## Performance plan

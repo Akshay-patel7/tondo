@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { startHost, type Host } from "./host";
 import { copyConsoleTo, lineWriter, LogFile } from "./logFile";
+import { installAppMenu } from "./menu";
 import { threadNotifications } from "./notifications";
 import { piOptions, resolveUserDataDir } from "./profile";
 import { reloadWhenRendererDies } from "./rendererRecovery";
@@ -110,12 +111,34 @@ if (!app.requestSingleInstanceLock()) {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
   });
+  /**
+   * Closes the window and resolves once it's gone. The page saves its draft
+   * as it unloads, so the host gets the draft before it's stopped.
+   */
+  const closeWindow = () =>
+    new Promise<void>((resolve) => {
+      const window = openWindow();
+      if (!window) return resolve();
+      // A hung page mustn't keep the app from quitting.
+      const deadline = setTimeout(resolve, 5_000);
+      window.once("closed", () => {
+        clearTimeout(deadline);
+        resolve();
+      });
+      window.close();
+    });
+  let quitting = false;
   app.on("before-quit", (event) => {
-    if (!host || hostStopped) return;
+    const running = host;
+    if (!running || hostStopped) return;
     // Quitting waits until pi and everything it started have stopped.
     event.preventDefault();
-    host
-      .stop()
+    // Closing the window quits again on Linux (window-all-closed); one stop is enough.
+    if (quitting) return;
+    quitting = true;
+    running.quitting();
+    closeWindow()
+      .then(() => running.stop())
       .catch((error: unknown) => console.error("Tondo couldn't stop its host:", error))
       .finally(() => {
         hostStopped = true;
@@ -127,6 +150,7 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(() => {
       handleAppProtocol(path.join(__dirname, "../renderer"));
+      installAppMenu({ isPackaged: app.isPackaged, platform: process.platform });
       denyAllPermissions(session.defaultSession);
       const userData = app.getPath("userData");
       const { TONDO_PI_ARGS: piArgs, TONDO_POOL: pool } = process.env;

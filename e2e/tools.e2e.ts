@@ -1,6 +1,6 @@
 // Tool cards: every built-in tool and an extension's tool from a recorded
 // turn, a shell command's output while it runs, and edit diffs highlighted by
-// @pierre/diffs's worker pool under the CSP.
+// @pierre/diffs's worker pool under the CSP, in colors legible in both schemes.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -214,6 +214,163 @@ test("an edit shows its diff, and a failed call its error", async () => {
   await header(missing).click();
   await expect(missing).toContainText("missing.md");
 });
+
+test("a command's colors show as plain text, not as escape codes", async () => {
+  const release = path.join(workDir, "release");
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      responses: [
+        bashCall(
+          `printf '\\033[31mRED\\033[0m plain \\033[1;32mGREEN\\033[0m\\n'; ${waitForFileCommand(release)}`,
+          "call_color",
+        ),
+        reply("Colored."),
+      ],
+    },
+  });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Color it.");
+
+  // Under the card while the command runs, and in the card once it's done.
+  const colored = card(page, "call_color");
+  await expect(colored.getByRole("log", { name: "Latest output" })).toHaveText("RED plain GREEN");
+  writeFileSync(release, "");
+  await expect(colored).toHaveAttribute("data-status", "done");
+  await header(colored).click();
+  await expect(colored.getByRole("region", { name: "Output" })).toHaveText("RED plain GREEN");
+});
+
+test("syntax colors in a diff and in a code block reach 4.5:1 in both color schemes", async () => {
+  writeFileSync(
+    path.join(project, "total.ts"),
+    "export function total(items: number[]): number {\n  let sum = 0;\n  for (const item of items) sum += item;\n  return sum; // the total\n}\n",
+  );
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      responses: [
+        toolCalls({
+          id: "call_double",
+          name: "edit",
+          arguments: {
+            path: "total.ts",
+            // A changed line, so the diff highlights the words that changed too.
+            edits: [
+              {
+                oldText: "  return sum; // the total\n",
+                newText:
+                  '  if (items.length === 0) return -1;\n  return sum * 2; // twice "the total"\n',
+              },
+            ],
+          },
+        }),
+        reply(
+          'Doubled:\n\n```ts\n// Twice the total, or -1 for no items.\nconst doubled = total([1, 2.5, 3]);\nconsole.log("total:", doubled);\n```',
+        ),
+      ],
+    },
+  });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Double it.");
+  await expect(page.getByText("Doubled:")).toBeVisible();
+
+  const edited = card(page, "call_double");
+  await header(edited).click();
+  await waitForHighlighting(edited);
+  const diff = edited.getByRole("region", { name: "Diff" });
+  const block = page.locator('[data-streamdown="code-block-body"]');
+  // Until Shiki has colored the block, its text takes the page's color.
+  await expect(block.locator('span[style*="--shiki-dark"]').first()).toBeAttached();
+
+  await expectLegible(page, "light", diff, block);
+  await expectLegible(page, "dark", diff, block);
+});
+
+/** Switches the page to `scheme`, then waits until all text under `roots` reaches 4.5:1. */
+async function expectLegible(
+  page: Page,
+  scheme: "light" | "dark",
+  ...roots: Locator[]
+): Promise<void> {
+  await page.emulateMedia({ colorScheme: scheme });
+  await Promise.all(roots.map((root) => expect.poll(() => illegibleText(root)).toEqual([])));
+}
+
+/**
+ * The text under `root`, shadow roots included, that's under WCAG AA's 4.5:1
+ * against what's behind it. Colors go through a canvas, so lab() and
+ * color-mix() come out as the sRGB the page paints.
+ */
+function illegibleText(root: Locator): Promise<string[]> {
+  return root.evaluate((element) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true })!;
+    const rgba = (color: string): number[] => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+      return [r!, g!, b!, a! / 255];
+    };
+    const page = rgba(getComputedStyle(document.documentElement).getPropertyValue("--background"));
+    const failing: string[] = [];
+    const visit = (scope: Node) => {
+      // A tree walker starts below `scope`, so a shadow root on `scope` itself needs its own visit.
+      if (scope instanceof Element && scope.shadowRoot) visit(scope.shadowRoot);
+      const walker = document.createTreeWalker(
+        scope,
+        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+      );
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node instanceof Element && node.shadowRoot) visit(node.shadowRoot);
+        const text = node.nodeType === Node.TEXT_NODE ? node.textContent?.trim() : "";
+        const at = node.parentElement;
+        if (!text || !at?.checkVisibility()) continue;
+        // Up from the text to the page, out of shadow roots through their hosts.
+        const chain: Element[] = [];
+        for (
+          let ancestor: Element | null = at;
+          ancestor;
+          ancestor = ancestor.parentElement ?? (ancestor.getRootNode() as ShadowRoot).host ?? null
+        ) {
+          chain.unshift(ancestor);
+        }
+        let behind = page.slice(0, 3);
+        let opacity = 1;
+        for (const ancestor of chain) {
+          const style = getComputedStyle(ancestor);
+          const fill = rgba(style.backgroundColor);
+          behind = behind.map((value, i) => fill[i]! * fill[3]! + value * (1 - fill[3]!));
+          opacity *= Number(style.opacity);
+        }
+        const ink = rgba(getComputedStyle(at).color);
+        const alpha = ink[3]! * opacity;
+        const shown = behind.map((value, i) => ink[i]! * alpha + value * (1 - alpha));
+        // WCAG 2's relative luminance of each, then their contrast ratio.
+        const [a, b] = [shown, behind].map((color) =>
+          [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
+            const channel = color[i]! / 255;
+            const linear =
+              channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+            return sum + weight * linear;
+          }, 0),
+        );
+        const ratio = (Math.max(a!, b!) + 0.05) / (Math.min(a!, b!) + 0.05);
+        if (ratio < 4.5) failing.push(`"${text.slice(0, 24)}" at ${ratio.toFixed(2)}:1`);
+      }
+    };
+    visit(element);
+    return failing;
+  });
+}
 
 /** How far the card's output box is scrolled from its end. */
 function pixelsBelowView(of: Locator): Promise<number> {

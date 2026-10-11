@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { bringToFront, type Tondo } from "./launch";
 import { processesIn, reportProcesses } from "./processes";
-import { addProject, composer, launchWithPi, reply, send, threadRows, waitForPi } from "./pi";
+import {
+  addProject,
+  composer,
+  launchWithPi,
+  reply,
+  send,
+  threadRows,
+  threads,
+  waitForPi,
+} from "./pi";
 import { pickerOptions } from "./ui";
 
 let workDir: string;
@@ -42,6 +51,20 @@ function visibleRows() {
   return tondo.page.locator(".xterm-accessibility-tree > div").allTextContents();
 }
 
+/** Drags the drawer's grip to the window's `edge`; the drawer clamps the height it ends at. */
+async function dragGrip(edge: "top" | "bottom") {
+  const bounds = (await tondo.page
+    .getByRole("separator", { name: "Resize terminal" })
+    .boundingBox())!;
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await tondo.page.mouse.move(x, y);
+  await tondo.page.mouse.down();
+  const bottom = await tondo.page.evaluate(() => window.innerHeight - 1);
+  await tondo.page.mouse.move(x, edge === "top" ? 0 : bottom, { steps: 5 });
+  await tondo.page.mouse.up();
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -71,10 +94,14 @@ test("a real shell runs in the thread folder, resizes, survives reload and close
     return Math.max(screen.bottom - bounds.bottom, screen.right - bounds.right);
   });
   expect(overflow, "xterm's last row and column must fit inside its view").toBeLessThanOrEqual(0);
+  // Start from the shortest drawer: in a small window the tallest one must
+  // leave the thread its transcript, so there may be little room to grow.
+  const grip = page.getByRole("separator", { name: "Resize terminal" });
+  await dragGrip("bottom");
+  await expect(grip).toHaveAttribute("aria-valuenow", "160");
   await command('stty size | awk \'{print "SIZE=" $1 ":" $2}\'');
   await expect(output()).toContainText(/SIZE=\d+:\d+/);
   const before = /SIZE=(\d+):(\d+)/.exec(await output().innerText())!;
-  const grip = page.getByRole("separator", { name: "Resize terminal" });
   await grip.focus();
   await grip.press("ArrowUp");
   await grip.press("ArrowUp");
@@ -113,6 +140,65 @@ test("a real shell runs in the thread folder, resizes, survives reload and close
   await expect.poll(() => processesIn(groups)).toEqual([]);
   reportProcesses("terminal-processes.txt", { beforeClose, afterClose: processesIn(groups) });
   expect(errors).toEqual([]);
+});
+
+test("text inserted without a keydown, as by the emoji picker or dictation, reaches the shell", async () => {
+  const { page } = tondo;
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  const file = path.join(workDir, "inserted");
+  await command(`cat > '${file}'`);
+  // The shell creates the file before cat starts reading the terminal.
+  await expect.poll(() => existsSync(file)).toBe(true);
+  const input = page.locator(".xterm-helper-textarea");
+  await input.focus();
+  await page.keyboard.insertText("abc é 👍 漢字");
+  await input.press("Enter");
+  await input.press("Control+d");
+  await expect.poll(() => readFileSync(file, "utf8")).toBe("abc é 👍 漢字\n");
+});
+
+test("Terminal starts a new shell in place of one that exited", async () => {
+  const { page } = tondo;
+  const opener = page.getByRole("button", { name: "Terminal", exact: true });
+  const status = page.getByRole("region", { name: "Terminal", exact: true }).getByRole("status");
+  await opener.click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  await command("exit 3");
+  await expect(status).toHaveText("Exited (3)");
+  await opener.click();
+  await expect(status).toHaveText("");
+  await command("printf 'FRESH_%s\\n' SHELL");
+  await expect(output()).toContainText("FRESH_SHELL");
+});
+
+test("at the minimum window size the tallest terminal leaves the transcript and a whole footer", async () => {
+  const { app, page } = tondo;
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(840, 620));
+  await page.waitForFunction(() => window.innerWidth === 840 && window.innerHeight === 620);
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  const grip = page.getByRole("separator", { name: "Resize terminal" });
+  await expect(grip).toBeVisible();
+  await dragGrip("top");
+  const tallest = await grip.getAttribute("aria-valuemax");
+  await expect(grip).toHaveAttribute("aria-valuenow", tallest!);
+  const layout = await page.evaluate(() => {
+    const footer = document.querySelector(
+      'section[aria-label="Terminal"]',
+    )!.previousElementSibling!;
+    const bounds = footer.getBoundingClientRect();
+    const padding = parseFloat(getComputedStyle(footer).paddingBottom);
+    return {
+      transcript: footer.previousElementSibling!.getBoundingClientRect().height,
+      contentBottom: footer.firstElementChild!.getBoundingClientRect().bottom,
+      footerContentEnd: bounds.bottom - padding,
+    };
+  });
+  await page.screenshot({ path: "test-results/terminal-tallest-minimum.png" });
+  expect(layout.transcript, "the transcript keeps its room").toBeGreaterThanOrEqual(119);
+  expect(layout.contentBottom, "the footer is cut off").toBeLessThanOrEqual(
+    layout.footerContentEnd + 0.5,
+  );
 });
 
 test("provider sign-in runs a separate interactive pi in the isolated profile", async () => {
@@ -294,4 +380,46 @@ test("quitting the app stops a terminal's separate job-control group", async () 
   } finally {
     if (alive(pid)) process.kill(pid, "SIGKILL");
   }
+});
+
+test("/login starts a sign-in terminal in place of a shell that exited", async () => {
+  const { page } = tondo;
+  const status = page.getByRole("region", { name: "Terminal", exact: true }).getByRole("status");
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  await command("exit 3");
+  await expect(status).toHaveText("Exited (3)");
+  await send(page, "/login");
+  await expect(page.getByRole("heading", { name: "Provider sign-in" })).toBeVisible();
+  await expect(status).toHaveText("");
+  await expect(output()).toContainText("faux", { timeout: 30_000 });
+});
+
+test("archiving a thread stops its terminal's shell and background jobs", async () => {
+  const { page } = tondo;
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  const pids = path.join(workDir, "archived-pids");
+  await command(`echo $$ > '${pids}'; sleep 401 & echo $! >> '${pids}'`);
+  await expect
+    .poll(() => (existsSync(pids) ? readFileSync(pids, "utf8").trim().split("\n").length : 0))
+    .toBe(2);
+  // The shell leads its process group, and job control gives the background sleep its own.
+  const groups = readFileSync(pids, "utf8").trim().split("\n").map(Number);
+  expect(processesIn(groups)).not.toEqual([]);
+
+  // A draft keeps the first thread listed. Mod+N from the composer, since xterm may take it.
+  await composer(page).pressSequentially("keep");
+  await page.keyboard.press("ControlOrMeta+n");
+  await expect(threadRows(page)).toHaveCount(2);
+  await waitForPi(page);
+  await threads(page)
+    .locator("li > button[title]:not([aria-label]):not([aria-current])")
+    .click({ button: "right" });
+  await page
+    .getByRole("menu", { name: "Thread actions" })
+    .getByRole("menuitem", { name: "Archive", exact: true })
+    .click();
+  await expect(threadRows(page)).toHaveCount(1);
+  await expect.poll(() => processesIn(groups)).toEqual([]);
 });

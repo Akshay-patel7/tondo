@@ -6,6 +6,7 @@ import {
   afterPiExit,
   applyEvent,
   applyEvents,
+  eventProblem,
   threadFromMessages,
   toolRun,
   type AssistantMessage,
@@ -159,7 +160,7 @@ describe("applyEvent", () => {
 
     expect(reply.stopReason).toBe("aborted");
     expect(text(reply)).toBe(streamed);
-    expect(streamed.length).toBeGreaterThan(0);
+    expect(streamed).toHaveLength(824);
     expect(thread.running).toBe(false);
   });
 
@@ -398,6 +399,43 @@ describe("afterPiExit", () => {
       ...empty,
       messages: midStream.messages,
     });
-    expect(midStream.messages.length).toBeGreaterThan(0);
+    expect(midStream.messages.map((message) => message.role)).toEqual(["user"]);
+  });
+});
+
+describe("eventProblem", () => {
+  test("finds a known event missing the fields applyEvent reads", () => {
+    expect(eventProblem({ type: "message_end" })).toBe("it has no message role");
+    expect(eventProblem({ type: "message_start", message: null } as never)).toBe(
+      "it has no message role",
+    );
+    expect(eventProblem({ type: "message_end", message: { role: "assistant" } } as never)).toBe(
+      "its assistant message has no content list",
+    );
+    expect(
+      eventProblem({ type: "message_end", message: { role: "toolResult", content: [] } } as never),
+    ).toBe("its toolResult message has no toolCallId");
+    expect(eventProblem({ type: "message_update" })).toBe("its assistantMessageEvent has no type");
+    expect(
+      eventProblem({
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_end" },
+      } as never),
+    ).toBe("its toolcall_end has no toolCall");
+    expect(eventProblem({ type: "tool_execution_end" })).toBe("it has no toolCallId");
+    expect(eventProblem({ type: "queue_update", steering: [] } as never)).toBe(
+      "its steering and followUp aren't lists of text",
+    );
+    expect(eventProblem({ type: "session_info_changed", name: 3 } as never)).toBe(
+      "its name isn't text",
+    );
+  });
+
+  test("passes every event pi recorded, and events Tondo doesn't read", () => {
+    for (const name of ["abort.jsonl", "error.jsonl", "stream-200.jsonl", "tools.jsonl"]) {
+      for (const event of fixture(name)) expect(eventProblem(event)).toBeUndefined();
+    }
+    expect(eventProblem({ type: "agent_start" })).toBeUndefined();
+    expect(eventProblem({ type: "something_new" })).toBeUndefined();
   });
 });

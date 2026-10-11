@@ -227,6 +227,20 @@
 }
 
 /*
+ * The toast stack's place: the top right corner of the thread's transcript,
+ * which App.tsx names --transcript, and no taller or wider than it. The stack's
+ * padding, 1rem at the sides and 1.5rem below, holds the toasts' shadows. With
+ * no transcript, as on the Settings page, it takes the window's corner below
+ * the 2.5rem title bar.
+ */
+@utility toast-stack {
+  top: calc(anchor(--transcript top, 2.5rem) + 0.5rem);
+  right: calc(anchor(--transcript right, 0px) - 0.25rem);
+  max-width: calc(anchor-size(--transcript width, 100vw) + 0.5rem);
+  max-height: calc(anchor-size(--transcript height, calc(100vh - 2.5rem)) - 0.5rem);
+}
+
+/*
  * The one keyboard focus style: a 2px outline in --ring, 2px off the control,
  * so the gap shows whatever surface the control sits on. ui components apply
  * it with focus-visible:focus-ring. An outline, unlike a box shadow, also

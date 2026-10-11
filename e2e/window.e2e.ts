@@ -43,6 +43,48 @@ test("navigating to another site is blocked, and the link opens in the browser",
   expect(await page.evaluate(() => document.body.dataset.sameDocument)).toBe("yes");
 });
 
+test("navigating to about:blank restores the app without opening anything", async () => {
+  const { app, page } = tondo;
+  // Subscribe before navigating: the app must finish a fresh load, not merely
+  // still have its old URL before Chromium commits about:blank.
+  await app.evaluate(({ BrowserWindow, shell }) => {
+    const state = globalThis as typeof globalThis & {
+      restoredApp?: Promise<void>;
+      openedUrls?: string[];
+    };
+    const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+    const urls: string[] = [];
+    state.openedUrls = urls;
+    shell.openExternal = async (url) => {
+      urls.push(url);
+    };
+    state.restoredApp = new Promise((resolve) => {
+      const finished = () => {
+        if (contents.getURL() !== "tondo://app/") return;
+        contents.removeListener("did-finish-load", finished);
+        resolve();
+      };
+      contents.on("did-finish-load", finished);
+    });
+  });
+
+  await page.evaluate(() => {
+    location.href = "about:blank";
+  });
+
+  await app.evaluate(
+    () => (globalThis as typeof globalThis & { restoredApp?: Promise<void> }).restoredApp,
+  );
+  expect(page.url()).toBe("tondo://app/");
+  expect(
+    await app.evaluate(
+      () => (globalThis as typeof globalThis & { openedUrls?: string[] }).openedUrls,
+    ),
+  ).toEqual([]);
+  await expect(page.getByRole("navigation", { name: "Threads" })).toContainText("No projects yet.");
+  expect(app.windows()).toHaveLength(1);
+});
+
 test("window.open is denied, and the link opens in the browser", async () => {
   const { app, page } = tondo;
   const openedUrl = await captureOpenExternal(app);
@@ -85,6 +127,24 @@ test("tondo:// responses carry the CSP, and the page enforces it", async () => {
       }),
   );
   expect(inlineScript).toBe("blocked by script-src-elem");
+});
+
+test("the app menu has Edit, and reload and DevTools only in unpackaged runs", async () => {
+  const { packaged, roles } = await tondo.app.evaluate(({ app, Menu }) => {
+    // Runs inside main, so the walk can't use helpers from this file.
+    const found: string[] = [];
+    const pending = [...(Menu.getApplicationMenu()?.items ?? [])];
+    for (let item = pending.shift(); item; item = pending.shift()) {
+      if (item.role) found.push(item.role);
+      pending.push(...(item.submenu?.items ?? []));
+    }
+    return { packaged: app.isPackaged, roles: found };
+  });
+  expect(roles).toEqual(expect.arrayContaining(["copy", "paste", "undo", "selectall"]));
+  const develop = roles.filter((role) =>
+    ["reload", "forcereload", "toggledevtools"].includes(role),
+  );
+  expect(develop).toEqual(packaged ? [] : ["reload", "forcereload", "toggledevtools"]);
 });
 
 test("permission requests are denied", async () => {

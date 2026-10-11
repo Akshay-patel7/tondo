@@ -366,8 +366,22 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 11, which added accounts and login providers", () => {
-    expect(PROTOCOL_VERSION).toBe(11);
+  it("speaks version 12, which split the settings file's problem from a refused change and added find-files", () => {
+    expect(PROTOCOL_VERSION).toBe(12);
+  });
+
+  it("takes find-files with a thread, a request id and a short query", () => {
+    const message = { v, type: "find-files", threadId: "t", id: 1, query: "main.ts" };
+    expect(parseClientMessage(message)).toEqual({ ok: true, message });
+  });
+
+  it.each([
+    [{ threadId: "t", id: -1, query: "a" }],
+    [{ threadId: "t", id: 1, query: 3 }],
+    [{ threadId: "t", id: 1, query: "a".repeat(4097) }],
+    [{ threadId: "t", id: 1, query: "a", extra: 1 }],
+  ])("rejects find-files %j", (fields) => {
+    expect(parseClientMessage({ v, type: "find-files", ...fields }).ok).toBe(false);
   });
 
   it("rejects get-pi-accounts with any field besides its type", () => {

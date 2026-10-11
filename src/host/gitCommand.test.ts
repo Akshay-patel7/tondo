@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { GitCommandError, GitCommands } from "./gitCommand";
+import { GitCommandError, GitCommands, MISSING_FOLDER, subcommand } from "./gitCommand";
 
 let dir: string;
 let bin: string;
@@ -85,6 +85,29 @@ it("bounds output and reaps a helper that inherited the command's process group"
     })
     .toBe(false);
   expect(groups.at(-1)).toEqual([]);
+});
+
+it("names the subcommand, not a global option, in errors", async () => {
+  expect(subcommand(["-c", "core.fsmonitor=false", "status", "-z"])).toBe("status");
+  expect(subcommand(["-C", "dir", "--no-pager", "log"])).toBe("log");
+  executable("console.error('nope');process.exit(2)");
+  const commands = new GitCommands(async () => ({ PATH: bin }));
+  await expect(commands.run("git", dir, ["-c", "a=b", "status"])).rejects.toThrow(
+    "git status: nope",
+  );
+});
+
+it("says a missing working folder is gone, and a missing gh is still a missing gh", async () => {
+  executable("console.log('ok')");
+  const commands = new GitCommands(async () => ({ PATH: bin }));
+  const gone = path.join(dir, "deleted-project");
+  const missingFolder = commands.run("git", gone, ["rev-parse", "--show-toplevel"]);
+  await expect(missingFolder).rejects.toThrow(`git rev-parse: the folder ${gone} no longer exists`);
+  await expect(missingFolder).rejects.toMatchObject({ code: MISSING_FOLDER });
+  // bin holds no gh, and the folder exists.
+  await expect(commands.run("gh", dir, ["auth", "status"])).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 it("does not put embedded remote credentials in a displayed command error", () => {

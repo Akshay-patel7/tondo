@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { Git } from "./git";
 import { GitCommands } from "./gitCommand";
-import { inside, Worktrees } from "./worktrees";
+import { inside, missing, Worktrees } from "./worktrees";
 import {
   NO_EXTENSION_UI,
   PROTOCOL_VERSION,
@@ -23,14 +23,9 @@ import {
   type ThreadActivity,
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
-import {
-  DEFAULT_SETTINGS,
-  type AppSettings,
-  type SettingsPatch,
-  type ThemeSetting,
-} from "../shared/settings";
-import { shortcutProblems } from "../shared/shortcuts";
-import type { Settings } from "./settings";
+import { editorText } from "../shared/drafts";
+import type { AppSettings, SettingsPatch, ThemeSetting } from "../shared/settings";
+import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
 import { TurnCheckpoints } from "./turnCheckpoints";
@@ -41,7 +36,7 @@ import { PiCommandError } from "./piRpc";
 import { choosePiToStop, POOL_LIMITS, type PoolLimits } from "./pool";
 import { messageTitle, SessionIndex, type SessionSummary } from "./sessionIndex";
 import type { Store, StoredProject, StoredThread } from "./store";
-import type { Supervisor } from "./supervisor";
+import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { canonical } from "./trust";
 import { Terminals } from "./terminals";
 
@@ -101,6 +96,10 @@ export class Workspace {
   private readonly chooseFolder: () => void;
   private readonly choosePi: () => void;
   private readonly setTheme: (theme: ThemeSetting) => void;
+  /** The theme main last heard, which an outside edit to settings.json doesn't change. */
+  private theme: ThemeSetting | null = null;
+  /** The problem with settings.json Tondo last told you about as it started a pi. */
+  private settingsProblem: string | null = null;
   private choosingPi = false;
   private readonly attention: (attention: Attention) => void;
   private readonly copy: (text: string) => void;
@@ -109,6 +108,8 @@ export class Workspace {
   private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
   private readonly files = new FileIndexes();
+  /** The draft an extension last set in each thread that wasn't on screen. */
+  private readonly extensionDrafts = new Map<string, string>();
   private readonly terminals: Terminals;
   private readonly git: Git;
   private readonly worktrees: Worktrees;
@@ -172,14 +173,19 @@ export class Workspace {
    * as it starts, before any page connects.
    */
   applySettings(): void {
-    let settings: AppSettings = DEFAULT_SETTINGS;
-    try {
-      settings = this.supervisor.settings();
-    } catch (error) {
-      console.error(`Tondo Host uses the default settings: ${messageOf(error)}`);
+    const { settings, problem } = this.supervisor.readableSettings();
+    if (problem !== null) {
+      console.error(`Tondo Host uses the defaults for what it can't read: ${problem}`);
     }
     this.setLimits(this.poolLimits(settings));
-    this.setTheme(settings.theme);
+    this.applyTheme(settings.theme);
+  }
+
+  /** Tells main the theme, unless main has it already. */
+  private applyTheme(theme: ThemeSetting): void {
+    if (theme === this.theme) return;
+    this.theme = theme;
+    this.setTheme(theme);
   }
 
   /** Changes the pool's limits, and stops the pi processes they no longer allow. */
@@ -303,8 +309,10 @@ export class Workspace {
         });
         break;
       case "archive-thread":
-        this.run(() => {
+        this.run(async () => {
           this.row(message.threadId);
+          // An archived thread leaves the sidebar, so its shell must not run on unseen.
+          if (message.archived) await this.terminals.close(message.threadId);
           this.store.setArchived(message.threadId, message.archived);
           this.sendSidebar();
         });
@@ -342,6 +350,14 @@ export class Workspace {
           this.send({ v, type: "files", threadId: message.threadId, id: message.id, index });
         });
         break;
+      case "find-files":
+        this.run(async () => {
+          const row = this.row(message.threadId);
+          const paths = await this.files.find(this.checkout(row), message.query);
+          const { threadId, id, query } = message;
+          this.send({ v, type: "file-matches", threadId, id, query, paths });
+        });
+        break;
       case "set-sidebar-hidden":
         this.run(() => this.store.setUi("sidebarHidden", message.hidden));
         break;
@@ -349,7 +365,16 @@ export class Workspace {
         this.run(() => this.refresh());
         break;
       case "trust":
-        this.run(() => this.running(message.threadId).trust(message.trusted));
+        this.run(async () => {
+          try {
+            await this.running(message.threadId).trust(message.trusted);
+          } catch (error) {
+            if (!(error instanceof TrustNotSavedError)) throw error;
+            // A toast shows over the trust question too, which stays up so you can answer again.
+            this.offered.add(error.file);
+            this.toast("error", error.message, error.file);
+          }
+        });
         break;
       case "prompt":
         this.run(() => this.prompt(message));
@@ -475,12 +500,7 @@ export class Workspace {
     try {
       before = this.supervisor.settings();
       if (patch.shortcuts !== undefined) {
-        const shortcuts: Record<string, string | null> = { ...before.shortcuts };
-        for (const [command, text] of Object.entries(patch.shortcuts)) {
-          if (text === "default") delete shortcuts[command];
-          else shortcuts[command] = text;
-        }
-        const problems = shortcutProblems(shortcuts);
+        const problems = newShortcutProblems(before.shortcuts, patch.shortcuts);
         if (problems.length > 0) throw new Error(problems.join(" "));
       }
       if (typeof patch.piPath === "string") await this.supervisor.checkPi(patch.piPath);
@@ -491,21 +511,43 @@ export class Workspace {
     }
     this.sendSettings(null);
     this.setLimits(this.poolLimits(after));
-    if (after.theme !== before.theme) this.setTheme(after.theme);
+    // settings.json may have changed outside Tondo since main last heard the theme.
+    this.applyTheme(after.theme);
     if (after.piPath !== before.piPath) await this.rediscoverPi();
   }
 
-  /** Sends the page the settings, or the defaults if the file can't be read. */
+  /**
+   * Sends the page the settings Tondo uses, with defaults for what the file
+   * gets wrong, why a change was refused (`error`) and, apart from that,
+   * what's wrong with the file.
+   */
   private sendSettings(error: string | null): void {
-    let settings: AppSettings = DEFAULT_SETTINGS;
-    let problem = error;
-    try {
-      const { piPath, theme, pool, shortcuts } = this.supervisor.settings();
-      settings = { piPath, theme, pool, shortcuts };
-    } catch (cause) {
-      problem ??= messageOf(cause);
-    }
-    this.send({ v, type: "settings", settings, error: problem });
+    const { settings, problem } = this.supervisor.readableSettings();
+    // The page may offer to show a broken file in Finder.
+    if (problem !== null) this.offered.add(this.supervisor.settingsFile);
+    const { piPath, theme, pool, shortcuts } = settings;
+    this.send({
+      v,
+      type: "settings",
+      settings: { piPath, theme, pool, shortcuts },
+      error,
+      fileProblem:
+        problem === null ? null : { path: this.supervisor.settingsFile, message: problem },
+    });
+  }
+
+  /**
+   * Tells you, once for each problem, that pi starts with defaults for what
+   * settings.json gets wrong, and offers to show the file.
+   */
+  private noteSettingsProblem(): void {
+    const { problem } = this.supervisor.readableSettings();
+    if (problem === this.settingsProblem) return;
+    this.settingsProblem = problem;
+    if (problem === null) return;
+    const file = this.supervisor.settingsFile;
+    this.offered.add(file);
+    this.toast("warning", `${problem}. Tondo uses the defaults for what it can't read.`, file);
   }
 
   private async sendPiEnv(): Promise<void> {
@@ -690,6 +732,7 @@ export class Workspace {
       }),
     );
     this.live.set(id, thread);
+    this.noteSettingsProblem();
     this.run(() => thread.open());
     return thread;
   }
@@ -789,8 +832,16 @@ export class Workspace {
         const thread = current();
         if (!thread) return;
         if (thread.visible) this.send({ v, type: "editor-text", threadId: thread.id, text });
-        // A thread that isn't on screen keeps the text as its draft.
-        else this.setDraft(thread.id, text);
+        // A thread that isn't on screen keeps the text in its draft, after what you typed.
+        else {
+          const draft = editorText(
+            this.row(thread.id).draft,
+            text,
+            this.extensionDrafts.get(thread.id),
+          );
+          this.extensionDrafts.set(thread.id, text);
+          this.setDraft(thread.id, draft);
+        }
       },
     };
   }
@@ -873,7 +924,13 @@ export class Workspace {
     try {
       status = await this.git.status(this.checkout(this.row(id)), true, fresh);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      const worktree = this.worktrees.forThread(id);
+      error =
+        worktree && (await missing(worktree.path).catch(() => false))
+          ? "This worktree's folder was deleted outside Tondo. Remove the worktree to forget its thread. Its branch stays."
+          : cause instanceof Error
+            ? cause.message
+            : String(cause);
     }
     if (generation !== this.gitGeneration || this.visibleId !== id || !this.gitConnected) return;
     const json = JSON.stringify({ status, error });
@@ -901,6 +958,27 @@ export class Workspace {
       await this.gitReading;
       const row = this.row(threadId);
       const cwd = this.checkout(row);
+      const managed = this.worktrees.forThread(threadId);
+      if (action.kind === "remove-worktree" && managed && (await missing(managed.path))) {
+        // Deleted outside Tondo: no files are left to lose, only Git's record and the ledger row.
+        const thread = this.live.get(threadId);
+        await this.terminals.close(threadId);
+        if (thread) await this.letGo(thread);
+        try {
+          if (!(await this.worktrees.forgetIfMissing(managed)))
+            throw new Error("The worktree's folder is back. Refresh Git and try again.");
+        } catch (cause) {
+          this.startThread(threadId).show();
+          this.sendSnapshot();
+          throw cause;
+        }
+        await this.forgetWorktreeThread(
+          threadId,
+          managed.repository,
+          "The worktree's folder was already gone. Cleared Git's record of it and forgot its thread. Its branch and external pi session file were kept.",
+        );
+        return;
+      }
       const status = await this.git.status(cwd, false);
       if (!status.root) throw new Error("This folder is not a Git checkout.");
       if (status.branch !== expectedBranch)
@@ -953,24 +1031,9 @@ export class Workspace {
           this.sendSnapshot();
           throw cause;
         }
-        // Checkpoint refs are shared by linked worktrees. Use the surviving
-        // repository after removal, and never delete diffs on a refused removal.
-        try {
-          await deleteCheckpoints(worktree.repository, threadId);
-        } catch (cause) {
-          this.toast(
-            "warning",
-            `Worktree removed, but checkpoint cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-          );
-        }
-        this.store.removeThread(threadId);
-        this.found.delete(threadId);
-        this.visibleId = null;
-        this.store.setUi("openThread", null);
-        this.sendSnapshot();
-        this.sendSidebar();
-        this.toast(
-          "info",
+        await this.forgetWorktreeThread(
+          threadId,
+          worktree.repository,
           "Removed the worktree and forgot its thread. Its branch and external pi session file were kept.",
         );
       } else {
@@ -988,13 +1051,40 @@ export class Workspace {
     }
   }
 
+  /** After a thread's worktree is gone: deletes its checkpoints and forgets the thread. */
+  private async forgetWorktreeThread(
+    threadId: string,
+    repository: string,
+    done: string,
+  ): Promise<void> {
+    // Checkpoint refs are shared by linked worktrees. Use the surviving
+    // repository after removal, and never delete diffs on a refused removal.
+    try {
+      await deleteCheckpoints(repository, threadId);
+    } catch (cause) {
+      this.toast(
+        "warning",
+        `Worktree removed, but checkpoint cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+    this.store.removeThread(threadId);
+    this.found.delete(threadId);
+    this.visibleId = null;
+    this.store.setUi("openThread", null);
+    this.sendSnapshot();
+    this.sendSidebar();
+    this.toast("info", done);
+  }
+
   private async removeProject(projectId: number): Promise<void> {
     const project = this.project(projectId);
-    if (
-      this.store
-        .threads()
-        .some((row) => row.projectId === projectId && this.worktrees.forThread(row.id))
-    )
+    // A worktree whose folder was deleted outside Tondo has no files left to keep.
+    const worktrees = this.store
+      .threads()
+      .filter((row) => row.projectId === projectId)
+      .flatMap((row) => this.worktrees.forThread(row.id) ?? []);
+    const gone = await Promise.all(worktrees.map((worktree) => missing(worktree.path)));
+    if (gone.includes(false))
       throw new Error(
         "Remove this project's managed worktrees before removing the project. Their files have been kept.",
       );
@@ -1014,14 +1104,20 @@ export class Workspace {
       }
       if (this.visibleId === null) this.sendSnapshot();
       await Promise.all(closing);
-      for (const [id, entry] of this.found) {
-        if (entry.projectId === projectId) this.found.delete(id);
+      for (const worktree of worktrees) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- one Git registration at a time.
+        if (!(await this.worktrees.forgetIfMissing(worktree)))
+          throw new Error("A worktree's folder is back. Remove that worktree first.");
       }
       for (const row of this.store.threads().filter((stored) => stored.projectId === projectId)) {
         // oxlint-disable-next-line eslint/no-await-in-loop -- delete refs before forgetting their owner.
         await this.deleteThreadCheckpoints(row.id, project.path);
       }
       this.store.removeProject(projectId);
+      // Titles come from these until the project is really gone.
+      for (const [id, entry] of this.found) {
+        if (entry.projectId === projectId) this.found.delete(id);
+      }
       this.sendSidebar();
     } finally {
       this.removingProjects.delete(projectId);
@@ -1074,10 +1170,11 @@ export class Workspace {
 
   private async deleteThreadCheckpoints(id: string, project: string): Promise<void> {
     const roots = new Set(this.store.checkpoints(id).map((record) => record.root));
-    roots.add(await checkpointRoot(project));
+    // A folder deleted from disk took its refs with it, and Git can't start inside it.
+    if (!(await missing(project))) roots.add(await checkpointRoot(project));
     for (const root of roots) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- delete one repository's refs at a time.
-      if (root) await deleteCheckpoints(root, id);
+      if (root && !(await missing(root))) await deleteCheckpoints(root, id);
     }
   }
 

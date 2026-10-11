@@ -32,7 +32,15 @@ export interface GitStatus {
   readonly behind: number;
   readonly remote: string | null;
   readonly github: GitHubStatus;
+  /** Unmerged paths. Commit refuses while any exist. */
+  readonly conflicts?: number;
+  /** A merge, rebase, cherry-pick or revert Git stopped in the middle of. */
+  readonly operation?: GitOperation | null;
+  /** Untracked files were too many to list, so `changes` counts only tracked paths. */
+  readonly untrackedHidden?: boolean;
 }
+
+export type GitOperation = "merge" | "rebase" | "cherry-pick" | "revert";
 
 export type GitCommand =
   | { type: "git-refresh"; threadId: string }
@@ -47,6 +55,25 @@ export type GitCommand =
 export type GitEvent =
   | { type: "git-status"; threadId: string; status: GitStatus | null; error: string | null }
   | { type: "git-result"; threadId: string; id: number; error: string | null };
+
+/**
+ * The request identity of a git-action the protocol rejected, so the host can
+ * still answer it with a git-result and the page's request settles.
+ */
+export function gitRequestOf(data: unknown): { threadId: string; id: number } | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const { type, threadId, id } = data as Record<string, unknown>;
+  if (
+    type !== "git-action" ||
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    threadId.length > 200 ||
+    !Number.isSafeInteger(id) ||
+    (id as number) < 0
+  )
+    return null;
+  return { threadId, id: id as number };
+}
 
 function text(value: unknown, max: number, blank = false): value is string {
   return (

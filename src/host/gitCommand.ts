@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { isUtf8 } from "node:buffer";
+import { stat } from "node:fs/promises";
 import { drainGroup, signalGroup } from "./processGroup";
+
+/** The code of a GitCommandError whose working folder is gone, which Node reports as ENOENT. */
+export const MISSING_FOLDER = "ENOCWD";
 
 export class GitCommandError extends Error {
   readonly code: number | string | null;
@@ -12,6 +16,16 @@ export class GitCommandError extends Error {
     this.code = code;
     this.detail = detail;
   }
+}
+
+/** The subcommand, past global options like `-c key=value`, so errors name what failed. */
+export function subcommand(args: readonly string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "-c" || arg === "-C") i++;
+    else if (!arg.startsWith("-")) return arg;
+  }
+  return "";
 }
 
 /** Bound hooks, filters and credential helpers too, and let main reap them if the host dies. */
@@ -70,7 +84,7 @@ export class GitCommands {
         failure ??= error;
         if (child.pid) signalGroup(child.pid, "SIGKILL");
       };
-      const label = `${command} ${args[0] ?? ""}`;
+      const label = `${command} ${subcommand(args)}`;
       const deadline = setTimeout(
         () => stop(new GitCommandError(label, null, "exceeded 60 seconds")),
         60_000,
@@ -102,6 +116,19 @@ export class GitCommands {
           this.groups.delete(child.pid);
           this.reportGroups([...this.groups]);
         }
+        // A missing working folder fails the spawn with ENOENT too, which reads as a missing git or gh.
+        if (
+          failure?.code === "ENOENT" &&
+          !(await stat(cwd).then(
+            (folder) => folder.isDirectory(),
+            () => false,
+          ))
+        )
+          failure = new GitCommandError(
+            label,
+            MISSING_FOLDER,
+            `the folder ${cwd} no longer exists`,
+          );
         if (failure) throw failure;
         const output = Buffer.concat(stdout);
         if (!isUtf8(output)) throw new GitCommandError(label, null, "output is not UTF-8");
