@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { startHost, type Host } from "./host";
 import { copyConsoleTo, lineWriter, LogFile } from "./logFile";
+import { installAppMenu } from "./menu";
 import { threadNotifications } from "./notifications";
 import { piOptions, resolveUserDataDir } from "./profile";
 import { reloadWhenRendererDies } from "./rendererRecovery";
@@ -148,6 +149,7 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(() => {
       handleAppProtocol(path.join(__dirname, "../renderer"));
+      installAppMenu({ isPackaged: app.isPackaged, platform: process.platform });
       denyAllPermissions(session.defaultSession);
       const userData = app.getPath("userData");
       const { TONDO_PI_ARGS: piArgs, TONDO_POOL: pool } = process.env;

@@ -129,6 +129,24 @@ test("tondo:// responses carry the CSP, and the page enforces it", async () => {
   expect(inlineScript).toBe("blocked by script-src-elem");
 });
 
+test("the app menu has Edit, and reload and DevTools only in unpackaged runs", async () => {
+  const { packaged, roles } = await tondo.app.evaluate(({ app, Menu }) => {
+    // Runs inside main, so the walk can't use helpers from this file.
+    const found: string[] = [];
+    const pending = [...(Menu.getApplicationMenu()?.items ?? [])];
+    for (let item = pending.shift(); item; item = pending.shift()) {
+      if (item.role) found.push(item.role);
+      pending.push(...(item.submenu?.items ?? []));
+    }
+    return { packaged: app.isPackaged, roles: found };
+  });
+  expect(roles).toEqual(expect.arrayContaining(["copy", "paste", "undo", "selectall"]));
+  const develop = roles.filter((role) =>
+    ["reload", "forcereload", "toggledevtools"].includes(role),
+  );
+  expect(develop).toEqual(packaged ? [] : ["reload", "forcereload", "toggledevtools"]);
+});
+
 test("permission requests are denied", async () => {
   const permission = await tondo.page.evaluate(() => Notification.requestPermission());
   expect(permission).toBe("denied");
