@@ -130,6 +130,20 @@ test("text inserted without a keydown, as by the emoji picker or dictation, reac
   await input.press("Control+d");
   await expect.poll(() => readFileSync(file, "utf8")).toBe("abc é 👍 漢字\n");
 });
+
+test("Terminal starts a new shell in place of one that exited", async () => {
+  const { page } = tondo;
+  const opener = page.getByRole("button", { name: "Terminal", exact: true });
+  const status = page.getByRole("region", { name: "Terminal", exact: true }).getByRole("status");
+  await opener.click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  await command("exit 3");
+  await expect(status).toHaveText("Exited (3)");
+  await opener.click();
+  await expect(status).toHaveText("");
+  await command("printf 'FRESH_%s\\n' SHELL");
+  await expect(output()).toContainText("FRESH_SHELL");
+});
 test("provider sign-in runs a separate interactive pi in the isolated profile", async () => {
   const { page } = tondo;
   await send(page, "/login");
@@ -309,4 +323,17 @@ test("quitting the app stops a terminal's separate job-control group", async () 
   } finally {
     if (alive(pid)) process.kill(pid, "SIGKILL");
   }
+});
+
+test("/login starts a sign-in terminal in place of a shell that exited", async () => {
+  const { page } = tondo;
+  const status = page.getByRole("region", { name: "Terminal", exact: true }).getByRole("status");
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  await command("exit 3");
+  await expect(status).toHaveText("Exited (3)");
+  await send(page, "/login");
+  await expect(page.getByRole("heading", { name: "Provider sign-in" })).toBeVisible();
+  await expect(status).toHaveText("");
+  await expect(output()).toContainText("faux", { timeout: 30_000 });
 });

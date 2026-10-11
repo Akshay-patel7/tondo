@@ -115,10 +115,13 @@ export class Terminals {
     }
   }
 
-  /** A reused terminal ignores `provider`: only a new pi can be typed into safely. */
+  /** A reused terminal ignores `provider`: only a new pi can be typed into safely. An exited one is replaced. */
   private open(threadId: string, kind: TerminalKind, provider?: string): Promise<void> {
     if (this.stopping) throw new Error("Tondo is stopping its terminals.");
     const existing = this.sessions.get(threadId);
+    // An exited terminal runs nothing, so opening one replaces it.
+    if (existing?.state.status === "exited")
+      return this.close(threadId).then(() => this.open(threadId, kind, provider));
     if (existing) {
       if (existing.state.kind !== kind)
         throw new Error("Close this thread's terminal before opening a different one.");

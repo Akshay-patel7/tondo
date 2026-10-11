@@ -143,6 +143,20 @@ describe("terminal sessions", () => {
     expect(messages.at(-1)).toMatchObject({ terminal: null });
   });
 
+  it("replaces an exited terminal when it is opened again", async () => {
+    const { terminals, messages, open } = setup();
+    const first = await open();
+    fake.exit({ exitCode: 3 });
+    const second = await open();
+    expect(second.terminalId).not.toBe(first.terminalId);
+    expect(fake.spawn).toHaveBeenCalledTimes(2);
+    expect(messages).toContainEqual(expect.objectContaining({ terminal: null }));
+    expect(messages.at(-1)).toMatchObject({
+      terminal: { id: second.terminalId, status: "running", exitCode: null },
+    });
+    await terminals.close(second.threadId);
+  });
+
   it.each(["closed", "replaced"])("ignores late exits from %s sessions", async (state) => {
     const { terminals, messages, open } = setup();
     const session = await open();

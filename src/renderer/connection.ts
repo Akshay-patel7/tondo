@@ -201,6 +201,17 @@ export function openTerminal(kind: TerminalKind = "shell", provider?: string): v
   const thread = useHost.getState().thread;
   if (!thread || thread.askingTrust) return;
   const existing = useTerminals.getState().get(thread.id);
+  // The host replaces an exited terminal, whatever its kind.
+  if (existing?.status === "exited") {
+    send({
+      v,
+      type: "terminal-open",
+      threadId: thread.id,
+      kind,
+      ...(provider === undefined ? {} : { provider }),
+    });
+    return;
+  }
   if (existing && existing.kind !== kind) {
     addToast({
       level: "info",

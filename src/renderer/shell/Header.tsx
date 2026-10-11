@@ -66,10 +66,11 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
             >
               Changes
             </Button>
+            {/* openTerminal replaces a terminal that has exited with a new one. */}
             <Button
               variant="quiet"
               size="xs"
-              onClick={() => openTerminal()}
+              onClick={() => openTerminal("shell")}
               className="app-no-drag"
             >
               Terminal
