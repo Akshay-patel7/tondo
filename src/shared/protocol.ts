@@ -15,10 +15,12 @@ import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 import {
+  isPaletteSetting,
   isPoolValue,
   isShortcutCommand,
   isThemeSetting,
   type AppSettings,
+  type PaletteSetting,
   type PoolSettings,
   type SettingsPatch,
   type ShortcutCommand,
@@ -27,7 +29,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 15;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -457,7 +459,7 @@ export type HostToMainMessage =
   /** Show the file dialog for pi and answer with pi-chosen. */
   | { type: "choose-pi" }
   /** The theme your settings ask for, which main applies to the window. */
-  | { type: "theme"; theme: ThemeSetting }
+  | { type: "theme"; theme: ThemeSetting; palette: PaletteSetting }
   /**
    * An extension in the thread waits for your answer. Main raises a
    * notification unless the thread is on screen in the focused window.
@@ -892,12 +894,13 @@ const MAX_PATH = 4096;
 function parsePatch(patch: unknown): SettingsPatch | string {
   if (!isRecord(patch)) return `patch must be an object, not ${describe(patch)}`;
   const extra = Object.keys(patch).find(
-    (key) => !["theme", "pool", "shortcuts", "piPath"].includes(key),
+    (key) => !["theme", "palette", "pool", "shortcuts", "piPath"].includes(key),
   );
   if (extra !== undefined) return `patch has an unexpected field ${describe(extra)}`;
-  const { theme, pool, shortcuts, piPath } = patch;
+  const { theme, palette, pool, shortcuts, piPath } = patch;
   const parsed: {
     theme?: ThemeSetting;
+    palette?: PaletteSetting;
     pool?: Partial<PoolSettings>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
@@ -906,6 +909,11 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     if (!isThemeSetting(theme))
       return `theme must be "system", "light" or "dark", not ${describe(theme)}`;
     parsed.theme = theme;
+  }
+  if (palette !== undefined) {
+    if (!isPaletteSetting(palette))
+      return `palette must be "default", "slate", "ocean" or "rose", not ${describe(palette)}`;
+    parsed.palette = palette;
   }
   if (pool !== undefined) {
     if (!isRecord(pool)) return `pool must be an object, not ${describe(pool)}`;

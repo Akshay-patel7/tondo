@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION as v, type HostMessage } from "../shared/protocol";
-import type { SettingsPatch } from "../shared/settings";
+import type { PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
 import type { ThreadListener } from "./liveThread";
 import { readSettings, readSettingsLeniently, updateSettings } from "./settings";
 import { Store } from "./store";
@@ -78,6 +78,7 @@ let store: Store;
 let sent: HostMessage[];
 let waiters: { match: (message: HostMessage) => boolean; resolve: (m: HostMessage) => void }[];
 let reveal: ReturnType<typeof vi.fn<(file: string) => void>>;
+let setTheme: ReturnType<typeof vi.fn<(theme: ThemeSetting, palette: PaletteSetting) => void>>;
 let workspace: Workspace;
 
 beforeEach(() => {
@@ -89,6 +90,7 @@ beforeEach(() => {
   sent = [];
   waiters = [];
   reveal = vi.fn<(file: string) => void>();
+  setTheme = vi.fn<(theme: ThemeSetting, palette: PaletteSetting) => void>();
   const supervisor = {
     settingsFile,
     settings: () => readSettings(settingsFile),
@@ -114,7 +116,7 @@ beforeEach(() => {
     },
     chooseFolder: () => {},
     choosePi: () => {},
-    setTheme: () => {},
+    setTheme,
     attention: () => {},
     copy: () => {},
     reveal,
@@ -196,6 +198,33 @@ describe("settings messages", () => {
     expect(message.error).toMatch(/^Tondo didn't save that change\. It has a pool\.maxLive /);
     expect(message.settings.pool.maxLive).toBe(4);
     expect(readFileSync(settingsFile, "utf8")).toBe("{}\n");
+  });
+
+  it("sends a palette change to the page and main without changing the scheme", async () => {
+    writeFileSync(settingsFile, JSON.stringify({ theme: "dark" }));
+    workspace.applySettings();
+    expect(setTheme.mock.calls).toEqual([["dark", "default"]]);
+
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch: { palette: "ocean" } });
+    expect(await changed).toMatchObject({
+      type: "settings",
+      error: null,
+      settings: { theme: "dark", palette: "ocean" },
+    });
+    expect(setTheme.mock.calls).toEqual([
+      ["dark", "default"],
+      ["dark", "ocean"],
+    ]);
+    expect(JSON.parse(readFileSync(settingsFile, "utf8"))).toEqual({
+      theme: "dark",
+      palette: "ocean",
+    });
+
+    // A new page, as after a reload, gets the saved palette.
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({ settings: { theme: "dark", palette: "ocean" } });
   });
 });
 

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PORT_MESSAGE, type HostConfig } from "../shared/protocol";
 import { startHost, type HostOptions } from "./host";
 import { stopProcessGroups } from "./processGroups";
+import { setWindowPalette } from "./window";
 
 const electron = vi.hoisted(() => ({ fork: vi.fn(), nativeTheme: { themeSource: "system" } }));
 vi.mock("electron", () => ({
@@ -15,6 +16,7 @@ vi.mock("electron", () => ({
   },
 }));
 vi.mock("./processGroups", () => ({ stopProcessGroups: vi.fn() }));
+vi.mock("./window", () => ({ setWindowPalette: vi.fn() }));
 
 /** Stands in for one of the host's output streams. */
 class FakeStream extends EventEmitter {
@@ -267,10 +269,12 @@ describe("startHost", () => {
 
   it("applies the theme the host sends, even before it's ready", () => {
     startHost(options);
-    latest().emit("message", { type: "theme", theme: "dark" });
+    latest().emit("message", { type: "theme", theme: "dark", palette: "ocean" });
     expect(electron.nativeTheme.themeSource).toBe("dark");
-    latest().emit("message", { type: "theme", theme: "light" });
+    expect(setWindowPalette).toHaveBeenLastCalledWith("ocean");
+    latest().emit("message", { type: "theme", theme: "light", palette: "rose" });
     expect(electron.nativeTheme.themeSource).toBe("light");
+    expect(setWindowPalette).toHaveBeenLastCalledWith("rose");
   });
 
   it("raises notifications, copies and shows files in Finder for the host", () => {

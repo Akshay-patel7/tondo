@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect } from "react";
+import type { PaletteSetting } from "../shared/settings";
 import { Banners } from "./banners/Banners";
 import { BranchToolbar } from "./git/BranchToolbar";
 import { runAppCommand } from "./commands";
@@ -30,10 +31,38 @@ import { Toasts } from "./toasts/Toasts";
 
 const TerminalDrawer = lazy(() => import("./terminal/TerminalDrawer"));
 
+let paletteSwitchFrame = 0;
+
+/**
+ * Puts `palette` on <html>, where index.css picks its colors. Like a scheme
+ * change (main.tsx), it swaps every color token at once, so theme-switching
+ * holds transitions off until the new colors have painted.
+ */
+function applyPalette(palette: PaletteSetting): void {
+  const root = document.documentElement;
+  if (root.dataset.palette === palette) return;
+  root.classList.add("theme-switching");
+  root.dataset.palette = palette;
+  cancelAnimationFrame(paletteSwitchFrame);
+  paletteSwitchFrame = requestAnimationFrame(() => {
+    paletteSwitchFrame = requestAnimationFrame(() => {
+      root.classList.remove("theme-switching");
+    });
+  });
+}
+
 export function App() {
   const sidebarShown = useSidebarShown();
   const paletteOpen = usePalette((open) => open);
   const title = useExtensionUi((ui) => ui.title);
+  // Until the host sends the settings, the page keeps the palette it has: the
+  // default, which index.css gives :root, or the last one while it reconnects.
+  const colorPalette = useHost((host) => host.settings?.palette);
+
+  // Before paint, so no frame shows the new settings in the old colors.
+  useLayoutEffect(() => {
+    if (colorPalette !== undefined) applyPalette(colorPalette);
+  }, [colorPalette]);
 
   // An extension's setTitle names the window while its thread is on screen.
   useEffect(() => {

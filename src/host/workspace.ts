@@ -24,7 +24,7 @@ import {
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
 import { editorText } from "../shared/drafts";
-import type { AppSettings, SettingsPatch, ThemeSetting } from "../shared/settings";
+import type { AppSettings, PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
 import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
@@ -77,7 +77,7 @@ export interface WorkspaceOptions {
   /** Asks main to show the file dialog for pi. Main answers through piChosen. */
   readonly choosePi: () => void;
   /** Tells main the theme the settings ask for. */
-  readonly setTheme: (theme: ThemeSetting) => void;
+  readonly setTheme: (theme: ThemeSetting, palette: PaletteSetting) => void;
   /** Asks main to raise a notification about a thread. */
   readonly attention: (attention: Attention) => void;
   /** Asks main to put text on the clipboard. */
@@ -95,9 +95,10 @@ export class Workspace {
   private readonly send: (message: HostMessage) => void;
   private readonly chooseFolder: () => void;
   private readonly choosePi: () => void;
-  private readonly setTheme: (theme: ThemeSetting) => void;
+  private readonly setTheme: (theme: ThemeSetting, palette: PaletteSetting) => void;
   /** The theme main last heard, which an outside edit to settings.json doesn't change. */
   private theme: ThemeSetting | null = null;
+  private palette: PaletteSetting | null = null;
   /** The problem with settings.json Tondo last told you about as it started a pi. */
   private settingsProblem: string | null = null;
   private choosingPi = false;
@@ -178,14 +179,15 @@ export class Workspace {
       console.error(`Tondo Host uses the defaults for what it can't read: ${problem}`);
     }
     this.setLimits(this.poolLimits(settings));
-    this.applyTheme(settings.theme);
+    this.applyTheme(settings.theme, settings.palette);
   }
 
   /** Tells main the theme, unless main has it already. */
-  private applyTheme(theme: ThemeSetting): void {
-    if (theme === this.theme) return;
+  private applyTheme(theme: ThemeSetting, palette: PaletteSetting): void {
+    if (theme === this.theme && palette === this.palette) return;
     this.theme = theme;
-    this.setTheme(theme);
+    this.palette = palette;
+    this.setTheme(theme, palette);
   }
 
   /** Changes the pool's limits, and stops the pi processes they no longer allow. */
@@ -512,7 +514,7 @@ export class Workspace {
     this.sendSettings(null);
     this.setLimits(this.poolLimits(after));
     // settings.json may have changed outside Tondo since main last heard the theme.
-    this.applyTheme(after.theme);
+    this.applyTheme(after.theme, after.palette);
     if (after.piPath !== before.piPath) await this.rediscoverPi();
   }
 
@@ -525,11 +527,12 @@ export class Workspace {
     const { settings, problem } = this.supervisor.readableSettings();
     // The page may offer to show a broken file in Finder.
     if (problem !== null) this.offered.add(this.supervisor.settingsFile);
-    const { piPath, theme, pool, shortcuts } = settings;
+    const { piPath, theme, palette, pool, shortcuts } = settings;
     this.send({
       v,
       type: "settings",
-      settings: { piPath, theme, pool, shortcuts },
+      // The page applies the same saved palette that main receives for its window.
+      settings: { piPath, theme, palette, pool, shortcuts },
       error,
       fileProblem:
         problem === null ? null : { path: this.supervisor.settingsFile, message: problem },

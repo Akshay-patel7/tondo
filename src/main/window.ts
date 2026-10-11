@@ -1,18 +1,48 @@
 import { BrowserWindow, nativeTheme, type BrowserWindowConstructorOptions } from "electron";
+import type { PaletteSetting } from "../shared/settings";
 
-// Matches the renderer's title bar: h-10 is 40px. The colors are the Warm
-// theme's --background and --foreground from src/renderer/index.css, converted
-// from oklch to sRGB hex: light oklch(98.4% 0.005 85) and oklch(26% 0.012 60),
-// dark oklch(21.5% 0.006 60) and oklch(93% 0.01 80). Change them together.
+// Matches the renderer's title bar: h-10 is 40px. Colors are --background and
+// --foreground from index.css converted from OKLCH to sRGB. Change them together.
 const TITLE_BAR_HEIGHT = 40;
 const MACOS_TRAFFIC_LIGHT_RADIUS = 7;
 const THEME = {
-  light: { background: "#fbfaf6", symbol: "#29231e" },
-  dark: { background: "#1c1917", symbol: "#ebe7e1" },
-};
+  default: {
+    light: { background: "#fbfaf6", symbol: "#29231e" },
+    dark: { background: "#1c1917", symbol: "#ebe7e1" },
+  },
+  slate: {
+    light: { background: "#f8fafc", symbol: "#1e242f" },
+    dark: { background: "#161a1f", symbol: "#e4e8ed" },
+  },
+  ocean: {
+    light: { background: "#f6fbfc", symbol: "#1a262d" },
+    dark: { background: "#141a1e", symbol: "#e1eaec" },
+  },
+  rose: {
+    light: { background: "#fcf9fa", symbol: "#2b2124" },
+    dark: { background: "#1d181a", symbol: "#eee5e8" },
+  },
+} as const;
+
+let palette: PaletteSetting = "default";
 
 function currentTheme() {
-  return nativeTheme.shouldUseDarkColors ? THEME.dark : THEME.light;
+  return nativeTheme.shouldUseDarkColors ? THEME[palette].dark : THEME[palette].light;
+}
+
+function applyWindowTheme(window: BrowserWindow): void {
+  const theme = currentTheme();
+  window.setBackgroundColor(theme.background);
+  if (process.platform !== "darwin") {
+    window.setTitleBarOverlay({ color: theme.background, symbolColor: theme.symbol });
+  }
+}
+
+/** Keeps existing windows and subsequently opened ones in the saved palette. */
+export function setWindowPalette(next: PaletteSetting): void {
+  if (next === palette) return;
+  palette = next;
+  for (const window of BrowserWindow.getAllWindows()) applyWindowTheme(window);
 }
 
 function titleBarOptions(): BrowserWindowConstructorOptions {
@@ -55,13 +85,7 @@ export function createMainWindow(url: string, preloadPath: string): BrowserWindo
 
   window.once("ready-to-show", () => window.show());
 
-  const applyTheme = () => {
-    const theme = currentTheme();
-    window.setBackgroundColor(theme.background);
-    if (process.platform !== "darwin") {
-      window.setTitleBarOverlay({ color: theme.background, symbolColor: theme.symbol });
-    }
-  };
+  const applyTheme = () => applyWindowTheme(window);
   nativeTheme.on("updated", applyTheme);
   window.on("closed", () => nativeTheme.off("updated", applyTheme));
 

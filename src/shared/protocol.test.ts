@@ -64,6 +64,8 @@ describe("parseClientMessage", () => {
       { v, type: "ping", id: 0 },
       { v, type: "set-settings", patch: {} },
       { v, type: "set-settings", patch: { theme: "dark" } },
+      { v, type: "set-settings", patch: { palette: "slate" } },
+      { v, type: "set-settings", patch: { theme: "light", palette: "default" } },
       { v, type: "set-settings", patch: { pool: { maxLive: 1, idleMinutes: 240 } } },
       { v, type: "set-settings", patch: { pool: { maxLive: 12 } } },
       {
@@ -339,6 +341,10 @@ describe("parseClientMessage", () => {
     [{ patch: [] }, "set-settings: patch must be an object"],
     [{ patch: { language: "en" } }, 'set-settings: patch has an unexpected field "language"'],
     [{ patch: { theme: "blue" } }, "set-settings: theme must be"],
+    [{ patch: { theme: "ocean" } }, "set-settings: theme must be"],
+    [{ patch: { palette: "dark" } }, 'set-settings: palette must be "default", "slate", "ocean"'],
+    [{ patch: { palette: "teal" } }, "set-settings: palette must be"],
+    [{ patch: { palette: null } }, "set-settings: palette must be"],
     [{ patch: { pool: 4 } }, "set-settings: pool must be an object"],
     [{ patch: { pool: { maxLive: 0 } } }, "set-settings: pool.maxLive is out of range: 0"],
     [{ patch: { pool: { maxLive: 13 } } }, "set-settings: pool.maxLive is out of range: 13"],
@@ -366,8 +372,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 12, which split the settings file's problem from a refused change and added find-files", () => {
-    expect(PROTOCOL_VERSION).toBe(12);
+  it("speaks version 15, which includes palette settings", () => {
+    expect(PROTOCOL_VERSION).toBe(15);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {
