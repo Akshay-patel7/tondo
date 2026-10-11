@@ -89,9 +89,15 @@ export const useHost = create<{
   piAccounts: null,
 }));
 
-export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => ({
+export const useFiles = create<{
+  id: number;
+  index: FileIndex | null;
+  /** The host's search of every file, for an index that was truncated. */
+  found: { readonly query: string; readonly paths: readonly string[] } | null;
+}>()(() => ({
   id: 0,
   index: null,
+  found: null,
 }));
 
 export const useCheckpoints = create<{
@@ -290,6 +296,11 @@ function receive(message: HostMessage): void {
     case "files":
       if (message.threadId === shownId() && message.id === useFiles.getState().id) {
         useFiles.setState({ index: message.index });
+      }
+      break;
+    case "file-matches":
+      if (message.threadId === shownId() && message.id === useFiles.getState().id) {
+        useFiles.setState({ found: { query: message.query, paths: message.paths } });
       }
       break;
     case "checkpoints":
@@ -503,8 +514,13 @@ export function answerTrust(trusted: boolean): void {
 /** Starts a scan for a newly opened file menu. Filtering the returned index happens in the page. */
 export function listFiles(): void {
   const id = useFiles.getState().id + 1;
-  useFiles.setState({ id, index: null });
+  useFiles.setState({ id, index: null, found: null });
   send({ v, type: "list-files", threadId: requireShownId(), id });
+}
+
+/** Asks the host to search every project file for `query`, when the menu's index is truncated. */
+export function findFiles(query: string): void {
+  send({ v, type: "find-files", threadId: requireShownId(), id: useFiles.getState().id, query });
 }
 
 /** Attach to the thread that began the read, never to one opened while decoding. */

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { FileIndexes, indexFiles, parseFileList } from "./fileIndex";
+import { FILE_INDEX_PATHS, FileIndexes, indexFiles, parseFileList } from "./fileIndex";
 
 let folder: string;
 beforeEach(() => {
@@ -46,6 +46,24 @@ describe("file index", () => {
     expect(parseFileList("a\0b\0", 2).truncated).toBe(false);
   });
 
+  test("over the cap, keeps files from every folder instead of cutting late folders", () => {
+    const bulk = Array.from({ length: 12 }, (_, n) => `bulk/f${String(n).padStart(2, "0")}`);
+    const listing = ["zzz-last.txt", "src/main.ts", ...bulk, "README.md", "aaa-first.txt"];
+    expect(parseFileList(`${listing.join("\0")}\0`, 7)).toEqual({
+      paths: [
+        "README.md",
+        "aaa-first.txt",
+        "bulk/f00",
+        "bulk/f01",
+        "bulk/f02",
+        "src/main.ts",
+        "zzz-last.txt",
+      ],
+      truncated: true,
+      error: null,
+    });
+  });
+
   test("shares concurrent scans but sees new files on the next scan", async () => {
     git("init", "-q");
     const index = new FileIndexes();
@@ -54,6 +72,31 @@ describe("file index", () => {
     expect((await first).paths).toEqual([]);
     writeFileSync(path.join(folder, "new.txt"), "");
     expect((await index.read(folder)).paths).toEqual(["new.txt"]);
+  });
+
+  test("over the cap, a search finds any file by name, ranked like the menu's", async () => {
+    git("init", "-q");
+    mkdirSync(path.join(folder, "bulk"));
+    for (let n = 0; n <= FILE_INDEX_PATHS; n++)
+      writeFileSync(path.join(folder, "bulk", `f${String(n).padStart(5, "0")}.txt`), "");
+    mkdirSync(path.join(folder, "src"));
+    writeFileSync(path.join(folder, "src", "main.ts"), "");
+    const files = new FileIndexes();
+    const index = await files.read(folder);
+    expect(index.truncated).toBe(true);
+    const last = `bulk/f${String(FILE_INDEX_PATHS).padStart(5, "0")}.txt`;
+    expect(index.paths).not.toContain(last);
+    expect(await files.find(folder, "main.ts")).toEqual(["src/main.ts"]);
+    expect(await files.find(folder, `f${String(FILE_INDEX_PATHS).padStart(5, "0")}`)).toEqual([
+      last,
+    ]);
+    expect(await files.find(folder, "bulk/f")).toHaveLength(20);
+  });
+
+  test("a search before any scan, or of a small project, reads the listing itself", async () => {
+    git("init", "-q");
+    writeFileSync(path.join(folder, "readme.md"), "");
+    expect(await new FileIndexes().find(folder, "READ")).toEqual(["readme.md"]);
   });
 
   test("explains non-Git folders and missing folders instead of pretending they're empty", async () => {

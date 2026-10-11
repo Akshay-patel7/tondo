@@ -280,3 +280,26 @@ test("a draft typed right before quitting survives the restart", async () => {
   await waitForPi(tondo.page);
   await expectDraft(tondo.page, source);
 });
+
+test("@ completion in a project of over 10,000 files finds files past the index by name", async () => {
+  execFileSync("git", ["init", "-q"], { cwd: project });
+  mkdirSync(path.join(project, "bulk"));
+  for (let n = 0; n < 12_000; n++)
+    writeFileSync(path.join(project, "bulk", `f${String(n).padStart(5, "0")}.txt`), "");
+  mkdirSync(path.join(project, "src"));
+  writeFileSync(path.join(project, "src", "main.ts"), "");
+  const page = await start();
+  await composer(page).focus();
+  await page.keyboard.type("@");
+  const menu = page.getByRole("listbox", { name: "Files" });
+  await expect(menu).toContainText("over 10,000 files");
+  await page.keyboard.type("main.ts");
+  await expect(menu.getByRole("option")).toHaveText(["src/main.ts"]);
+  await composer(page).press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await expectDraft(page, "");
+  await page.keyboard.type("@f11999");
+  await expect(menu.getByRole("option")).toHaveText(["bulk/f11999.txt"]);
+  await page.keyboard.press("Enter");
+  await expectDraft(page, "@bulk/f11999.txt ");
+});

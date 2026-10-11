@@ -348,6 +348,14 @@ export class Workspace {
           this.send({ v, type: "files", threadId: message.threadId, id: message.id, index });
         });
         break;
+      case "find-files":
+        this.run(async () => {
+          const row = this.row(message.threadId);
+          const paths = await this.files.find(this.checkout(row), message.query);
+          const { threadId, id, query } = message;
+          this.send({ v, type: "file-matches", threadId, id, query, paths });
+        });
+        break;
       case "set-sidebar-hidden":
         this.run(() => this.store.setUi("sidebarHidden", message.hidden));
         break;
