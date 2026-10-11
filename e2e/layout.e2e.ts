@@ -242,12 +242,17 @@ test("Changes at the minimum size moves the sidebar aside, and the thread and it
   await expect(sidebar).toBeVisible();
 });
 
+// 200% of the default 1200x800 window is a 600x400 page. macOS CI runners fit only
+// 1024x677, so the zoom that gives the same page there is a little under 200%.
 test("at 200% zoom the sidebar steps aside, and the header and transcript keep their room", async () => {
   const page = await launch(gitProject("project"));
   const sidebar = threads(page);
   await expect(sidebar).toBeVisible();
 
-  await zoom(tondo!, 2);
+  const [width, height] = await tondo!.app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.getContentSize(),
+  );
+  await zoom(tondo!, Math.min(width! / 600, height! / 400));
   await expect(sidebar).toBeHidden();
   await expect(page.getByRole("button", { name: "Show sidebar", exact: true })).toBeVisible();
   // A narrow header shortens the label, not the button's name.
