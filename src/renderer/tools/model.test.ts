@@ -120,6 +120,11 @@ describe("outputText and lastLines", () => {
     ).toBe("Read image file [image/png]\n[image: image/png]");
   });
 
+  test("a command's colors don't show as escape codes", () => {
+    const colored = "\u001B[31mRED\u001B[0m plain \u001B[1;32mGREEN\u001B[0m\n";
+    expect(outputText([{ type: "text", text: colored }])).toBe("RED plain GREEN\n");
+  });
+
   test("lastLines keeps the tail and ignores a final newline", () => {
     expect(lastLines("1\n2\n3\n4\n5\n6\n7\n", 5)).toBe("3\n4\n5\n6\n7");
     expect(lastLines("only", 5)).toBe("only");

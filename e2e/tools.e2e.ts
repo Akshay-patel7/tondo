@@ -215,6 +215,34 @@ test("an edit shows its diff, and a failed call its error", async () => {
   await expect(missing).toContainText("missing.md");
 });
 
+test("a command's colors show as plain text, not as escape codes", async () => {
+  const release = path.join(workDir, "release");
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      responses: [
+        bashCall(
+          `printf '\\033[31mRED\\033[0m plain \\033[1;32mGREEN\\033[0m\\n'; ${waitForFileCommand(release)}`,
+          "call_color",
+        ),
+        reply("Colored."),
+      ],
+    },
+  });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Color it.");
+
+  // Under the card while the command runs, and in the card once it's done.
+  const colored = card(page, "call_color");
+  await expect(colored.getByRole("log", { name: "Latest output" })).toHaveText("RED plain GREEN");
+  writeFileSync(release, "");
+  await expect(colored).toHaveAttribute("data-status", "done");
+  await header(colored).click();
+  await expect(colored.getByRole("region", { name: "Output" })).toHaveText("RED plain GREEN");
+});
 /** How far the card's output box is scrolled from its end. */
 function pixelsBelowView(of: Locator): Promise<number> {
   return of

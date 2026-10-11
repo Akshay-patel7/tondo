@@ -9,6 +9,7 @@ import type {
   ToolResultMessage,
   ToolRun,
 } from "../../shared/thread";
+import { stripAnsi } from "../banners/ansi";
 
 export type ToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 
@@ -91,11 +92,18 @@ export function hasImage(output: ToolOutput): boolean {
   return output.content.some((part) => part.type === "image");
 }
 
-/** The text a tool returned, with a placeholder for each image. */
+/**
+ * The text a tool returned, with a placeholder for each image. A command that
+ * colors its output, such as git or a test runner, sends terminal escape
+ * sequences with it, which a page would show as stray text like "[31m", so
+ * they go.
+ */
 export function outputText(content: ToolOutput["content"]): string {
-  return content
-    .map((part) => (part.type === "text" ? part.text : `[image: ${part.mimeType}]`))
-    .join("\n");
+  return stripAnsi(
+    content
+      .map((part) => (part.type === "text" ? part.text : `[image: ${part.mimeType}]`))
+      .join("\n"),
+  );
 }
 
 /** The last `count` lines of `text`, without a trailing empty line. */
