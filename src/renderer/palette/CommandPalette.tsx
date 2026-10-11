@@ -48,6 +48,24 @@ export function CommandPalette() {
     document.getElementById(`${id}-option-${current}`)?.scrollIntoView({ block: "nearest" });
   }, [id, current]);
 
+  // The dialog moves focus to the search field a little after it opens. Until
+  // then the composer still has focus, so characters typed right after the
+  // shortcut are caught here and go to the search instead.
+  useLayoutEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const field = input.current;
+      if (event.target === field || event.isComposing) return;
+      if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setQuery((typed) => typed + event.key);
+      setHighlighted(0);
+      field?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
