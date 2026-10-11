@@ -77,6 +77,9 @@ describe("parseClientMessage", () => {
       { v, type: "retry-pi" },
       { v, type: "get-pi-config-files", threadId: null },
       { v, type: "get-pi-config-files", threadId },
+      { v, type: "get-pi-accounts" },
+      { v, type: "terminal-open", threadId, kind: "login", provider: "anthropic" },
+      { v, type: "terminal-open", threadId, kind: "login", provider: "GitHub Copilot" },
     ]) {
       const result = parseClientMessage(message);
       expect(result).toEqual({ ok: true, message });
@@ -361,6 +364,47 @@ describe("parseClientMessage", () => {
     expect(rejection({ v, type: "get-pi-config-files", threadId: 5 })).toContain(
       "threadId must be",
     );
+  });
+
+  it("speaks version 11, which added accounts and login providers", () => {
+    expect(PROTOCOL_VERSION).toBe(11);
+  });
+
+  it("rejects get-pi-accounts with any field besides its type", () => {
+    expect(rejection({ v, type: "get-pi-accounts", threadId: "t" })).toBe(
+      'get-pi-accounts: unexpected field "threadId"',
+    );
+  });
+
+  it("takes a provider only for a login terminal, and only a plain provider name", () => {
+    const open = (kind: string, provider: unknown) =>
+      rejection({ v, type: "terminal-open", threadId: "t", kind, provider });
+    expect(open("shell", "anthropic")).toBe(
+      "terminal-open: only a login terminal takes a provider",
+    );
+    for (const provider of [
+      "anthropic\r",
+      "anthropic\rrm -rf ~",
+      "\u001b[201~anthropic",
+      "x".repeat(65),
+      "",
+      " anthropic",
+      "anthropic ",
+      "a/b",
+      7,
+      null,
+    ]) {
+      expect(open("login", provider)).toContain("terminal-open: provider must be 1 to 64");
+    }
+    expect(
+      parseClientMessage({
+        v,
+        type: "terminal-open",
+        threadId: "t",
+        kind: "login",
+        provider: "x".repeat(64),
+      }).ok,
+    ).toBe(true);
   });
 
   it("describes hostile values without calling them", () => {

@@ -58,10 +58,11 @@ These rules come from studying how T3 Code stays fast:
 
 Tondo shows a problem with pi where it happens. If it can't find pi, or finds one older than 0.87.1, the thread shows how to install or update pi, with Choose pi… and Check again. If pi has no provider credentials, the thread offers a sign-in terminal, and closing that terminal restarts the thread's pi so the new models show up. A project whose `.pi` settings need trust asks before pi starts, and Tondo remembers the answer.
 
-Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has four sections:
+Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has five sections:
 
 - **Appearance:** System, Light or Dark.
 - **pi:** the version and path in use. Choose a pi, go back to the one on your PATH, or open pi's global and project settings files.
+- **Accounts:** the providers pi is signed in to and how each one signs in, read from pi's `auth.json`. Tokens are never shown. When the thread on screen has the usage line that pi-claude-subscription-connector publishes, it shows here too. Sign in with Claude opens the sign-in terminal straight on Anthropic.
 - **Threads:** how many pi processes may run at once (1 to 12, default 4), and how many idle minutes pass before a hidden thread's pi stops (1 to 240, default 10). Changes apply at once.
 - **Shortcuts:** rebind or turn off the app shortcuts, with conflicts refused. The composer and dialog keys are fixed, because they follow pi's terminal UI.
 
@@ -85,7 +86,7 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 
 - Extension UI built from terminal components (`ctx.ui.custom()`, custom headers, footers and editors) does not render.
 - Custom tool renderers are terminal components, so Tondo draws its own tool cards.
-- pi's built-in commands, such as `/model` and `/session`, run only in its terminal UI. Tondo runs its own versions of most of them. `/login` and `/logout` open an interactive pi in the terminal drawer. The rest, such as `/tree` and `/share`, say they aren't in Tondo yet.
+- pi's built-in commands, such as `/model` and `/session`, run only in its terminal UI. Tondo runs its own versions of most of them. `/login` and `/logout` open an interactive pi in the terminal drawer, and `/login <provider>` opens it straight on that provider's menu. The sign-in drawer opens tall enough to show pi's whole `/login` list. The rest, such as `/tree` and `/share`, say they aren't in Tondo yet.
 - pi doesn't tell a client when an extension withdraws a dialog with an abort signal, so the dialog stays open in Tondo, and answering it does nothing. Dialogs that time out close on time.
 
 Images send only when pi is idle. pi 0.87.1's queue APIs return text without attachments, so Tondo keeps images in the draft while pi works instead of risking their loss on Escape or Alt+Up. Local built-ins and known extension commands leave images in the draft. Attach up to 4 PNG, JPEG, GIF or WebP images, at most 5 MiB and 16 million pixels each, with a 10 MiB total. File completion lists at most 10,000 tracked and nonignored untracked paths in a Git project; it inserts literal paths, never file contents.

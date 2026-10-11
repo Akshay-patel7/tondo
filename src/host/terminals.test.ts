@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostMessage } from "../shared/protocol";
 import { TERMINAL_WINDOW_BYTES } from "../shared/terminal";
 import { Terminals } from "./terminals";
@@ -46,6 +46,16 @@ function setup(loader = async () => launch) {
   };
   return { terminals, messages, groups, open };
 }
+
+const READY = "\u001b[?2004h";
+const login = (terminals: Terminals, provider?: string) =>
+  terminals.handle({
+    type: "terminal-open",
+    threadId: "thread",
+    kind: "login",
+    ...(provider === undefined ? {} : { provider }),
+  });
+const writes = () => fake.write.mock.calls.map(([data]: unknown[]) => data);
 
 describe("terminal sessions", () => {
   it("launches in the chosen folder and ignores stale terminal writes", async () => {
@@ -150,6 +160,59 @@ describe("terminal sessions", () => {
     fake.exit({ exitCode: 0 });
     await stopping;
     expect(ended).toHaveBeenCalledOnce();
+  });
+
+  describe("a login terminal that names a provider", () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+    afterEach(() => vi.useRealTimers());
+
+    it("types /login and presses Enter once pi is ready", async () => {
+      const { terminals } = setup();
+      await login(terminals, "GitHub Copilot");
+      fake.data(READY);
+      vi.advanceTimersByTime(250);
+      expect(writes()).toEqual(["/login GitHub Copilot", "\r"]);
+    });
+
+    it("types nothing without a provider", async () => {
+      const { terminals } = setup();
+      await login(terminals);
+      fake.data(READY);
+      vi.runAllTimers();
+      expect(writes()).toEqual([]);
+    });
+
+    it("ignores the provider when it reuses the thread's terminal", async () => {
+      const { terminals } = setup();
+      await login(terminals);
+      await login(terminals, "anthropic");
+      fake.data(READY);
+      vi.runAllTimers();
+      expect(fake.spawn).toHaveBeenCalledOnce();
+      expect(writes()).toEqual([]);
+    });
+
+    it("leaves pi to you once you type, but not for xterm's replies", async () => {
+      const { terminals, messages } = setup();
+      await login(terminals, "anthropic");
+      const state = messages.findLast((m) => m.type === "terminal-state");
+      if (state?.type !== "terminal-state" || !state.terminal) throw new Error("No terminal");
+      const session = { threadId: "thread", terminalId: state.terminal.id };
+      terminals.handle({ type: "terminal-write", ...session, data: "\u001b[?62;22c" });
+      fake.data(READY);
+      terminals.handle({ type: "terminal-write", ...session, data: "q" });
+      vi.runAllTimers();
+      expect(writes()).toEqual(["\u001b[?62;22c", "/login anthropic", "q"]);
+    });
+
+    it("stops typing when pi exits", async () => {
+      const { terminals } = setup();
+      await login(terminals, "anthropic");
+      fake.data(READY);
+      fake.exit({ exitCode: 1 });
+      vi.runAllTimers();
+      expect(writes()).toEqual(["/login anthropic"]);
+    });
   });
 
   it("cancels a pending launch when closed before environment capture finishes", async () => {

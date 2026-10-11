@@ -456,6 +456,12 @@ export class Workspace {
           this.send({ v, type: "pi-config-files", files });
         });
         break;
+      case "get-pi-accounts":
+        this.run(async () => {
+          const { accounts, error } = await this.supervisor.piAccounts();
+          this.send({ v, type: "pi-accounts", accounts, error });
+        });
+        break;
     }
   }
 

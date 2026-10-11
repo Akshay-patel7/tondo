@@ -21,6 +21,7 @@ import {
   type DialogAnswer,
   type HostMessage,
   type OpenThread,
+  type PiAccount,
   type PiDiscovery,
   type PiStatus,
   type SettingsFile,
@@ -56,6 +57,12 @@ export const useHost = create<{
   piEnv: PiDiscovery | null;
   /** pi's config files, or null until requestPiConfigFiles is answered. */
   piConfigFiles: readonly SettingsFile[] | null;
+  /** The sign-ins in pi's auth.json, or null until requestPiAccounts is answered. */
+  piAccounts: {
+    readonly accounts: readonly PiAccount[];
+    /** Why the host couldn't read them. */
+    readonly error: string | null;
+  } | null;
 }>()(() => ({
   connection: "connecting",
   thread: null,
@@ -66,6 +73,7 @@ export const useHost = create<{
   settingsError: null,
   piEnv: null,
   piConfigFiles: null,
+  piAccounts: null,
 }));
 
 export const useFiles = create<{ id: number; index: FileIndex | null }>()(() => ({
@@ -146,7 +154,8 @@ export function terminalCommand(message: TerminalCommand): void {
   send({ v, ...message });
 }
 
-export function openTerminal(kind: TerminalKind = "shell"): void {
+/** A new sign-in terminal given `provider` opens pi's sign-in for that provider. */
+export function openTerminal(kind: TerminalKind = "shell", provider?: string): void {
   const thread = useHost.getState().thread;
   if (!thread || thread.askingTrust) return;
   const existing = useTerminals.getState().get(thread.id);
@@ -161,7 +170,13 @@ export function openTerminal(kind: TerminalKind = "shell"): void {
     document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
     return;
   }
-  terminalCommand({ type: "terminal-open", threadId: thread.id, kind });
+  send({
+    v,
+    type: "terminal-open",
+    threadId: thread.id,
+    kind,
+    ...(provider === undefined ? {} : { provider }),
+  });
 }
 
 export function listCheckpoints(): void {
@@ -297,6 +312,9 @@ function receive(message: HostMessage): void {
       break;
     case "pi-config-files":
       useHost.setState({ piConfigFiles: message.files });
+      break;
+    case "pi-accounts":
+      useHost.setState({ piAccounts: { accounts: message.accounts, error: message.error } });
       break;
     case "pong":
       break;
@@ -554,6 +572,12 @@ export function retryPi(): void {
 /** Asks for pi's config files: the global ones, and the shown thread's project's. */
 export function requestPiConfigFiles(): void {
   send({ v, type: "get-pi-config-files", threadId: shownId() ?? null });
+}
+
+/** Asks for the sign-ins in pi's auth.json. They read as loading until the host answers. */
+export function requestPiAccounts(): void {
+  useHost.setState({ piAccounts: null });
+  send({ v, type: "get-pi-accounts" });
 }
 
 /** Shows a file the host offered in Finder. */

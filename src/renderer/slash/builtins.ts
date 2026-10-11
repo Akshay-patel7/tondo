@@ -1,5 +1,6 @@
 // Runs pi's built-in slash commands the way Tondo does them (docs/plan.md,
 // Stage 7). pi runs them only in its terminal UI, so none reaches pi as text.
+import { isLoginProvider } from "../../shared/protocol";
 import {
   BUILTIN_COMMANDS,
   canRun,
@@ -34,7 +35,12 @@ export function runBuiltin(name: BuiltinName, args: string): void {
 }
 
 const RUN: Record<RunName, (args: string) => void> = {
-  login: () => openTerminal("login"),
+  login: (args) => {
+    const provider = args.trim();
+    if (provider === "") openTerminal("login");
+    else if (isLoginProvider(provider)) openTerminal("login", provider);
+    else tell('Type a provider\'s id after /login, such as "/login anthropic".');
+  },
   logout: () => openTerminal("login"),
   model: (args) => {
     const session = readySession();

@@ -37,6 +37,11 @@ function output() {
   return tondo.page.locator(".xterm-accessibility-tree");
 }
 
+/** The text of each row in view. xterm's accessibility tree mirrors the viewport, not the scrollback. */
+function visibleRows() {
+  return tondo.page.locator(".xterm-accessibility-tree > div").allTextContents();
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -117,10 +122,20 @@ test("provider sign-in runs a separate interactive pi in the isolated profile", 
   await expect(output()).toContainText("faux", { timeout: 30_000 });
   await command("/login");
   await expect(output()).toContainText("Select authentication method");
-  await page.screenshot({ path: "test-results/terminal-login.png" });
   await page.locator(".xterm-helper-textarea").press("ArrowDown");
   await page.locator(".xterm-helper-textarea").press("Enter");
-  await expect(output()).toContainText("Anthropic");
+  // pi's provider list ends with a count line such as "(1/40)", so it has been drawn.
+  await expect(output()).toContainText(/\(1\/\d+\)/);
+  // In a drawer too short for the list, its title and first provider scroll out of view.
+  await expect
+    .poll(visibleRows)
+    .toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Select provider to configure:"),
+        expect.stringContaining("→ Amazon Bedrock"),
+      ]),
+    );
+  await page.screenshot({ path: "test-results/terminal-login.png" });
   await page.locator(".xterm-helper-textarea").press("ArrowDown");
   await page.locator(".xterm-helper-textarea").press("ArrowDown");
   await expect(output()).toContainText("→ Anthropic");

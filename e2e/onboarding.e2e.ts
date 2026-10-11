@@ -2,6 +2,7 @@
 // with no model you have credentials for, a project that needs trust, and the
 // welcome on first launch.
 import { expect, test, type ElectronApplication } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -62,6 +63,21 @@ function installPi(bin: string): string {
   symlinkSync(PI_CLI, path.join(bin, "pi"));
   symlinkSync(process.execPath, path.join(bin, "node"));
   return path.join(bin, "pi");
+}
+
+/** Tondo with a pi that has no model you can use: no faux extension or provider, and nothing in the scratch pi setup is signed in. */
+function launchSignedOut(): Promise<Tondo> {
+  return launchTondo({
+    settings: { piPath: installPi(path.join(workDir, "bin")) },
+    env: {
+      TONDO_PI_ARGS: JSON.stringify([
+        "--no-extensions",
+        "--no-skills",
+        "--no-context-files",
+        "--offline",
+      ]),
+    },
+  });
 }
 
 /** A pi install Tondo refuses: pi's package at 0.80.0, its cli.js, a `pi` command and a node. */
@@ -128,18 +144,7 @@ test("a pi that's too old says which version Tondo needs", async () => {
 });
 
 test("pi with no model you can use offers the sign-in terminal, and reloads after it", async () => {
-  tondo = await launchTondo({
-    settings: { piPath: installPi(path.join(workDir, "bin")) },
-    // pi without the faux extension and provider: nothing in the scratch pi setup is signed in.
-    env: {
-      TONDO_PI_ARGS: JSON.stringify([
-        "--no-extensions",
-        "--no-skills",
-        "--no-context-files",
-        "--offline",
-      ]),
-    },
-  });
+  tondo = await launchSignedOut();
   const { app, page } = tondo;
   await addProject(tondo, project);
 
@@ -164,6 +169,61 @@ test("pi with no model you can use offers the sign-in terminal, and reloads afte
     .toBe(true);
   await expect(prompt).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
 });
+
+// The sign-in prompt, the composer and the Git toolbar sit above the drawer.
+// When they need more height than the drawer leaves, they give it up, so the
+// header and the whole drawer stay in the window and the page never scrolls.
+// The default window is 1200x800 where the screen has room. macOS CI runners
+// fit only 1024x677, and macOS shrinks windows to the screen, so the default
+// case takes the size the window got.
+for (const size of ["default", "minimum"] as const) {
+  test(`in a window at its ${size} size the sign-in drawer fits beside the sign-in prompt`, async () => {
+    tondo = await launchSignedOut();
+    await bringToFront(tondo);
+    const { app, page } = tondo;
+    if (size === "minimum") {
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0]!.setSize(840, 620),
+      );
+      await page.waitForFunction(() => window.innerWidth === 840 && window.innerHeight === 620);
+    }
+    // A Git checkout, as most projects are, shows the whole Git toolbar.
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
+    await addProject(tondo, project);
+
+    const prompt = page.getByRole("region", { name: "Sign in to a provider" });
+    await expect(prompt).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
+    await expect(page.getByRole("toolbar", { name: "Git" })).toBeVisible();
+    await prompt.getByRole("button", { name: "Open sign-in terminal" }).click();
+    const drawer = page.getByRole("region", { name: "Terminal", exact: true });
+    const output = drawer.locator(".xterm-accessibility-tree");
+    // pi warns that it has no models once its startup is done and it takes slash commands.
+    await expect(output).toContainText("No models available", { timeout: PI_START_TIMEOUT_MS });
+    const input = drawer.locator(".xterm-helper-textarea");
+    await input.focus();
+    await input.pressSequentially("/login");
+    await input.press("Enter");
+    // xterm's accessibility tree mirrors the rows in view, not the scrollback.
+    await expect
+      .poll(() => output.locator("> div").allTextContents())
+      .toEqual(expect.arrayContaining([expect.stringContaining("Select authentication method:")]));
+
+    const layout = await page.evaluate(() => ({
+      scrollTop: document.scrollingElement!.scrollTop,
+      headerTop: document.querySelector("header")!.getBoundingClientRect().top,
+      drawerBottom: document
+        .querySelector('section[aria-label="Terminal"]')!
+        .getBoundingClientRect().bottom,
+      windowHeight: window.innerHeight,
+    }));
+    await page.screenshot({ path: `test-results/sign-in-drawer-${size}.png` });
+    expect.soft(layout.scrollTop, "the page scrolled").toBe(0);
+    expect.soft(layout.headerTop, "the header left the window").toBeGreaterThanOrEqual(0);
+    expect
+      .soft(layout.drawerBottom, "the drawer ends below the window")
+      .toBeLessThanOrEqual(layout.windowHeight);
+  });
+}
 
 test("a project that needs trust asks first, and Tondo keeps the answer", async () => {
   mkdirSync(path.join(project, ".pi"));

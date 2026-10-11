@@ -2,15 +2,15 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { IPty } from "node-pty";
-import { PROTOCOL_VERSION, type HostMessage } from "../shared/protocol";
+import { PROTOCOL_VERSION, type HostMessage, type TerminalRequest } from "../shared/protocol";
 import {
   RENDERER_HISTORY_BYTES,
   TERMINAL_CHUNK_CHARS,
   TERMINAL_WINDOW_BYTES,
-  type TerminalCommand,
   type TerminalKind,
   type TerminalState,
 } from "../shared/terminal";
+import { LoginTyper } from "./loginTyper";
 import { drainGroup } from "./processGroup";
 import { TerminalHistory } from "./terminalHistory";
 
@@ -34,6 +34,8 @@ interface Session {
   sequence: number;
   paused: boolean;
   exited: boolean;
+  /** Types /login for a new login terminal that names a provider. */
+  typer?: LoginTyper;
 }
 
 const v = PROTOCOL_VERSION;
@@ -76,8 +78,9 @@ export class Terminals {
     for (const session of this.sessions.values()) this.detach(session);
   }
 
-  handle(message: TerminalCommand): void | Promise<void> {
-    if (message.type === "terminal-open") return this.open(message.threadId, message.kind);
+  handle(message: TerminalRequest): void | Promise<void> {
+    if (message.type === "terminal-open")
+      return this.open(message.threadId, message.kind, message.provider);
     const session = this.sessions.get(message.threadId);
     // A late write, resize or cleanup from a disposed view must not reach its replacement.
     if (!session || session.state.id !== message.terminalId) return;
@@ -96,6 +99,7 @@ export class Terminals {
         if (session.attachment === message.attachment) this.detach(session);
         break;
       case "terminal-write":
+        session.typer?.input(message.data);
         if (session.state.status === "running") session.pty?.write(message.data);
         break;
       case "terminal-resize":
@@ -110,7 +114,8 @@ export class Terminals {
     }
   }
 
-  private open(threadId: string, kind: TerminalKind): Promise<void> {
+  /** A reused terminal ignores `provider`: only a new pi can be typed into safely. */
+  private open(threadId: string, kind: TerminalKind, provider?: string): Promise<void> {
     if (this.stopping) throw new Error("Tondo is stopping its terminals.");
     const existing = this.sessions.get(threadId);
     if (existing) {
@@ -131,6 +136,8 @@ export class Terminals {
       paused: false,
       exited: false,
     };
+    if (kind === "login" && provider !== undefined)
+      session.typer = new LoginTyper(provider, (data) => session.pty?.write(data));
     this.sessions.set(threadId, session);
     this.publish(session);
     session.started = this.start(session);
@@ -154,6 +161,7 @@ export class Terminals {
       this.reportGroups([...this.groups]);
       pty.onData((data) => {
         session.history.append(data);
+        session.typer?.output(data);
         if (session.attachment !== null) {
           this.enqueue(session, data);
           this.pump(session);
@@ -161,6 +169,7 @@ export class Terminals {
       });
       pty.onExit(({ exitCode }) => {
         session.exited = true;
+        session.typer?.stop();
         session.state = { ...session.state, status: "exited", exitCode };
         // A shell can leave children in its group when it exits on its own.
         void this.cleanup(session).catch((error: unknown) => this.problem(session, error));
@@ -183,6 +192,7 @@ export class Terminals {
     const session = this.sessions.get(threadId);
     if (!session) return;
     session.state = { ...session.state, status: "closing" };
+    session.typer?.stop();
     this.publish(session);
     await session.started;
     try {
