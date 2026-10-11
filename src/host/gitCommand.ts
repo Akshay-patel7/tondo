@@ -14,6 +14,16 @@ export class GitCommandError extends Error {
   }
 }
 
+/** The subcommand, past global options like `-c key=value`, so errors name what failed. */
+export function subcommand(args: readonly string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "-c" || arg === "-C") i++;
+    else if (!arg.startsWith("-")) return arg;
+  }
+  return "";
+}
+
 /** Bound hooks, filters and credential helpers too, and let main reap them if the host dies. */
 export class GitCommands {
   private readonly groups = new Set<number>();
@@ -70,7 +80,7 @@ export class GitCommands {
         failure ??= error;
         if (child.pid) signalGroup(child.pid, "SIGKILL");
       };
-      const label = `${command} ${args[0] ?? ""}`;
+      const label = `${command} ${subcommand(args)}`;
       const deadline = setTimeout(
         () => stop(new GitCommandError(label, null, "exceeded 60 seconds")),
         60_000,

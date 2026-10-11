@@ -102,12 +102,17 @@ export function BranchToolbar() {
       : status.branches;
   const branchItems = branches.map((branch) => ({ value: branch, label: branch }));
   const pr = status.github.pr;
+  const inProgress = progressLabel(status);
   // A control that isn't shown counts as disabled.
   const isDisabled: Record<Control, boolean> = {
     branch: disabled,
     "create-branch": disabled,
     "new-worktree": disabled,
-    commit: disabled || status.changes === 0 || !status.branch,
+    commit:
+      disabled ||
+      (status.changes === 0 && !status.untrackedHidden) ||
+      !status.branch ||
+      Boolean(status.conflicts),
     push: disabled || !status.branch || !status.remote,
     pr: !pr,
     "create-pr":
@@ -189,7 +194,8 @@ export function BranchToolbar() {
           </Button>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-1">
-          <Badge variant="secondary">{changesLabel(status.changes)}</Badge>
+          <Badge variant="secondary">{changesLabel(status)}</Badge>
+          {inProgress ? <Badge variant="warning">{inProgress}</Badge> : null}
           <Button
             variant="ghost"
             size="xs"
@@ -318,9 +324,24 @@ function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
   controls[next]?.focus();
 }
 
-function changesLabel(changes: number): string {
+function changesLabel({ changes, untrackedHidden }: GitStatus): string {
+  if (untrackedHidden) return "Too many untracked files to count";
   if (changes === 0) return "No changes";
   return changes === 1 ? "1 change" : `${changes} changes`;
+}
+
+const OPERATIONS: Record<NonNullable<GitStatus["operation"]>, string> = {
+  merge: "Merge",
+  rebase: "Rebase",
+  "cherry-pick": "Cherry-pick",
+  revert: "Revert",
+};
+
+function progressLabel({ operation, conflicts = 0 }: GitStatus): string | null {
+  const running = operation ? `${OPERATIONS[operation]} in progress` : null;
+  const unresolved = conflicts ? (conflicts === 1 ? "1 conflict" : `${conflicts} conflicts`) : null;
+  if (running && unresolved) return `${running}, ${unresolved}`;
+  return running ?? unresolved;
 }
 
 function trackingLabel({ ahead, behind }: GitStatus, upstream: string): string {
@@ -359,7 +380,7 @@ function describe({ kind, branch, status }: Action, worktree: boolean): string {
     case "new-worktree":
       return "Start a new thread in a separate checkout. Uncommitted changes are not copied. This thread stays where it is.";
     case "commit":
-      return `Stage all ${status.changes} changed paths in this checkout and commit. This includes untracked files that Git does not ignore. Git hooks and your signing settings still apply.`;
+      return `Stage all ${status.untrackedHidden ? "" : `${status.changes} `}changed paths in this checkout and commit. This includes untracked files that Git does not ignore. ${status.operation ? `This concludes the ${status.operation} in progress. ` : ""}Git hooks and your signing settings still apply.`;
     case "push":
       return `Push ${status.branch} to ${status.remote} and set its upstream. This publishes committed changes. No force push.`;
     case "create-pr":
@@ -368,6 +389,14 @@ function describe({ kind, branch, status }: Action, worktree: boolean): string {
       return "Delete this checkout and forget its thread in Tondo. The branch and external pi session file stay. Close its terminals first. Removal will refuse dirty or ignored files unless you confirm below.";
   }
 }
+
+/** `required` accepts spaces, and the host rejects a blank name or message. */
+const BLANK: Record<string, string> = {
+  branch: "Enter a branch name.",
+  base: "Enter a base branch.",
+  title: "Enter a pull request title.",
+  message: "Enter a commit message.",
+};
 
 function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
@@ -412,6 +441,11 @@ function ActionDialog({
     event.preventDefault();
     const values = new FormData(event.currentTarget);
     const value = (name: string) => String(values.get(name) ?? "");
+    const blank = Object.keys(BLANK).find((name) => values.has(name) && !value(name).trim());
+    if (blank) {
+      setError(BLANK[blank]!);
+      return;
+    }
     let gitAction: GitAction;
     switch (kind) {
       case "switch":

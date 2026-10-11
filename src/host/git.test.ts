@@ -57,7 +57,7 @@ function stubGh() {
   const file = path.join(bin, "gh");
   writeFileSync(
     file,
-    `#!${process.execPath}\nconst fs=require('fs'); const args=process.argv.slice(2); fs.appendFileSync(${JSON.stringify(path.join(dir, "gh.jsonl"))}, JSON.stringify({args,input:fs.readFileSync(0,'utf8')})+'\\n'); if(process.env.GH_TEST_LOGGED_OUT)process.exit(1); if(args[0]==='pr'&&args[1]==='list')console.log(fs.existsSync(${JSON.stringify(path.join(dir, "created"))})?JSON.stringify([{number:7,title:'A PR',url:'https://github.example.com/team/repo/pull/7',state:'OPEN'}]):'[]'); if(args[1]==='create'){fs.writeFileSync(${JSON.stringify(path.join(dir, "created"))},'yes');console.log('https://github.example.com/team/repo/pull/7');}\n`,
+    `#!${process.execPath}\nconst fs=require('fs'); const args=process.argv.slice(2); fs.appendFileSync(${JSON.stringify(path.join(dir, "gh.jsonl"))}, JSON.stringify({args,input:fs.readFileSync(0,'utf8')})+'\\n'); if(process.env.GH_TEST_LOGGED_OUT)process.exit(1); if(args[0]==='pr'&&args[1]==='list')console.log(fs.existsSync(${JSON.stringify(path.join(dir, "created"))})?JSON.stringify([{number:7,title:'A PR',url:'https://github.example.com/team/repo/pull/7',state:'OPEN'}]):'[]'); if(args[1]==='create'&&process.env.GH_TEST_CREATE_FAILS){console.error('GraphQL: something went wrong');process.exit(1);} if(args[1]==='create'){fs.writeFileSync(${JSON.stringify(path.join(dir, "created"))},'yes');console.log('https://github.example.com/team/repo/pull/7');}\n`,
   );
   chmodSync(file, 0o755);
   env.PATH = `${bin}:${env.PATH}`;
@@ -72,7 +72,59 @@ it("parses NUL records without interpreting a renamed or untracked filename as a
     parseGitStatus(
       "# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -3\x002 R. N... 1 1 1 a b R100 new\0# branch.head wrong\0? line\nbreak\0",
     ),
-  ).toEqual({ branch: "main", upstream: "origin/main", ahead: 2, behind: 3, changes: 2 });
+  ).toEqual({
+    branch: "main",
+    upstream: "origin/main",
+    ahead: 2,
+    behind: 3,
+    changes: 2,
+    conflicts: 0,
+  });
+  expect(
+    parseGitStatus(
+      "# branch.head main\0u UU N... 100644 100644 100644 100644 a b c README.md\x001 .M N... 100644 100644 100644 a a b\0",
+    ),
+  ).toMatchObject({ changes: 2, conflicts: 1 });
+});
+
+it("reports an unresolved merge and refuses to commit its conflict markers", async () => {
+  native("switch", "-c", "topic");
+  writeFileSync(path.join(cwd, "a"), "topic side");
+  native("commit", "-am", "topic");
+  native("switch", "main");
+  writeFileSync(path.join(cwd, "a"), "main side");
+  native("commit", "-am", "main");
+  expect(() => native("merge", "topic")).toThrow();
+  const head = native("rev-parse", "HEAD");
+  expect(await git.status(cwd)).toMatchObject({ conflicts: 1, operation: "merge" });
+  await expect(git.act(cwd, { kind: "commit", message: "merge topic" }, "main")).rejects.toThrow(
+    "1 path has unresolved conflicts from the merge in progress",
+  );
+  expect(native("rev-parse", "HEAD")).toBe(head);
+  native("merge", "--abort");
+  expect(await git.status(cwd)).toMatchObject({ conflicts: 0, operation: null });
+});
+
+it("falls back to tracked paths when untracked files overflow the status output", async () => {
+  // Status lists an untracked folder once, so the files sit in the root. 23,000
+  // names of about 200 bytes make more than 4 MiB of porcelain output.
+  for (let i = 0; i < 23_000; i++)
+    writeFileSync(path.join(cwd, `${String(i).padStart(5, "0")}${"x".repeat(190)}`), "");
+  writeFileSync(path.join(cwd, "a"), "modified");
+  const status = await git.status(cwd, false);
+  expect(status).toMatchObject({ root: cwd, branch: "main", changes: 1, untrackedHidden: true });
+}, 60_000);
+
+it("shows Git's own reason when a push is rejected", async () => {
+  writeFileSync(path.join(cwd, "a"), "pushed");
+  native("commit", "-am", "pushed");
+  native("push");
+  native("reset", "--hard", "HEAD~1");
+  writeFileSync(path.join(cwd, "a"), "diverged");
+  native("commit", "-am", "diverged");
+  const push = git.act(cwd, { kind: "push", remote: "origin" }, "main");
+  await expect(push).rejects.toThrow("Tondo never force-pushes. git push:");
+  await expect(push).rejects.toThrow("rejected");
 });
 
 it("reads status without writing the index, and handles non-repos and detached HEAD", async () => {
@@ -166,6 +218,20 @@ it("uses the remote's Enterprise host, requires a push, and creates/reads a PR t
     ],
     input: "Only this text.",
   });
+});
+
+it("shows gh's own reason when creating a pull request fails", async () => {
+  stubGh();
+  await git.act(cwd, { kind: "create-branch", branch: "topic" }, "main");
+  await git.act(cwd, { kind: "push", remote: "origin" }, "topic");
+  env.GH_TEST_CREATE_FAILS = "1";
+  await expect(
+    git.act(
+      cwd,
+      { kind: "create-pr", remote: "origin", base: "main", title: "A PR", body: "" },
+      "topic",
+    ),
+  ).rejects.toThrow("gh pr: GraphQL: something went wrong");
 });
 
 it("reports missing and logged-out gh without exposing command output", async () => {
