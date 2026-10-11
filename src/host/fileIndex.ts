@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { canMention, type FileIndex } from "../shared/files";
 
 /** Listing is bounded both before decoding and before sending to the page. */
@@ -25,9 +26,12 @@ export function indexFiles(project: string): Promise<FileIndex> {
       },
       (error, stdout, stderr) => {
         if (error) {
-          const reason = stderr.includes("not a git repository")
-            ? "File suggestions need a Git project. You can still type a path."
-            : `Couldn't list project files: ${error.message}`;
+          let reason = `Couldn't list project files: ${error.message}`;
+          if (stderr.includes("not a git repository"))
+            reason = "File suggestions need a Git project. You can still type a path.";
+          // A missing working folder fails the spawn with ENOENT, which reads as a missing git.
+          else if (error.code === "ENOENT" && !existsSync(project))
+            reason = `Couldn't list project files: the folder ${project} no longer exists`;
           resolve({ paths: [], truncated: false, error: reason });
         } else resolve(parseFileList(stdout));
       },

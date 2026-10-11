@@ -82,6 +82,7 @@ function git(
     let bytes = 0;
     let errorBytes = 0;
     let failure: string | undefined;
+    let spawnCode: string | undefined;
     const stop = (message: string) => {
       failure ??= message;
       // Git filters inherit its group. Killing Git alone can leave a filter
@@ -99,7 +100,8 @@ function git(
       if (errorBytes > cap) stop(`error output exceeds ${cap.toLocaleString("en-US")} bytes`);
       else stderr.push(chunk);
     });
-    child.on("error", (error) => {
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      spawnCode ??= error.code;
       failure ??= error.message;
     });
     child.on("exit", (code, signal) => {
@@ -115,6 +117,9 @@ function git(
         groups.delete(child.pid);
         reportGroups([...groups]);
       }
+      // A missing working folder fails the spawn with ENOENT, which reads as a missing git.
+      if (spawnCode === "ENOENT" && !(await isFolder(cwd)))
+        failure = `the folder ${cwd} no longer exists`;
       const detail = Buffer.concat(stderr).toString("utf8").trim();
       if (failure || code !== 0)
         reject(
@@ -136,6 +141,14 @@ function git(
     child.stdin.on("error", () => {});
     child.stdin.end(input);
   });
+}
+
+async function isFolder(folder: string): Promise<boolean> {
+  try {
+    return (await stat(folder)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 export function checkpointRef(threadId: string, turn: number): string {

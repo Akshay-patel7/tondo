@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { PiRpc, type PiRecord } from "./piRpc";
 import { descendantGroups, drainGroup, signalGroup } from "./processGroup";
@@ -208,6 +209,18 @@ export async function startPi(
   try {
     await once(child, "spawn");
   } catch (error) {
+    // A missing working folder fails the spawn with ENOENT too, which reads as a missing pi.
+    if (
+      (error as NodeJS.ErrnoException).code === "ENOENT" &&
+      !(await stat(launch.cwd).then(
+        (folder) => folder.isDirectory(),
+        () => false,
+      ))
+    ) {
+      throw new Error(`Couldn't start pi: the project folder ${launch.cwd} no longer exists.`, {
+        cause: error,
+      });
+    }
     throw new Error(
       `Couldn't start pi with ${launch.command} in ${launch.cwd}: ${(error as Error).message}`,
       {

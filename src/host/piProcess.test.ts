@@ -197,6 +197,16 @@ describe("PiProcess with fake pi", () => {
       `Couldn't start pi with /nonexistent/pi in ${import.meta.dirname}: spawn /nonexistent/pi ENOENT`,
     );
   });
+
+  it("says the project folder is gone rather than blaming pi's command", async () => {
+    const missing = path.join(import.meta.dirname, "no-such-project");
+    await expect(
+      startPi(
+        { command: process.execPath, args: [fakePi], cwd: missing, env: {} },
+        { onRecord: () => {}, onGroup: () => {} },
+      ),
+    ).rejects.toThrow(`Couldn't start pi: the project folder ${missing} no longer exists.`);
+  });
 });
 
 /**

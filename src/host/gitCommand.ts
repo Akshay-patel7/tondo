@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { isUtf8 } from "node:buffer";
+import { stat } from "node:fs/promises";
 import { drainGroup, signalGroup } from "./processGroup";
+
+/** The code of a GitCommandError whose working folder is gone, which Node reports as ENOENT. */
+export const MISSING_FOLDER = "ENOCWD";
 
 export class GitCommandError extends Error {
   readonly code: number | string | null;
@@ -112,6 +116,19 @@ export class GitCommands {
           this.groups.delete(child.pid);
           this.reportGroups([...this.groups]);
         }
+        // A missing working folder fails the spawn with ENOENT too, which reads as a missing git or gh.
+        if (
+          failure?.code === "ENOENT" &&
+          !(await stat(cwd).then(
+            (folder) => folder.isDirectory(),
+            () => false,
+          ))
+        )
+          failure = new GitCommandError(
+            label,
+            MISSING_FOLDER,
+            `the folder ${cwd} no longer exists`,
+          );
         if (failure) throw failure;
         const output = Buffer.concat(stdout);
         if (!isUtf8(output)) throw new GitCommandError(label, null, "output is not UTF-8");

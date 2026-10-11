@@ -58,8 +58,8 @@ describe("file index", () => {
 
   test("explains non-Git folders and missing folders instead of pretending they're empty", async () => {
     expect((await indexFiles(folder)).error).toContain("need a Git project");
-    expect((await indexFiles(path.join(folder, "missing"))).error).toContain(
-      "Couldn't list project files",
+    expect((await indexFiles(path.join(folder, "missing"))).error).toBe(
+      `Couldn't list project files: the folder ${path.join(folder, "missing")} no longer exists`,
     );
   });
 });

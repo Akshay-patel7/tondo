@@ -79,7 +79,9 @@ describe("Git checkpoints", () => {
 
   test("distinguishes non-Git and missing folders, and resolves the whole checkout", async () => {
     expect(await checkpointRoot(folder)).toBeNull();
-    await expect(checkpointRoot(path.join(folder, "missing"))).rejects.toThrow();
+    await expect(checkpointRoot(path.join(folder, "missing"))).rejects.toThrow(
+      `Checkpoint git rev-parse: the folder ${path.join(folder, "missing")} no longer exists`,
+    );
     git("init", "-q");
     mkdirSync(path.join(folder, "sub"));
     expect(await checkpointRoot(path.join(folder, "sub"))).toBe(await checkpointRoot(folder));

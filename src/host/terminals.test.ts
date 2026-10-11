@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostMessage } from "../shared/protocol";
 import { TERMINAL_WINDOW_BYTES } from "../shared/terminal";
@@ -71,6 +73,19 @@ describe("terminal sessions", () => {
     expect(fake.write.mock.calls).toEqual([["hello"]]);
     await terminals.close(session.threadId);
     expect(fake.drain).toHaveBeenCalledWith(987654, 1_000);
+  });
+
+  it("reports a deleted project folder instead of starting a shell that exits at once", async () => {
+    const gone = path.join(os.tmpdir(), `tondo-gone-${process.pid}`);
+    const { terminals, messages } = setup(async () => ({ ...launch, cwd: gone }));
+    await terminals.handle({ type: "terminal-open", threadId: "thread", kind: "shell" });
+    expect(fake.spawn).not.toHaveBeenCalled();
+    expect(messages.findLast((m) => m.type === "terminal-state")).toMatchObject({
+      terminal: {
+        status: "exited",
+        error: `Couldn't start the terminal: the folder ${gone} no longer exists.`,
+      },
+    });
   });
 
   it("pauses until parsed output is acknowledged, and rejects stale acknowledgements", async () => {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { IPty } from "node-pty";
 import { PROTOCOL_VERSION, type HostMessage, type TerminalRequest } from "../shared/protocol";
@@ -148,7 +149,14 @@ export class Terminals {
     try {
       const launch = await this.launch(session.threadId, session.state.kind);
       const { spawn } = await import("node-pty");
+      // node-pty doesn't throw for a missing cwd: the shell starts and exits with code 1.
+      const folder = await stat(launch.cwd).then(
+        (found) => found.isDirectory(),
+        () => false,
+      );
       if (session.state.status === "closing") return;
+      if (!folder)
+        throw new Error(`Couldn't start the terminal: the folder ${launch.cwd} no longer exists.`);
       const pty = spawn(launch.command, launch.args, {
         cwd: launch.cwd,
         env: { ...launch.env, TERM: "xterm-256color" },

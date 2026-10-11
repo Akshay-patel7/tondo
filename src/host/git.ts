@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { GitAction, GitHubStatus, GitOperation, GitStatus, PullRequest } from "../shared/git";
-import { GitCommandError, GitCommands } from "./gitCommand";
+import { GitCommandError, GitCommands, MISSING_FOLDER } from "./gitCommand";
 
 const NO_GITHUB: GitHubStatus = { state: "no-remote", message: "No GitHub remote.", pr: null };
 const EMPTY: GitStatus = {
@@ -228,6 +228,8 @@ export class Git {
     try {
       await this.commands.run("gh", cwd, ["auth", "status", "--active", "--hostname", repo.host]);
     } catch (error) {
+      // A missing project folder isn't a missing gh or a sign-in problem.
+      if (error instanceof GitCommandError && error.code === MISSING_FOLDER) throw error;
       const missing = error instanceof GitCommandError && error.code === "ENOENT";
       status = {
         state: missing ? "missing" : "logged-out",
