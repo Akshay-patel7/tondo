@@ -160,7 +160,7 @@ describe("applyEvent", () => {
 
     expect(reply.stopReason).toBe("aborted");
     expect(text(reply)).toBe(streamed);
-    expect(streamed.length).toBeGreaterThan(0);
+    expect(streamed).toHaveLength(824);
     expect(thread.running).toBe(false);
   });
 
@@ -399,7 +399,7 @@ describe("afterPiExit", () => {
       ...empty,
       messages: midStream.messages,
     });
-    expect(midStream.messages.length).toBeGreaterThan(0);
+    expect(midStream.messages.map((message) => message.role)).toEqual(["user"]);
   });
 });
 

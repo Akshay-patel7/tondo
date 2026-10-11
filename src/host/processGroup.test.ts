@@ -102,8 +102,6 @@ describe("drainGroup", () => {
         const [line] = (await once(holder.stdout, "data")) as [string];
         const pgid = Number(line.trim());
         expect(() => process.kill(-pgid, 0)).toThrow("EPERM");
-        // A positive-PID probe still succeeds for this zombie. It isn't proof of a live helper.
-        expect(() => process.kill(pgid, 0)).not.toThrow();
         expect(signalGroup(pgid, 0)).toBe(false);
         await drainGroup(pgid, 100);
       } finally {

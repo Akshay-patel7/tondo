@@ -52,7 +52,7 @@ test("captures before a prompt and after settled; retries and queued prompts sha
   const diff = await turns.diff(1);
   expect(diff.error).toBeNull();
   expect(diff.files[0]?.patch).toContain("-before\n+after");
-  expect(changed).toHaveBeenCalled();
+  expect(changed).toHaveBeenCalledTimes(4);
 });
 
 test("waits for completion before preparing the next prompt and reuses its baseline", async () => {

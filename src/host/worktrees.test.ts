@@ -8,7 +8,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -55,7 +54,7 @@ afterEach(() => {
 });
 
 it("creates an isolated worktree and distinct default session folder; removal keeps its branch", async () => {
-  const worktree = await worktrees.create(cwd, randomUUID(), "topic/test", "HEAD");
+  const worktree = await worktrees.create(cwd, owner(1), "topic/test", "HEAD");
   expect((await git.status(worktree.path)).branch).toBe("topic/test");
   expect((await git.status(cwd)).branch).toBe("main");
   const env = { HOME: dir, PI_CODING_AGENT_DIR: path.join(dir, "agent") };
@@ -68,7 +67,7 @@ it("creates an isolated worktree and distinct default session folder; removal ke
 });
 
 it("requires explicit force for dirty and ignored files", async () => {
-  const worktree = await worktrees.create(cwd, randomUUID(), "dirty", "HEAD");
+  const worktree = await worktrees.create(cwd, owner(2), "dirty", "HEAD");
   writeFileSync(path.join(worktree.path, "ignored"), "valuable");
   await expect(worktrees.remove(worktree, false)).rejects.toThrow("ignored files");
   const messages: string[] = [];
@@ -83,16 +82,16 @@ it("requires explicit force for dirty and ignored files", async () => {
 });
 
 it("cleans only clean abandoned owners, including a creation that failed before making its folder", async () => {
-  const owned = await worktrees.create(cwd, randomUUID(), "owned", "HEAD");
-  const project = store.addProject(cwd, Date.now());
+  const owned = await worktrees.create(cwd, owner(3), "owned", "HEAD");
+  const project = store.addProject(cwd, CREATED_AT);
   store.addThread({
     id: owned.threadId,
     projectId: project.id,
     sessionFile: null,
-    createdAt: Date.now(),
+    createdAt: CREATED_AT,
   });
-  const abandoned = await worktrees.create(cwd, randomUUID(), "abandoned", "HEAD");
-  await expect(worktrees.create(cwd, randomUUID(), "main", "HEAD")).rejects.toThrow();
+  const abandoned = await worktrees.create(cwd, owner(4), "abandoned", "HEAD");
+  await expect(worktrees.create(cwd, owner(5), "main", "HEAD")).rejects.toThrow();
   const messages: string[] = [];
   await worktrees.cleanup((message) => messages.push(message));
   expect(messages).toEqual([]);
@@ -102,13 +101,13 @@ it("cleans only clean abandoned owners, including a creation that failed before 
 });
 
 it("preserves an abandoned checkout whose branch changed or which was added as a project", async () => {
-  const worktree = await worktrees.create(cwd, randomUUID(), "original", "HEAD");
+  const worktree = await worktrees.create(cwd, owner(6), "original", "HEAD");
   await git.run(worktree.path, ["switch", "-c", "renamed"]);
   const messages: string[] = [];
   await worktrees.cleanup((message) => messages.push(message));
   expect(messages[0]).toContain("branch changed");
   expect(existsSync(worktree.path)).toBe(true);
-  store.addProject(worktree.path, Date.now());
+  store.addProject(worktree.path, CREATED_AT);
   await expect(worktrees.remove(worktree, true)).rejects.toThrow(
     "A project still uses this worktree",
   );
@@ -116,7 +115,7 @@ it("preserves an abandoned checkout whose branch changed or which was added as a
 });
 
 it("cleans the registration of a missing abandoned folder without deleting its branch", async () => {
-  const worktree = await worktrees.create(cwd, randomUUID(), "missing", "HEAD");
+  const worktree = await worktrees.create(cwd, owner(7), "missing", "HEAD");
   rmSync(worktree.path, { recursive: true });
   const messages: string[] = [];
   await worktrees.cleanup((message) => messages.push(message));
@@ -176,7 +175,7 @@ it("clears an abandoned empty owned folder, and explains a foreign one in plain 
 });
 
 it("refuses paths outside its managed root and symlink replacements even with force", async () => {
-  const worktree = await worktrees.create(cwd, randomUUID(), "safe", "HEAD");
+  const worktree = await worktrees.create(cwd, owner(14), "safe", "HEAD");
   await expect(worktrees.remove({ ...worktree, path: cwd }, true)).rejects.toThrow(
     "managed linked worktree",
   );
