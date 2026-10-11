@@ -12,7 +12,5 @@ export function setDraft(text: string): void {
   useDraft.setState(text, true);
 }
 
-/** Joins the texts that aren't blank with an empty line between each, the way pi's editor restores its queue. */
-export function joinDrafts(...texts: readonly string[]): string {
-  return texts.filter((text) => text.trim() !== "").join("\n\n");
-}
+// The host applies the same rules to a thread that isn't on screen.
+export { editorText, joinDrafts } from "../../shared/drafts";

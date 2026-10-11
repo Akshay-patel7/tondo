@@ -29,7 +29,7 @@ import {
   type StreamingBehavior,
   type ThinkingLevel,
 } from "../shared/protocol";
-import { joinDrafts, setDraft, useDraft, useDraftImages } from "./composer/draft";
+import { editorText, joinDrafts, setDraft, useDraft, useDraftImages } from "./composer/draft";
 import { showExtensionUi } from "./extensionUi/store";
 import { closeSheet, openSheet } from "./sheets/store";
 import { keepUnchanged } from "./sidebar/model";
@@ -159,6 +159,9 @@ let port: MessagePort | undefined;
 /** The thread whose trust answer the host hasn't taken yet. */
 let answeringTrust: string | undefined;
 
+/** The composer text an extension last set in the thread on screen. */
+let extensionText: string | undefined;
+
 /**
  * Shows an error on the trust question if it's about the answer you just gave.
  * The question covers the banners, and an error left in a banner or a toast
@@ -259,6 +262,7 @@ function receive(message: HostMessage): void {
       useHost.setState({ connection: "connected", thread: message.thread });
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) {
+        extensionText = undefined;
         useGit.setState({ status: null, error: null });
         setDraft(message.draft);
         useDraftImages.setState(message.images, true);
@@ -322,7 +326,11 @@ function receive(message: HostMessage): void {
       if (message.threadId === shownId()) showExtensionUi(message.ui);
       break;
     case "editor-text":
-      if (message.threadId === shownId()) editDraft(message.text);
+      if (message.threadId === shownId()) {
+        const text = editorText(useDraft.getState(), message.text, extensionText);
+        extensionText = message.text;
+        editDraft(text);
+      }
       break;
     case "toast": {
       const { level, message: text, thread, reveal } = message;

@@ -39,6 +39,37 @@ test.afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
+/**
+ * An extension for the edge cases ui-ext.ts leaves out. /tondo-set-when sets
+ * the composer's text once a file exists. /tondo-duplicate asks twice with
+ * one id, as a misbehaving extension might, then says it's done.
+ */
+const EDGE_EXTENSION = `
+import { existsSync, writeSync } from "node:fs";
+
+export default function edgeExtension(pi) {
+  pi.registerCommand("tondo-set-when", {
+    description: "Sets the composer's text once a file exists",
+    handler: async (file, ctx) => {
+      while (!existsSync(file.trim())) await new Promise((resolve) => setTimeout(resolve, 20));
+      ctx.ui.setEditorText("Text from the extension");
+      ctx.ui.notify("The extension set the text", "info");
+    },
+  });
+  pi.registerCommand("tondo-duplicate", {
+    description: "Asks twice with one id",
+    handler: async () => {
+      const ask = (title, options) =>
+        JSON.stringify({ type: "extension_ui_request", id: "dup", method: "select", title, options });
+      writeSync(1, ask("First with the id", ["a", "b"]) + "\\n");
+      writeSync(1, ask("Second with the id", ["x", "y"]) + "\\n");
+      const done = { type: "extension_ui_request", id: "done", method: "notify", message: "Asked twice" };
+      writeSync(1, JSON.stringify(done) + "\\n");
+    },
+  });
+}
+`;
+
 /** A notification main raised. The test keeps them instead of showing them. */
 type MainNotification = InstanceType<typeof import("electron").Notification>;
 type NotificationState = typeof globalThis & { tondoNotifications?: MainNotification[] };
@@ -126,6 +157,24 @@ test("an extension's dialogs, toasts, status, widgets, title and composer text",
   await expect.poll(() => windowTitle(app)).toBe("Tondo");
 });
 
+test("an extension's composer text keeps the draft you typed", async () => {
+  const extension = path.join(workDir, "edge-ext.ts");
+  writeFileSync(extension, EDGE_EXTENSION);
+  const release = path.join(workDir, "release");
+  tondo = await launchWithPi({ workDir, script: { responses: [] }, piArgs: ["-e", extension] });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, `/tondo-set-when ${release}`);
+  await composer(page).fill("my precious draft");
+  await expectDraft(page, "my precious draft");
+  writeFileSync(release, "");
+  await expect(
+    page.getByRole("status").filter({ hasText: "The extension set the text" }),
+  ).toBeVisible();
+  await expectDraft(page, "my precious draft\n\nText from the extension");
+});
 test("an extension's question in a thread off screen badges it and raises a notification", async () => {
   const release = path.join(workDir, "release");
   tondo = await launchWithPi({

@@ -23,6 +23,7 @@ import {
   type ThreadActivity,
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
+import { editorText } from "../shared/drafts";
 import type { AppSettings, SettingsPatch, ThemeSetting } from "../shared/settings";
 import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
@@ -107,6 +108,8 @@ export class Workspace {
   private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
   private readonly files = new FileIndexes();
+  /** The draft an extension last set in each thread that wasn't on screen. */
+  private readonly extensionDrafts = new Map<string, string>();
   private readonly terminals: Terminals;
   private readonly git: Git;
   private readonly worktrees: Worktrees;
@@ -819,8 +822,16 @@ export class Workspace {
         const thread = current();
         if (!thread) return;
         if (thread.visible) this.send({ v, type: "editor-text", threadId: thread.id, text });
-        // A thread that isn't on screen keeps the text as its draft.
-        else this.setDraft(thread.id, text);
+        // A thread that isn't on screen keeps the text in its draft, after what you typed.
+        else {
+          const draft = editorText(
+            this.row(thread.id).draft,
+            text,
+            this.extensionDrafts.get(thread.id),
+          );
+          this.extensionDrafts.set(thread.id, text);
+          this.setDraft(thread.id, draft);
+        }
       },
     };
   }
