@@ -112,7 +112,7 @@ function start(): void {
     send,
     chooseFolder: () => tellMain({ type: "choose-project" }),
     choosePi: () => tellMain({ type: "choose-pi" }),
-    setTheme: (theme) => tellMain({ type: "theme", theme }),
+    setTheme: (theme, palette) => tellMain({ type: "theme", theme, palette }),
     attention: (attention) => tellMain({ type: "attention", ...attention }),
     copy: (text) => tellMain({ type: "copy", text }),
     reveal: (file) => tellMain({ type: "reveal", path: file }),

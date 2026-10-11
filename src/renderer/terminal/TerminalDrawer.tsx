@@ -358,6 +358,9 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       terminal.options.minimumContrastRatio = minimumContrast(dark);
     };
     dark.addEventListener("change", retheme);
+    // A palette changes the colors without the scheme. App.tsx sets it on <html>.
+    const palette = new MutationObserver(retheme);
+    palette.observe(document.documentElement, { attributeFilter: ["data-palette"] });
     const resize = () => {
       if (disposed || element.clientWidth === 0 || element.clientHeight === 0) return;
       const dimensions = fit.proposeDimensions();
@@ -425,6 +428,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     return () => {
       disposed = true;
       dark.removeEventListener("change", retheme);
+      palette.disconnect();
       textarea.removeEventListener("keydown", pressed);
       textarea.removeEventListener("keyup", released);
       textarea.removeEventListener("input", inserted);

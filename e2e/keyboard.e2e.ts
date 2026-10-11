@@ -414,12 +414,10 @@ test("every control has an accessible name", async () => {
   await waitForPi(page);
   await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
   const removeWorktree = page.getByRole("alertdialog", {
-    name: "Remove worktree and forget thread",
+    name: "Remove worktree",
   });
   await expect(removeWorktree).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Remove worktree and forget thread" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "Remove worktree" })).toHaveCount(0);
   await audit("the Remove worktree alert dialog");
   await removeWorktree.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(removeWorktree).not.toBeAttached();
@@ -635,7 +633,9 @@ test("Shift+Tab reaches the open thread's actions on the way back, as Tab does o
   const { page } = await launch([]);
   await addProject(tondo!, project);
   await waitForPi(page);
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Keyboard draft");
   const row = threads(page).locator(THREAD_ROW).first();
+  await expect(row).toBeVisible();
   const actions = threads(page).getByRole("button", { name: "Thread actions" });
   const changes = page.getByRole("button", { name: "Changes", exact: true });
 

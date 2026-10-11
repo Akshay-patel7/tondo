@@ -16,8 +16,10 @@ import {
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   isPoolValue,
+  PALETTE_SETTINGS,
   POOL_RANGES,
   type AppSettings,
+  type PaletteSetting,
   type PoolSettings,
 } from "../../shared/settings";
 import { revealFile, updateSettings, useHost } from "../connection";
@@ -51,6 +53,13 @@ const SECTIONS: readonly {
   { id: "threads", label: "Threads", icon: Cpu },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
 ];
+
+const PALETTE_TITLES: Readonly<Record<PaletteSetting, string>> = {
+  default: "Default",
+  slate: "Slate",
+  ocean: "Ocean",
+  rose: "Rose",
+};
 
 /** Popups and dialogs over the page. Escape closes them before the page. */
 const OVERLAYS = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
@@ -206,11 +215,13 @@ function Section({ section }: { section: SettingsSection }) {
 
 function AppearanceSettings() {
   const theme = useHost((host) => host.settings?.theme);
+  const palette = useHost((host) => host.settings?.palette);
   const labelId = useId();
+  const paletteLabelId = useId();
   return (
     <div className="flex flex-col gap-4">
       <SectionHeading title="Appearance" />
-      {theme === undefined ? (
+      {theme === undefined || palette === undefined ? (
         <Loading>Loading settings…</Loading>
       ) : (
         <SettingsGroup>
@@ -243,9 +254,47 @@ function AppearanceSettings() {
               </ToggleGroup>
             }
           />
+          <SettingsRow
+            title={<span id={paletteLabelId}>Palette</span>}
+            description="Theme picks its light or dark version."
+            control={
+              <ToggleGroup
+                aria-labelledby={paletteLabelId}
+                variant="outline"
+                size="sm"
+                value={[palette]}
+                onValueChange={([chosen]) => {
+                  if (chosen !== undefined) updateSettings({ palette: chosen });
+                }}
+              >
+                {PALETTE_SETTINGS.map((id) => (
+                  <ToggleGroupItem key={id} value={id}>
+                    <Swatch palette={id} />
+                    {PALETTE_TITLES[id]}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            }
+          />
         </SettingsGroup>
       )}
     </div>
+  );
+}
+
+/**
+ * A palette's background with its primary color in the middle, in the current
+ * scheme. data-palette gives the swatch that palette's colors (index.css).
+ */
+function Swatch({ palette }: { palette: PaletteSetting }) {
+  return (
+    <span
+      aria-hidden
+      data-palette={palette}
+      className="flex size-3.5 shrink-0 items-center justify-center rounded-full border border-control-border bg-background"
+    >
+      <span className="size-2 rounded-full bg-primary" />
+    </span>
   );
 }
 

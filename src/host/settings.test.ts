@@ -35,6 +35,7 @@ describe("readSettings", () => {
     expect(readSettings(file)).toEqual({
       piPath: null,
       theme: "system",
+      palette: "default",
       pool: { maxLive: 4, idleMinutes: 10 },
       shortcuts: {},
       projectTrust: {},
@@ -47,6 +48,7 @@ describe("readSettings", () => {
       JSON.stringify({
         piPath: "/opt/pi/bin/pi",
         theme: "dark",
+        palette: "ocean",
         pool: { maxLive: 12, idleMinutes: 240 },
         shortcuts: { palette: "mod+shift+p", settings: null },
         projectTrust: { "/work/a": true, "/work/b": false },
@@ -56,6 +58,7 @@ describe("readSettings", () => {
     expect(readSettings(file)).toEqual({
       piPath: "/opt/pi/bin/pi",
       theme: "dark",
+      palette: "ocean",
       pool: { maxLive: 12, idleMinutes: 240 },
       shortcuts: { palette: "mod+shift+p", settings: null },
       projectTrust: { "/work/a": true, "/work/b": false },
@@ -78,6 +81,8 @@ describe("readSettings", () => {
     ],
     ['{"projectTrust":[]}', "has a projectTrust that isn't an object of true and false answers"],
     ['{"theme":"blue"}', `has a theme that isn't system, light or dark: "blue"`],
+    ['{"palette":"teal"}', `has a palette that isn't default, slate, ocean or rose: "teal"`],
+    ['{"palette":null}', "has a palette that isn't default, slate, ocean or rose: null"],
     ['{"pool":4}', "has a pool that isn't an object"],
     ['{"pool":{"maxLive":0}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 0"],
     ['{"pool":{"maxLive":13}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 13"],
@@ -139,6 +144,7 @@ describe("readSettingsLeniently", () => {
       JSON.stringify({
         piPath: "/opt/pi/bin/pi",
         theme: "sepia",
+        palette: "teal",
         pool: { maxLive: 9999, idleMinutes: 30 },
         shortcuts: { palette: "mod+", settings: "mod+j" },
         projectTrust: { "/work/a": true, "/work/b": "yes" },
@@ -148,6 +154,7 @@ describe("readSettingsLeniently", () => {
       settings: {
         piPath: "/opt/pi/bin/pi",
         theme: "system",
+        palette: "default",
         pool: { maxLive: 4, idleMinutes: 30 },
         shortcuts: { settings: "mod+j" },
         projectTrust: { "/work/a": true },
@@ -213,6 +220,19 @@ describe("updateSettings", () => {
     expect(readSettings(file).shortcuts).toEqual({});
   });
 
+  it("saves the palette apart from the theme, and gives a file from before palettes the default", () => {
+    writeFileSync(file, JSON.stringify({ theme: "dark" }));
+    expect(readSettings(file).palette).toBe("default");
+
+    expect(updateSettings(file, { palette: "rose" })).toMatchObject({
+      theme: "dark",
+      palette: "rose",
+    });
+    expect(updateSettings(file, { theme: "light" }).palette).toBe("rose");
+
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ theme: "light", palette: "rose" });
+  });
+
   it("sets the pi path, and removes the key when you set it to null", () => {
     writeFileSync(file, JSON.stringify({ theme: "dark" }));
     updateSettings(file, { piPath: "/opt/pi/bin/pi" });
@@ -253,6 +273,16 @@ describe("updateSettings", () => {
     expect(() => updateSettings(file, { pool: { maxLive: 2 } })).toThrow(
       `Tondo's settings file ${file} has a theme that isn't system, light or dark`,
     );
+  });
+
+  it("keeps other changes off a palette it doesn't know, and picking a palette fixes it", () => {
+    writeFileSync(file, '{"palette":"teal"}');
+    expect(() => updateSettings(file, { theme: "dark" })).toThrow(
+      `Tondo's settings file ${file} has a palette that isn't default, slate, ocean or rose: "teal"`,
+    );
+    expect(readFileSync(file, "utf8")).toBe('{"palette":"teal"}');
+
+    expect(updateSettings(file, { palette: "slate" }).palette).toBe("slate");
   });
 });
 

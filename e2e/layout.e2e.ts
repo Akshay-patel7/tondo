@@ -255,10 +255,10 @@ test("at 200% zoom the sidebar steps aside, and the header and transcript keep t
   await zoom(tondo!, Math.min(width! / 600, height! / 400));
   await expect(sidebar).toBeHidden();
   await expect(page.getByRole("button", { name: "Show sidebar", exact: true })).toBeVisible();
-  // A narrow header shortens the label, not the button's name.
+  // A configured provider leaves room for the thread controls even at 200% zoom.
   await expect(
     page.getByRole("button", { name: "Sign in to a provider", exact: true }),
-  ).toBeVisible();
+  ).toBeHidden();
   await expectHeaderFits(page, "200% zoom");
   const zoomed = await measure(page);
   expect.soft(zoomed.transcript!.height, "the transcript's height").toBeGreaterThanOrEqual(80);

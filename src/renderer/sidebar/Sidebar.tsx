@@ -3,7 +3,6 @@
 // (apps/web/src/components/Sidebar.tsx). T3's rows each take a Tab stop;
 // here the rows share one, and the arrow keys, Home and End move between them.
 import {
-  Archive,
   ChevronRight,
   CircleAlert,
   Ellipsis,
@@ -29,7 +28,7 @@ import {
 import type { SidebarProject, SidebarThread, ThreadActivity } from "../../shared/protocol";
 import {
   addProject,
-  archiveThread,
+  deleteThread,
   newThread,
   openThread,
   pinThread,
@@ -150,7 +149,7 @@ function rowNear(element: HTMLElement): HTMLElement | undefined {
 
 /**
  * When the element leaves the page while it holds focus, such as a thread you
- * archived from its menu, focus moves to the row next to it, not to the page.
+ * deleted from its menu, focus moves to the row next to it, not to the page.
  * The host can drop the row before the menu has finished closing, and the
  * menu, which unmounts with it, isn't inside it.
  */
@@ -183,9 +182,11 @@ export function Sidebar() {
   const now = useMinute();
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const deletion = useHost((host) => host.deletion);
+  const confirmingDeletion = useHost((host) => host.confirmingDeletion);
   // Until you focus a row, Tab reaches the open thread's, or the first project's.
   const openListed = projects.some(
-    (project) => !project.collapsed && project.threads.some((t) => t.id === openId && !t.archived),
+    (project) => !project.collapsed && project.threads.some((t) => t.id === openId),
   );
   const askToRemove = (asked: Removal) => {
     setRemoval(asked);
@@ -262,12 +263,20 @@ export function Sidebar() {
               now={now}
               tabFallback={index === 0 && !openListed}
               onRemove={askToRemove}
+              onDelete={(asked) => useHost.setState({ deletion: asked, confirmingDeletion: true })}
             />
           ))}
         </div>
       </div>
       {removal === null ? null : (
         <RemoveProject removal={removal} open={confirming} onOpenChange={setConfirming} />
+      )}
+      {deletion === null ? null : (
+        <DeleteThread
+          thread={deletion}
+          open={confirmingDeletion}
+          onOpenChange={(open) => useHost.setState({ confirmingDeletion: open })}
+        />
       )}
     </nav>
   );
@@ -279,6 +288,7 @@ function ProjectGroup({
   now,
   tabFallback,
   onRemove,
+  onDelete,
 }: {
   project: SidebarProject;
   openId: string | undefined;
@@ -286,6 +296,7 @@ function ProjectGroup({
   /** Whether the header is the Tab stop until you focus a row. */
   tabFallback: boolean;
   onRemove: (removal: Removal) => void;
+  onDelete: (thread: SidebarThread) => void;
 }) {
   const [count, setCount] = useState(PAGE_SIZE);
   const name = folderName(project.path);
@@ -388,7 +399,13 @@ function ProjectGroup({
       {project.collapsed ? null : (
         <ul ref={threadList} className="mt-0.5 flex flex-col gap-px">
           {listed.map((thread) => (
-            <ThreadRow key={thread.id} thread={thread} open={thread.id === openId} now={now} />
+            <ThreadRow
+              key={thread.id}
+              thread={thread}
+              open={thread.id === openId}
+              now={now}
+              onDelete={onDelete}
+            />
           ))}
           {listed.length === 0 ? (
             <li className="py-1 pr-2 pl-7 text-xs text-muted-foreground">No threads yet</li>
@@ -443,8 +460,8 @@ function RemoveProject({
         <AlertDialogHeader>
           <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            Tondo forgets the project's pins, drafts, archive and turn checkpoints. pi's session
-            files stay on disk.
+            Tondo forgets the project's pins, drafts and turn checkpoints. pi's session files stay
+            on disk.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -459,6 +476,56 @@ function RemoveProject({
             }}
           >
             Remove {name}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+function DeleteThread({
+  thread,
+  open,
+  onOpenChange,
+}: {
+  thread: SidebarThread;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const returnTo = useRef<HTMLElement | null>(null);
+  const row = () =>
+    [...document.querySelectorAll<HTMLButtonElement>("button[data-thread-id]")].find(
+      (element) => element.dataset.threadId === thread.id,
+    );
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogPopup
+        finalFocus={() => {
+          const target = returnTo.current ?? row();
+          returnTo.current = null;
+          return target ?? true;
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {thread.title}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Permanently delete this pi session from disk, along with its pins, drafts and turn
+            checkpoints. This cannot be undone. Stop pi first if it is working. Managed worktrees
+            must be removed separately; their branches stay.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              const item = row()?.closest<HTMLElement>(ITEM);
+              returnTo.current = item ? (rowNear(item) ?? null) : null;
+              deleteThread(thread.id);
+              onOpenChange(false);
+            }}
+          >
+            Delete thread
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogPopup>
@@ -498,7 +565,17 @@ function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: b
   );
 }
 
-function ThreadRow({ thread, open, now }: { thread: SidebarThread; open: boolean; now: number }) {
+function ThreadRow({
+  thread,
+  open,
+  now,
+  onDelete,
+}: {
+  thread: SidebarThread;
+  open: boolean;
+  now: number;
+  onDelete: (thread: SidebarThread) => void;
+}) {
   const renaming = useRenaming((id) => id === thread.id);
   const key = `thread:${thread.id}`;
   const tabIndex = useTabStop(key, open);
@@ -528,9 +605,9 @@ function ThreadRow({ thread, open, now }: { thread: SidebarThread; open: boolean
         {thread.pinned ? <PinOff aria-hidden /> : <Pin aria-hidden />}
         {thread.pinned ? "Unpin" : "Pin"}
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => archiveThread(thread.id, true)}>
-        <Archive aria-hidden />
-        Archive
+      <DropdownMenuItem variant="destructive" onClick={() => onDelete(thread)}>
+        <Trash2 aria-hidden />
+        Delete…
       </DropdownMenuItem>
     </>
   );
@@ -550,6 +627,7 @@ function ThreadRow({ thread, open, now }: { thread: SidebarThread; open: boolean
               ref={row}
               type="button"
               data-sidebar-row=""
+              data-thread-id={thread.id}
               tabIndex={tabIndex}
               aria-current={open ? "page" : undefined}
               title={thread.title}

@@ -26,6 +26,7 @@ import {
   type PiStatus,
   type SettingsFile,
   type SidebarProject,
+  type SidebarThread,
   type StreamingBehavior,
   type ThinkingLevel,
 } from "../shared/protocol";
@@ -47,6 +48,9 @@ export const useHost = create<{
   thread: OpenThread | null;
   projects: readonly SidebarProject[];
   sidebarHidden: boolean;
+  /** Shared by the palette and sidebar; neither sends deletion before confirmation. */
+  deletion: SidebarThread | null;
+  confirmingDeletion: boolean;
   /** Errors the host reported, oldest first, until you dismiss them. */
   errors: readonly string[];
   /** Tondo's settings, or null until the host sends them. */
@@ -78,6 +82,8 @@ export const useHost = create<{
   thread: null,
   projects: [],
   sidebarHidden: false,
+  deletion: null,
+  confirmingDeletion: false,
   errors: [],
   settings: null,
   settingsError: null,
@@ -351,7 +357,7 @@ function receive(message: HostMessage): void {
       if (message.threadId === shownId()) {
         const text = editorText(useDraft.getState(), message.text, extensionText);
         extensionText = message.text;
-        editDraft(text);
+        editDraft(text, false);
       }
       break;
     case "toast": {
@@ -440,16 +446,28 @@ export function connectToHost(): void {
 const DRAFT_SAVE_MS = 250;
 
 /** The draft waiting to be saved, and the thread it belongs to. */
-let unsaved: { threadId: string; text: string } | undefined;
+let unsaved: { threadId: string; text: string; userInput: boolean } | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Changes the composer's text and saves it as the open thread's draft soon after. */
-export function editDraft(text: string): void {
+export function editDraft(text: string, userInput = true): void {
   setDraft(text);
   const threadId = shownId();
   if (threadId === undefined) return;
-  unsaved = { threadId, text };
+  // Preserve a pending user edit if an extension updates the composer before its save.
+  userInput ||= unsaved?.threadId === threadId && unsaved.userInput && unsaved.text.trim() !== "";
+  unsaved = { threadId, text, userInput };
   clearTimeout(saveTimer);
+  if (
+    userInput &&
+    text.trim() !== "" &&
+    !useHost
+      .getState()
+      .projects.some((project) => project.threads.some((thread) => thread.id === threadId))
+  ) {
+    saveDraft();
+    return;
+  }
   saveTimer = setTimeout(saveDraft, DRAFT_SAVE_MS);
 }
 
@@ -457,9 +475,9 @@ function saveDraft(): void {
   clearTimeout(saveTimer);
   saveTimer = undefined;
   if (!unsaved || !port) return;
-  const { threadId, text } = unsaved;
+  const { threadId, text, userInput } = unsaved;
   unsaved = undefined;
-  port.postMessage({ v, type: "set-draft", threadId, text } satisfies ClientMessage);
+  port.postMessage({ v, type: "set-draft", threadId, text, userInput } satisfies ClientMessage);
 }
 
 function send(message: ClientMessage): void {
@@ -505,8 +523,8 @@ export function pinThread(id: string, pinned: boolean): void {
   send({ v, type: "pin-thread", threadId: id, pinned });
 }
 
-export function archiveThread(id: string, archived: boolean): void {
-  send({ v, type: "archive-thread", threadId: id, archived });
+export function deleteThread(id: string): void {
+  send({ v, type: "delete-thread", threadId: id });
 }
 
 export function toggleSidebar(): void {

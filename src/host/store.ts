@@ -1,7 +1,7 @@
 // Tondo's own records, kept in SQLite in the app data folder: the projects you
-// added, which pi session file each thread uses, pins, archives, drafts and
-// the sidebar's state. The session files themselves are pi's, and Tondo only
-// reads them.
+// added, which pi session file each thread uses, pins, drafts and
+// the sidebar's state. Confirmed session deletion belongs to Workspace;
+// Store removes only Tondo metadata.
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -52,6 +52,8 @@ export const MIGRATIONS: readonly string[] = [
    ) STRICT;`,
   // No foreign key: retain ownership after interrupted creation or thread deletion,
   // so cleanup can inspect only folders Tondo actually created.
+  // Existing records remain listed, including resumed sessions without live messages.
+  `ALTER TABLE threads ADD COLUMN visible INTEGER NOT NULL DEFAULT 1;`,
 ];
 
 /** Brings `db` up to date with `migrations`, one transaction per migration. */
@@ -88,7 +90,7 @@ export interface StoredProject {
 
 /**
  * A thread Tondo has something to remember about. Sessions you started in
- * pi's own interface show in the sidebar without one until you pin, archive,
+ * pi's own interface show in the sidebar without one until you pin, delete,
  * open or draft in them.
  */
 export interface StoredThread {
@@ -103,6 +105,8 @@ export interface StoredThread {
   /** What you were writing in the composer. */
   readonly draft: string;
   readonly hasImages: boolean;
+  /** Latched once meaningful user input makes a new draft worth listing. */
+  readonly visible: boolean;
 }
 
 export interface StoredWorktree {
@@ -142,6 +146,7 @@ interface ThreadRow {
   archived: number;
   draft: string;
   has_images: number;
+  visible: number;
 }
 
 function toProject(row: ProjectRow): StoredProject {
@@ -163,6 +168,7 @@ function toThread(row: ThreadRow): StoredThread {
     archived: row.archived === 1,
     draft: row.draft,
     hasImages: row.has_images === 1,
+    visible: row.visible === 1,
   };
 }
 
@@ -238,18 +244,22 @@ export class Store {
   }
 
   /** Remembers a thread, unless Tondo already does. */
-  addThread(thread: Pick<StoredThread, "id" | "projectId" | "sessionFile" | "createdAt">): void {
+  addThread(
+    thread: Pick<StoredThread, "id" | "projectId" | "sessionFile" | "createdAt">,
+    visible = true,
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO threads (id, project_id, session_file, created_at) VALUES (?, ?, ?, ?)
+        `INSERT INTO threads (id, project_id, session_file, created_at, visible) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (id) DO NOTHING`,
       )
-      .run(thread.id, thread.projectId, thread.sessionFile, thread.createdAt);
+      .run(thread.id, thread.projectId, thread.sessionFile, thread.createdAt, visible ? 1 : 0);
   }
 
   /** Forgets a thread, such as a new one you left without writing anything. */
   removeThread(threadId: string): void {
     this.db.prepare("DELETE FROM threads WHERE id = ?").run(threadId);
+    if (this.ui().openThread === threadId) this.setUi("openThread", null);
   }
 
   setSessionFile(threadId: string, file: string): void {
@@ -260,12 +270,20 @@ export class Store {
     this.update(threadId, "pinned", pinned ? 1 : 0);
   }
 
+  /** Legacy metadata compatibility; no renderer action changes this flag. */
   setArchived(threadId: string, archived: boolean): void {
     this.update(threadId, "archived", archived ? 1 : 0);
   }
 
-  setDraft(threadId: string, draft: string): void {
-    this.update(threadId, "draft", draft);
+  revealThread(threadId: string): void {
+    this.update(threadId, "visible", 1);
+  }
+
+  setDraft(threadId: string, draft: string, userInput = true): void {
+    const { changes } = this.db
+      .prepare("UPDATE threads SET draft = ?, visible = MAX(visible, ?) WHERE id = ?")
+      .run(draft, userInput && draft.trim() !== "" ? 1 : 0, threadId);
+    if (changes === 0) throw new Error(`Tondo's store has no thread ${threadId}`);
   }
 
   /** Image bytes are read only for an open draft or a send, never for the sidebar. */
@@ -280,11 +298,19 @@ export class Store {
     if (images.length === 0) {
       this.db.prepare("DELETE FROM draft_images WHERE thread_id = ?").run(threadId);
     } else {
-      this.db
-        .prepare(
-          "INSERT INTO draft_images (thread_id, images) VALUES (?, ?) ON CONFLICT (thread_id) DO UPDATE SET images = excluded.images",
-        )
-        .run(threadId, JSON.stringify(images));
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db
+          .prepare(
+            "INSERT INTO draft_images (thread_id, images) VALUES (?, ?) ON CONFLICT (thread_id) DO UPDATE SET images = excluded.images",
+          )
+          .run(threadId, JSON.stringify(images));
+        this.db.prepare("UPDATE threads SET visible = 1 WHERE id = ?").run(threadId);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
     }
   }
 
@@ -301,6 +327,11 @@ export class Store {
         "INSERT INTO checkpoint_turns (thread_id, turn, data) VALUES (?, ?, ?) ON CONFLICT (thread_id, turn) DO UPDATE SET data = excluded.data",
       )
       .run(threadId, checkpoint.turn, JSON.stringify(checkpoint));
+  }
+
+  /** Clears checkpoint metadata after its refs are removed, retaining the session row. */
+  removeCheckpoints(threadId: string): void {
+    this.db.prepare("DELETE FROM checkpoint_turns WHERE thread_id = ?").run(threadId);
   }
 
   worktrees(): StoredWorktree[] {
@@ -345,7 +376,7 @@ export class Store {
 
   private update(
     threadId: string,
-    column: "session_file" | "pinned" | "archived" | "draft",
+    column: "session_file" | "pinned" | "archived" | "draft" | "visible",
     value: string | number,
   ): void {
     const { changes } = this.db

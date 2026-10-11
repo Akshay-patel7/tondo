@@ -249,7 +249,8 @@ test("an image-only draft survives switching threads and restarting the app", as
   await pickImage(page);
   await page.keyboard.press("ControlOrMeta+n");
   await expect(attachments(page)).toBeHidden();
-  await expect(threadRows(page)).toHaveCount(2);
+  // Only the image-populated draft is listed; the new empty composer stays hidden.
+  await expect(threadRows(page)).toHaveCount(1);
   await page.getByRole("img", { name: "Unsent draft" }).click();
   await expect(attachments(page).locator("img")).toHaveCount(1);
   await expect

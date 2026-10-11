@@ -5,6 +5,14 @@ export type ThemeSetting = "system" | "light" | "dark";
 
 export const THEME_SETTINGS: readonly ThemeSetting[] = ["system", "light", "dark"];
 
+/**
+ * The colors Tondo draws with, each in a light and a dark version. The theme
+ * picks the version, so the two settings never change each other.
+ */
+export const PALETTE_SETTINGS = ["default", "slate", "ocean", "rose"] as const;
+
+export type PaletteSetting = (typeof PALETTE_SETTINGS)[number];
+
 /** The app commands you can bind to a shortcut. */
 export const SHORTCUT_COMMANDS = [
   "palette",
@@ -48,6 +56,7 @@ export interface AppSettings {
   /** The pi command to run, or null to find pi on PATH. */
   readonly piPath: string | null;
   readonly theme: ThemeSetting;
+  readonly palette: PaletteSetting;
   readonly pool: PoolSettings;
   /** Chord text by command. null disables a shortcut, and a missing command keeps its default. */
   readonly shortcuts: Readonly<Partial<Record<ShortcutCommand, string | null>>>;
@@ -56,6 +65,8 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   piPath: null,
   theme: "system",
+  // The warm palette Tondo had before there were others.
+  palette: "default",
   pool: { maxLive: 4, idleMinutes: 10 },
   shortcuts: {},
 };
@@ -63,6 +74,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 /** A change to the settings. Only the fields present change. */
 export interface SettingsPatch {
   readonly theme?: ThemeSetting;
+  readonly palette?: PaletteSetting;
   readonly pool?: Partial<PoolSettings>;
   /** "default" removes your binding, so the command gets its default again. */
   readonly shortcuts?: Partial<Record<ShortcutCommand, string | null | "default">>;
@@ -72,6 +84,10 @@ export interface SettingsPatch {
 
 export function isThemeSetting(value: unknown): value is ThemeSetting {
   return THEME_SETTINGS.some((theme) => theme === value);
+}
+
+export function isPaletteSetting(value: unknown): value is PaletteSetting {
+  return PALETTE_SETTINGS.some((palette) => palette === value);
 }
 
 export function isShortcutCommand(value: unknown): value is ShortcutCommand {

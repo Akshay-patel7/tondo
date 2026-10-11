@@ -75,6 +75,22 @@ describe("migrate", () => {
     store.close();
   });
 
+  it("keeps all older records visible, including sessions without live messages", () => {
+    const file = path.join(dir, "legacy.sqlite");
+    const db = new DatabaseSync(file);
+    migrate(db, MIGRATIONS.slice(0, -1));
+    db.exec(
+      "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, session_file, created_at) VALUES ('resumed', 1, '/sessions/resumed.jsonl', 2), ('empty-legacy', 1, NULL, 3);",
+    );
+    db.close();
+    const store = Store.open(file);
+    expect(store.threads().map(({ id, visible }) => ({ id, visible }))).toEqual([
+      { id: "resumed", visible: true },
+      { id: "empty-legacy", visible: true },
+    ]);
+    store.close();
+  });
+
   it("rolls a failed migration back whole and stays at the version before it", () => {
     const db = new DatabaseSync(":memory:");
     const broken = "CREATE TABLE half (x INTEGER); INSERT INTO missing VALUES (1);";
@@ -102,6 +118,45 @@ describe("migrate", () => {
 });
 
 describe("Store", () => {
+  it("clears only checkpoint metadata while retaining the addressable session and draft", () => {
+    const store = Store.open(":memory:");
+    const { id: projectId } = store.addProject("/work/a", 1);
+    store.addThread({
+      id: "selected",
+      projectId,
+      sessionFile: "/external/selected.jsonl",
+      createdAt: 2,
+    });
+    store.addThread({
+      id: "sibling",
+      projectId,
+      sessionFile: "/external/sibling.jsonl",
+      createdAt: 3,
+    });
+    store.setDraft("selected", "Keep draft");
+    store.setDraftImages("selected", [IMAGE_FIXTURE]);
+    const checkpoint = {
+      turn: 1,
+      startedAt: 1,
+      state: "ready" as const,
+      reason: null,
+      root: "/work/a",
+      baseline: true,
+    };
+    store.saveCheckpoint("selected", checkpoint);
+    store.saveCheckpoint("sibling", checkpoint);
+    store.removeCheckpoints("selected");
+    expect(store.checkpoints("selected")).toEqual([]);
+    expect(store.checkpoints("sibling")).toEqual([checkpoint]);
+    expect(store.thread("selected")).toMatchObject({
+      sessionFile: "/external/selected.jsonl",
+      draft: "Keep draft",
+      visible: true,
+    });
+    expect(store.draftImages("selected")).toEqual([IMAGE_FIXTURE]);
+    store.close();
+  });
+
   it("persists checkpoint metadata and deletes it with its thread", () => {
     const file = path.join(dir, "checkpoints.sqlite");
     let store = Store.open(file);
@@ -154,6 +209,7 @@ describe("Store", () => {
         archived: true,
         draft: "half a thought",
         hasImages: false,
+        visible: true,
       },
     ]);
     expect(reopened.ui()).toEqual({ sidebarHidden: true, openThread: "t1" });
@@ -188,14 +244,61 @@ describe("Store", () => {
     expect(store.thread("t1")).toMatchObject({ sessionFile: "/s/first.jsonl", createdAt: 2 });
   });
 
+  it("keeps a revealed draft visible after clearing and reopening the store", () => {
+    const file = path.join(dir, "visibility.sqlite");
+    const store = Store.open(file);
+    const { id: projectId } = store.addProject("/work/a", 1);
+    store.addThread({ id: "t", projectId, sessionFile: null, createdAt: 2 }, false);
+    store.setDraft("t", " \n\t");
+    expect(store.thread("t")?.visible).toBe(false);
+    store.setDraft("t", "extension text", false);
+    expect(store.thread("t")?.visible).toBe(false);
+    store.setDraft("t", "my thought");
+    store.setDraft("t", "");
+    store.close();
+    const reopened = Store.open(file);
+    expect(reopened.thread("t")).toMatchObject({ visible: true, draft: "" });
+    reopened.close();
+  });
+
+  it("latches image-only input even after removing the attachment", () => {
+    const store = Store.open(":memory:");
+    const { id: projectId } = store.addProject("/work/a", 1);
+    store.addThread({ id: "t", projectId, sessionFile: null, createdAt: 2 }, false);
+    store.setDraftImages("t", []);
+    expect(store.thread("t")?.visible).toBe(false);
+    store.setDraftImages("t", [IMAGE_FIXTURE]);
+    store.setDraftImages("t", []);
+    expect(store.thread("t")).toMatchObject({ visible: true, hasImages: false });
+    store.close();
+  });
+
+  it("persists meaningful text and image input together with visibility", () => {
+    const file = path.join(dir, "drafts.sqlite");
+    const store = Store.open(file);
+    const { id: projectId } = store.addProject("/work/a", 1);
+    store.addThread({ id: "text", projectId, sessionFile: null, createdAt: 2 }, false);
+    store.addThread({ id: "image", projectId, sessionFile: null, createdAt: 3 }, false);
+    store.setDraft("text", "Unsent thought");
+    store.setDraftImages("image", [IMAGE_FIXTURE]);
+    store.close();
+    const reopened = Store.open(file);
+    expect(reopened.thread("text")).toMatchObject({ visible: true, draft: "Unsent thought" });
+    expect(reopened.thread("image")).toMatchObject({ visible: true, hasImages: true });
+    expect(reopened.draftImages("image")).toEqual([IMAGE_FIXTURE]);
+    reopened.close();
+  });
+
   it("forgets a thread", () => {
     const store = Store.open(":memory:");
     const { id: projectId } = store.addProject("/work/a", 1);
     store.addThread({ id: "t1", projectId, sessionFile: null, createdAt: 2 });
     store.addThread({ id: "t2", projectId, sessionFile: null, createdAt: 3 });
+    store.setUi("openThread", "t1");
     store.removeThread("t1");
     store.removeThread("never-added");
     expect(store.threads().map((thread) => thread.id)).toEqual(["t2"]);
+    expect(store.ui().openThread).toBeNull();
   });
 
   it("forgets a removed project's threads", () => {

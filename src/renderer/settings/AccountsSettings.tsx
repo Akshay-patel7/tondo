@@ -1,7 +1,8 @@
 // The Accounts section: the providers pi is signed in to, which the host reads
 // from pi's auth.json as provider ids and kinds only, the Claude usage that
-// pi-claude-subscription-connector shows, and Claude's sign-in, which opens
-// pi's Anthropic menu in the thread's sign-in terminal.
+// pi-claude-subscription-connector shows, and sign-in in the thread's sign-in
+// terminal: Claude's opens pi's Anthropic menu, and the other leaves pi's own
+// /login to pick any provider.
 import { CircleAlert, CircleCheck, CircleDashed, LogIn } from "lucide-react";
 import { useEffect, useId, type ReactNode } from "react";
 import type { OpenThread, PiAccount } from "../../shared/protocol";
@@ -58,11 +59,17 @@ export function AccountsSettings() {
 }
 
 function Accounts({ accounts }: { accounts: readonly PiAccount[] }) {
+  const reasonId = useId();
+  const blocked = useHost((host) => signInBlocked(host.thread));
   const others = accounts.filter((account) => account.provider !== "anthropic");
   return (
     <>
       <SettingsGroup>
-        <AnthropicAccount account={accounts.find((account) => account.provider === "anthropic")} />
+        <AnthropicAccount
+          account={accounts.find((account) => account.provider === "anthropic")}
+          blocked={blocked}
+          reasonId={reasonId}
+        />
         {others.map((account) => (
           <AccountRow
             key={account.provider}
@@ -71,7 +78,23 @@ function Accounts({ accounts }: { accounts: readonly PiAccount[] }) {
             signedIn
           />
         ))}
+        <AccountRow
+          name="Other providers"
+          status="Run /login in the sign-in terminal to pick one."
+          signedIn={false}
+          control={
+            <SignInButton variant="outline" blocked={blocked} reasonId={reasonId}>
+              Sign in to a provider
+            </SignInButton>
+          }
+        />
       </SettingsGroup>
+      {/* Both sign-ins run in the thread's terminal, so one reason covers them. */}
+      {blocked === null ? null : (
+        <p id={reasonId} className="text-xs text-muted-foreground">
+          {blocked}
+        </p>
+      )}
       {others.length === 0 ? (
         <p className="text-xs text-muted-foreground">pi has no other saved sign-ins.</p>
       ) : null}
@@ -79,31 +102,32 @@ function Accounts({ accounts }: { accounts: readonly PiAccount[] }) {
   );
 }
 
-function AnthropicAccount({ account }: { account: PiAccount | undefined }) {
-  const reasonId = useId();
+function AnthropicAccount({
+  account,
+  blocked,
+  reasonId,
+}: {
+  account: PiAccount | undefined;
+  blocked: string | null;
+  reasonId: string;
+}) {
   const usage = useExtensionUi(
     (ui) => ui.statuses.find((status) => status.key === CLAUDE_USAGE)?.text,
   );
-  const blocked = useHost((host) => signInBlocked(host.thread));
   return (
     <AccountRow
       name="Anthropic"
       status={anthropicSignIn(account)}
       signedIn={account !== undefined}
       control={
-        <Button
+        <SignInButton
+          provider="anthropic"
           variant={account === undefined ? "default" : "outline"}
-          size="sm"
-          disabled={blocked !== null}
-          aria-describedby={blocked === null ? undefined : reasonId}
-          onClick={() => {
-            closeSettings();
-            openTerminal("login", "anthropic");
-          }}
+          blocked={blocked}
+          reasonId={reasonId}
         >
-          <LogIn aria-hidden />
           Sign in with Claude
-        </Button>
+        </SignInButton>
       }
     >
       {usage === undefined ? null : (
@@ -112,8 +136,41 @@ function AnthropicAccount({ account }: { account: PiAccount | undefined }) {
           <dd>{usage}</dd>
         </dl>
       )}
-      {blocked === null ? null : <p id={reasonId}>{blocked}</p>}
     </AccountRow>
+  );
+}
+
+/**
+ * Closes Settings and opens pi in the thread's sign-in terminal, on the menu
+ * for `provider` if you name one. Without one, pi's own /login picks any.
+ */
+function SignInButton({
+  provider,
+  variant,
+  blocked,
+  reasonId,
+  children,
+}: {
+  provider?: string;
+  variant: "default" | "outline";
+  blocked: string | null;
+  reasonId: string;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      variant={variant}
+      size="sm"
+      disabled={blocked !== null}
+      aria-describedby={blocked === null ? undefined : reasonId}
+      onClick={() => {
+        closeSettings();
+        openTerminal("login", provider);
+      }}
+    >
+      <LogIn aria-hidden />
+      {children}
+    </Button>
   );
 }
 

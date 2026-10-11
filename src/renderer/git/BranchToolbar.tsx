@@ -370,7 +370,7 @@ const TITLES: Record<GitAction["kind"], string> = {
   switch: "Switch branch",
   "create-branch": "Create branch",
   "new-worktree": "Create worktree thread",
-  "remove-worktree": "Remove worktree and forget thread",
+  "remove-worktree": "Remove worktree",
   commit: "Stage all and commit",
   push: "Push branch",
   "create-pr": "Create pull request",
@@ -401,7 +401,7 @@ function describe({ kind, branch, status }: Action, worktree: boolean): string {
     case "create-pr":
       return `Create a pull request for ${status.branch} on ${status.remote}. Push first. This action does not push or merge.`;
     case "remove-worktree":
-      return "Delete this checkout and forget its thread in Tondo. The branch and external pi session file stay. Close its terminals first. Removal will refuse dirty or ignored files unless you confirm below.";
+      return "Delete this checkout. The branch and thread stay, so you can delete its pi session separately with Delete thread. Close its terminals first. Removal will refuse dirty or ignored files unless you confirm below.";
   }
 }
 
@@ -466,9 +466,9 @@ function RemoveMissingWorktree({ disabled, cwd }: { disabled: boolean; cwd: stri
               <AlertDialogTitle>{TITLES["remove-worktree"]}</AlertDialogTitle>
               <p className="font-mono text-xs break-all text-muted-foreground">{cwd}</p>
               <AlertDialogDescription>
-                Forget this thread in Tondo and clear Git&apos;s record of its checkout if the
-                folder is gone. The branch and external pi session file stay. A folder that still
-                exists is removed only if it has no uncommitted or ignored files.
+                Clear Git&apos;s record of this checkout if the folder is gone. The branch and
+                thread stay, so you can delete its pi session separately with Delete thread. A
+                folder that still exists is removed only if it has no uncommitted or ignored files.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {error ? (

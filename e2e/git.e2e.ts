@@ -133,6 +133,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
   await expectPicked(page, "Git branch", "feature/worktree");
+  await expect(threadRows(page)).toHaveCount(1);
   const checkout = worktreePath();
   expect(existsSync(path.join(checkout, "cwd-proof.txt"))).toBe(false);
   await send(page, "Record worktree cwd");
@@ -241,24 +242,32 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await expect(page.getByText("Path recorded.", { exact: true })).toBeVisible();
   const checkpoints = git(checkout, "for-each-ref", "--format=%(refname)", "refs/tondo");
   writeFileSync(path.join(checkout, "ignored"), "keep me");
-  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await page
+    .getByRole("toolbar", { name: "Git" })
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
   await page
     .getByRole("alertdialog")
-    .getByRole("button", { name: "Remove worktree and forget thread", exact: true })
+    .getByRole("button", { name: "Remove worktree", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("ignored files");
   expect(existsSync(path.join(checkout, "ignored"))).toBe(true);
   expect(git(checkout, "for-each-ref", "--format=%(refname)", "refs/tondo")).toBe(checkpoints);
   await page.screenshot({ path: "test-results/git-safe-removal.png" });
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toBeHidden();
   expect(existsSync(checkout)).toBe(true);
-  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await page
+    .getByRole("toolbar", { name: "Git" })
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
   await page
     .getByRole("checkbox", { name: "Permanently delete uncommitted and ignored files too" })
     .check();
-  await submit("Remove worktree and forget thread");
+  await submit("Remove worktree");
   expect(existsSync(checkout)).toBe(false);
   expect(existsSync(sessionFile)).toBe(true);
+  await expect(threadRows(page).filter({ hasText: "Record worktree cwd" })).toBeVisible();
   expect(git(project, "branch", "--list", "feature/worktree")).toContain("feature/worktree");
   await threadRows(page).filter({ hasText: "Record local cwd" }).click();
   await waitForPi(page);
@@ -399,14 +408,16 @@ test("a worktree whose folder was deleted outside Tondo can be removed, and then
   await submit("Create worktree thread");
   await waitForPi(page);
   await expectPicked(page, "Git branch", "feature/gone");
-  await expect(threadRows(page)).toHaveCount(2);
+  await expect(threadRows(page)).toHaveCount(0);
+  await composer(page).fill("Keep this worktree draft");
+  await expect(threadRows(page)).toHaveCount(1);
   const checkout = worktreePath();
   rmSync(checkout, { recursive: true, force: true });
 
   await page.getByRole("button", { name: "Refresh Git", exact: true }).click();
   await expect(page.getByText("This worktree's folder was deleted outside Tondo")).toBeVisible();
   await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
-  await submit("Remove worktree and forget thread");
+  await submit("Remove worktree");
   await expect(threadRows(page)).toHaveCount(1);
   expect(git(project, "worktree", "list", "--porcelain")).not.toContain(checkout);
   expect(git(project, "branch", "--list", "feature/gone")).toContain("feature/gone");

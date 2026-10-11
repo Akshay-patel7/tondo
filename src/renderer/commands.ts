@@ -1,7 +1,6 @@
 // Runs what the app shortcuts and the command palette ask for.
 import {
   addProject,
-  archiveThread,
   newThread,
   openTerminal,
   openThread,
@@ -94,11 +93,16 @@ export function runPaletteAction(action: PaletteAction): void {
     case "pin-thread":
       pinThread(action.threadId, action.pinned);
       break;
-    case "archive-thread":
-      archiveThread(action.threadId, action.archived);
+    case "delete-thread": {
+      const { sidebarHidden, projects } = useHost.getState();
+      if (sidebarHidden) toggleSidebar();
+      const project = projects.find(({ threads }) => threads.some((t) => t.id === action.threadId));
+      if (project?.collapsed) setCollapsed(project.id, false);
+      const deletion = project?.threads.find((t) => t.id === action.threadId);
+      if (deletion) useHost.setState({ deletion, confirmingDeletion: true });
       break;
+    }
     case "open-thread":
-      if (action.archived) archiveThread(action.threadId, false);
       openThread(action.threadId);
       break;
   }

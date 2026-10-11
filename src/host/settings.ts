@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   DEFAULT_SETTINGS,
+  isPaletteSetting,
   isPoolValue,
   isShortcutCommand,
   isThemeSetting,
@@ -78,6 +79,7 @@ export function updateSettings(file: string, patch: SettingsPatch): Settings {
   return write(file, (saved) => {
     const next: Record<string, unknown> = { ...saved };
     if (patch.theme !== undefined) next.theme = patch.theme;
+    if (patch.palette !== undefined) next.palette = patch.palette;
     if (patch.pool !== undefined) {
       next.pool = { ...(isObject(saved.pool) ? saved.pool : {}), ...patch.pool };
     }
@@ -175,6 +177,8 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     piPath,
     projectTrust = {},
     theme = DEFAULT_SETTINGS.theme,
+    // A file from before palettes has none, and keeps the look it had.
+    palette = DEFAULT_SETTINGS.palette,
     pool = {},
     shortcuts = {},
   } = saved;
@@ -195,6 +199,11 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   let chosenTheme = DEFAULT_SETTINGS.theme;
   if (isThemeSetting(theme)) chosenTheme = theme;
   else report(`has a theme that isn't system, light or dark: ${JSON.stringify(theme)}`);
+  let chosenPalette = DEFAULT_SETTINGS.palette;
+  if (isPaletteSetting(palette)) chosenPalette = palette;
+  else {
+    report(`has a palette that isn't default, slate, ocean or rose: ${JSON.stringify(palette)}`);
+  }
   if (!isObject(pool)) report("has a pool that isn't an object");
   const limits = { ...DEFAULT_SETTINGS.pool };
   if (isObject(pool)) {
@@ -219,7 +228,14 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
       } else report(`has a ${command} shortcut that isn't one: ${JSON.stringify(text)}`);
     }
   }
-  return { piPath: pi, theme: chosenTheme, pool: limits, shortcuts: bindings, projectTrust: trust };
+  return {
+    piPath: pi,
+    theme: chosenTheme,
+    palette: chosenPalette,
+    pool: limits,
+    shortcuts: bindings,
+    projectTrust: trust,
+  };
 }
 
 function problem(file: string, what: string): Error {

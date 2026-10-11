@@ -1,16 +1,28 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION as v, type HostMessage } from "../shared/protocol";
-import type { SettingsPatch } from "../shared/settings";
+import type { PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
 import type { ThreadListener } from "./liveThread";
 import { readSettings, readSettingsLeniently, updateSettings } from "./settings";
 import { Store } from "./store";
 import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { Terminals } from "./terminals";
 import { Workspace } from "./workspace";
+import { IMAGE_FIXTURE } from "../shared/imageFixture";
+import { SessionIndex } from "./sessionIndex";
+import { captureCheckpoint } from "./checkpoints";
 
 // Workspace runs real pi through LiveThread. These tests stand in for it, and
 // keep everything else Workspace builds on real: the store, settings.json,
@@ -22,12 +34,15 @@ const { FakeThread, threads } = vi.hoisted(() => {
     readonly project: string;
     readonly sessionFile: string | null;
     readonly listener: ThreadListener;
-    readonly checkpoints: unknown;
+    readonly checkpoints: { readonly busy: boolean };
     readonly status = { state: "ready" };
     readonly state = { messages: [], running: false, compaction: null, retry: null };
     readonly ui = {};
     readonly waiting = false;
-    readonly busy = false;
+    working = false;
+    get busy(): boolean {
+      return this.working || this.checkpoints.busy;
+    }
     readonly preparing = false;
     readonly askingTrust = false;
     readonly name = undefined;
@@ -37,18 +52,19 @@ const { FakeThread, threads } = vi.hoisted(() => {
     readonly open = vi.fn(async () => {});
     readonly close = vi.fn(async () => {});
     readonly trust = vi.fn(async (_trusted: boolean) => {});
+    readonly prompt = vi.fn(async () => {});
 
     constructor(
       project: { id: number; path: string },
-      session: { id: string; file: string | null },
+      selection: { id: string; file: string | null },
       _supervisor: unknown,
       listener: ThreadListener,
-      checkpoints: unknown,
+      checkpoints: { readonly busy: boolean },
     ) {
-      this.id = session.id;
+      this.id = selection.id;
       this.projectId = project.id;
       this.project = project.path;
-      this.sessionFile = session.file;
+      this.sessionFile = selection.file;
       this.listener = listener;
       this.checkpoints = checkpoints;
       made.push(this);
@@ -78,6 +94,7 @@ let store: Store;
 let sent: HostMessage[];
 let waiters: { match: (message: HostMessage) => boolean; resolve: (m: HostMessage) => void }[];
 let reveal: ReturnType<typeof vi.fn<(file: string) => void>>;
+let setTheme: ReturnType<typeof vi.fn<(theme: ThemeSetting, palette: PaletteSetting) => void>>;
 let workspace: Workspace;
 
 beforeEach(() => {
@@ -89,6 +106,7 @@ beforeEach(() => {
   sent = [];
   waiters = [];
   reveal = vi.fn<(file: string) => void>();
+  setTheme = vi.fn<(theme: ThemeSetting, palette: PaletteSetting) => void>();
   const supervisor = {
     settingsFile,
     settings: () => readSettings(settingsFile),
@@ -98,6 +116,7 @@ beforeEach(() => {
     discover: async () => ({ found: false }),
     captureLoginEnv: async () => ({}),
     needsTrustAnswer: async () => false,
+    sessionFolder: async () => ({ dir: path.join(dir, "sessions"), shared: true }),
   };
   workspace = new Workspace({
     userData: dir,
@@ -114,7 +133,7 @@ beforeEach(() => {
     },
     chooseFolder: () => {},
     choosePi: () => {},
-    setTheme: () => {},
+    setTheme,
     attention: () => {},
     copy: () => {},
     reveal,
@@ -197,6 +216,33 @@ describe("settings messages", () => {
     expect(message.settings.pool.maxLive).toBe(4);
     expect(readFileSync(settingsFile, "utf8")).toBe("{}\n");
   });
+
+  it("sends a palette change to the page and main without changing the scheme", async () => {
+    writeFileSync(settingsFile, JSON.stringify({ theme: "dark" }));
+    workspace.applySettings();
+    expect(setTheme.mock.calls).toEqual([["dark", "default"]]);
+
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch: { palette: "ocean" } });
+    expect(await changed).toMatchObject({
+      type: "settings",
+      error: null,
+      settings: { theme: "dark", palette: "ocean" },
+    });
+    expect(setTheme.mock.calls).toEqual([
+      ["dark", "default"],
+      ["dark", "ocean"],
+    ]);
+    expect(JSON.parse(readFileSync(settingsFile, "utf8"))).toEqual({
+      theme: "dark",
+      palette: "ocean",
+    });
+
+    // A new page, as after a reload, gets the saved palette.
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({ settings: { theme: "dark", palette: "ocean" } });
+  });
 });
 
 describe("find-files", () => {
@@ -224,7 +270,7 @@ describe("a project folder deleted outside Tondo", () => {
     const project = path.join(dir, "gone");
     mkdirSync(project);
     const { id: projectId } = store.addProject(project, 1);
-    addThread(projectId, "thread-a");
+    const file = session("thread-a", projectId, project);
     const thread = await openThread("thread-a");
     rmSync(project, { recursive: true });
     const removed = next(
@@ -237,6 +283,7 @@ describe("a project folder deleted outside Tondo", () => {
     expect(thread.close).toHaveBeenCalledTimes(1);
     expect(store.projects()).toEqual([]);
     expect(store.threads()).toEqual([]);
+    expect(existsSync(file)).toBe(true);
     expect(sent).toContainEqual(expect.objectContaining({ type: "snapshot", thread: null }));
   });
 
@@ -244,47 +291,579 @@ describe("a project folder deleted outside Tondo", () => {
     const project = path.join(dir, "gone");
     mkdirSync(project);
     const { id: projectId } = store.addProject(project, 1);
-    addThread(projectId, "thread-a");
+    store.addThread({ id: "thread-a", projectId, sessionFile: null, createdAt: 1 }, false);
     addThread(projectId, "thread-b");
     const left = await openThread("thread-a");
     rmSync(project, { recursive: true });
-    const forgotten = next(
-      (message) =>
-        isError(message) ||
-        (message.type === "sidebar" &&
-          !message.projects[0]!.threads.some(({ id }) => id === "thread-a")),
-    );
+    // The row was already hidden, so deletion need not change the sidebar.
+    const forgotten = Promise.withResolvers<void>();
+    const remove = store.removeThread.bind(store);
+    vi.spyOn(store, "removeThread").mockImplementation((id) => {
+      remove(id);
+      if (id === "thread-a") forgotten.resolve();
+    });
     await openThread("thread-b");
-    expect((await forgotten).type).toBe("sidebar");
+    await forgotten.promise;
     expect(left.close).toHaveBeenCalledTimes(1);
     expect(store.thread("thread-a")).toBeUndefined();
     expect(store.thread("thread-b")).toBeDefined();
   });
 });
 
-/** The sidebar once its only thread's archived flag is `value`, or an error. */
-function archived(value: boolean): Promise<HostMessage> {
+describe("draft visibility", () => {
+  it("keeps a new worktree hidden until meaningful input without forgetting its ownership", async () => {
+    const { id: existingId } = await managedSession();
+    const projectId = store.thread(existingId)!.projectId;
+    addThread(projectId, "local");
+    await openThread("local");
+    const created = next((message) => message.type === "git-result");
+    workspace.handle({
+      v,
+      type: "git-action",
+      threadId: "local",
+      id: 1,
+      expectedBranch: "main",
+      action: { kind: "new-worktree", branch: "empty-worktree", base: "main" },
+    });
+    expect(await created).toMatchObject({ type: "git-result", error: null });
+    const id = store.ui().openThread!;
+    expect(store.thread(id)).toMatchObject({ visible: false, sessionFile: null });
+    expect(store.worktrees().find((entry) => entry.threadId === id)).toBeDefined();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: expect.not.arrayContaining([expect.objectContaining({ id })]) }],
+    });
+    expect(store.thread(existingId)?.visible).toBe(true);
+    workspace.handle({ v, type: "set-draft", threadId: id, text: " \n\t" });
+    await openThread("local");
+    await workspace.refresh();
+    expect(store.thread(id)?.visible).toBe(false);
+    expect(store.worktrees().find((entry) => entry.threadId === id)).toBeDefined();
+    await openThread(id);
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "Worktree thought" });
+    expect(store.thread(id)).toMatchObject({ visible: true, draft: "Worktree thought" });
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        { threads: expect.arrayContaining([expect.objectContaining({ id, hasDraft: true })]) },
+      ],
+    });
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
+    expect(store.thread(id)?.visible).toBe(true);
+  });
+
+  it("reveals an unedited extension suggestion only after pi accepts its submission", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    const liveThread = threads.find((thread) => thread.id === id)!;
+    workspace.handle({
+      v,
+      type: "set-draft",
+      threadId: id,
+      text: "Extension suggestion",
+      userInput: false,
+    });
+    // Submit clears the composer ahead of sending; no user editor edit revealed it.
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
+    const accepted = Promise.withResolvers<void>();
+    liveThread.prompt.mockImplementationOnce(() => accepted.promise);
+    const revealed = next((message) => message.type === "sidebar");
+    workspace.handle({
+      v,
+      type: "prompt",
+      threadId: id,
+      text: "Extension suggestion",
+      streamingBehavior: "steer",
+    });
+    expect(store.thread(id)?.visible).toBe(false);
+    accepted.resolve();
+    expect(await revealed).toMatchObject({ projects: [{ threads: [{ id, hasDraft: false }] }] });
+    expect(store.thread(id)).toMatchObject({ visible: true, draft: "" });
+    expect(liveThread.prompt).toHaveBeenCalledWith("Extension suggestion", "steer", []);
+  });
+
+  it("does not latch an extension suggestion when pi rejects its submission", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    const liveThread = threads.find((thread) => thread.id === id)!;
+    store.setDraft(id, "Extension suggestion", false);
+    liveThread.prompt.mockRejectedValueOnce(new Error("pi rejected the prompt"));
+    const rejected = next(isError);
+    workspace.handle({
+      v,
+      type: "prompt",
+      threadId: id,
+      text: "Extension suggestion",
+      streamingBehavior: "steer",
+    });
+    expect(await rejected).toMatchObject({ type: "error", message: "pi rejected the prompt" });
+    expect(store.thread(id)?.visible).toBe(false);
+  });
+
+  it("keeps a current draft usable but unlisted until meaningful input", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    expect(sent.find((message) => message.type === "snapshot")).toMatchObject({
+      thread: { id },
+      draft: "",
+    });
+    const sidebar = () => sent.findLast((message) => message.type === "sidebar");
+    expect(sidebar()).toMatchObject({ projects: [{ threads: [] }] });
+    workspace.handle({ v, type: "set-draft", threadId: id, text: " \n\t" });
+    workspace.handle({
+      v,
+      type: "set-draft",
+      threadId: id,
+      text: "Extension suggestion",
+      userInput: false,
+    });
+    expect(sidebar()).toMatchObject({ projects: [{ threads: [] }] });
+    const revealed = next((message) => message.type === "sidebar");
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "A thought" });
+    expect(await revealed).toMatchObject({ projects: [{ threads: [{ id, hasDraft: true }] }] });
+    workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
+    workspace.handle({ v, type: "new-thread", projectId });
+    expect(sidebar()).toMatchObject({ projects: [{ threads: [{ id, hasDraft: false }] }] });
+    expect(store.thread(id)?.visible).toBe(true);
+  });
+
+  it("reveals image-only input without requiring a prompt", () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    workspace.handle({ v, type: "set-draft-images", threadId: id, images: [IMAGE_FIXTURE] });
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id, hasDraft: true }] }],
+    });
+  });
+
+  it("keeps resumed records listed before live messages load", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    addThread(projectId, "resumed");
+    await openThread("resumed");
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id: "resumed" }] }],
+    });
+  });
+
+  it("does not reveal a hidden draft when its offscreen extension sets editor text", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    workspace.handle({ v, type: "new-thread", projectId });
+    const id = store.ui().openThread!;
+    const liveThread = threads.find((thread) => thread.id === id)!;
+    store.setDraft(id, "Extension suggestion", false);
+    addThread(projectId, "other");
+    await openThread("other");
+    liveThread.listener.editorText("Updated extension suggestion");
+    expect(store.thread(id)).toMatchObject({
+      visible: false,
+      draft: "Extension suggestion\n\nUpdated extension suggestion",
+    });
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id: "other" }] }],
+    });
+  });
+});
+
+/** Deletion completion, or a refusal. Register before requesting deletion. */
+function deleted(id: string): Promise<HostMessage> {
   return next(
     (message) =>
       isError(message) ||
-      (message.type === "sidebar" && message.projects[0]!.threads[0]!.archived === value),
+      (message.type === "sidebar" &&
+        !message.projects.some((project) => project.threads.some((thread) => thread.id === id))),
   );
 }
 
-describe("archive-thread", () => {
-  it("closes the thread's terminal when archiving, and not when unarchiving", async () => {
+function session(id: string, projectId: number, cwd = dir): string {
+  const folder = path.join(dir, "sessions");
+  mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, `${id}.jsonl`);
+  writeFileSync(
+    file,
+    `${JSON.stringify({ type: "session", id, cwd, timestamp: new Date(1).toISOString() })}\n`,
+  );
+  store.addThread({ id, projectId, sessionFile: file, createdAt: 1 });
+  return file;
+}
+
+/** A real ledger-owned linked checkout with its pi session stored outside it. */
+async function managedSession() {
+  const project = repository("managed-project", []);
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: project, encoding: "utf8", stdio: "pipe" }).trim();
+  git("symbolic-ref", "HEAD", "refs/heads/main");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.com");
+  git("config", "commit.gpgsign", "false");
+  writeFileSync(path.join(project, ".gitignore"), "ignored\n");
+  git("add", ".");
+  git("commit", "-m", "fixture");
+  const id = "managed-lifecycle";
+  const checkout = path.join(dir, "worktrees", id);
+  mkdirSync(path.dirname(checkout), { recursive: true });
+  git("worktree", "add", "-b", "kept-branch", checkout);
+  const { id: projectId } = store.addProject(project, 1);
+  const file = session(id, projectId, checkout);
+  store.addWorktree({ path: checkout, repository: project, branch: "kept-branch", threadId: id });
+  const thread = await openThread(id);
+  return { id, project, checkout, file, thread, git };
+}
+
+async function removeManagedThread(id: string, force = false): Promise<HostMessage> {
+  const result = next((message) => message.type === "git-result");
+  workspace.handle({
+    v,
+    type: "git-action",
+    threadId: id,
+    id: 1,
+    expectedBranch: "kept-branch",
+    action: { kind: "remove-worktree", force },
+  });
+  return result;
+}
+
+describe("explicit worktree removal retains its session", () => {
+  it.each([false, true])(
+    "retains an addressable session after removal, with missing checkout %s",
+    async (gone) => {
+      const { id, project, checkout, file, thread, git } = await managedSession();
+      store.setPinned(id, true);
+      store.setDraft(id, "Keep the draft");
+      store.setDraftImages(id, [IMAGE_FIXTURE]);
+      store.saveCheckpoint(id, {
+        turn: 1,
+        startedAt: 1,
+        state: "ready",
+        reason: null,
+        root: project,
+        baseline: true,
+      });
+      if (gone) rmSync(checkout, { recursive: true });
+      expect(await removeManagedThread(id)).toMatchObject({ type: "git-result", error: null });
+      expect(thread.close).toHaveBeenCalledTimes(1);
+      expect(existsSync(checkout)).toBe(false);
+      expect(existsSync(file)).toBe(true);
+      expect(store.worktrees()).toEqual([]);
+      expect(store.thread(id)).toMatchObject({
+        sessionFile: file,
+        visible: true,
+        pinned: true,
+        draft: "Keep the draft",
+      });
+      expect(store.draftImages(id)).toEqual([IMAGE_FIXTURE]);
+      expect(store.checkpoints(id)).toEqual([]);
+      expect(git("branch", "--list", "kept-branch")).toContain("kept-branch");
+      await workspace.refresh();
+      expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+        projects: [{ threads: [{ id }] }],
+      });
+      const restarted = Store.open(path.join(dir, "tondo.db"));
+      expect(restarted.thread(id)).toMatchObject({ sessionFile: file, visible: true });
+      expect(restarted.worktrees()).toEqual([]);
+      restarted.close();
+    },
+  );
+
+  it("deletes the retained external session without removing its branch", async () => {
+    const { id, checkout, file, git } = await managedSession();
+    expect(await removeManagedThread(id)).toMatchObject({ error: null });
+    await workspace.refresh();
+    const removed = deleted(id);
+    workspace.handle({ v, type: "delete-thread", threadId: id });
+    expect((await removed).type).toBe("sidebar");
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(checkout)).toBe(false);
+    expect(store.thread(id)).toBeUndefined();
+    expect(store.worktrees()).toEqual([]);
+    expect(git("branch", "--list", "kept-branch")).toContain("kept-branch");
+    const restarted = Store.open(path.join(dir, "tondo.db"));
+    expect(restarted.thread(id)).toBeUndefined();
+    restarted.close();
+    expect(
+      await new SessionIndex().list(checkout, { dir: path.dirname(file), shared: true }),
+    ).toEqual([]);
+  });
+
+  it.each(["dirty", "ignored", "inside-session"])(
+    "keeps refusal safeguards for %s files",
+    async (kind) => {
+      const { id, checkout, file, thread, git } = await managedSession();
+      const protectedFile = path.join(checkout, kind === "ignored" ? "ignored" : "protected");
+      writeFileSync(protectedFile, kind === "inside-session" ? readFileSync(file, "utf8") : "keep");
+      if (kind === "inside-session") store.setSessionFile(id, protectedFile);
+      const result = await removeManagedThread(id, kind === "inside-session");
+      expect(result).toMatchObject({ type: "git-result", error: expect.any(String) });
+      expect(thread.close).not.toHaveBeenCalled();
+      expect(existsSync(checkout)).toBe(true);
+      expect(existsSync(file)).toBe(true);
+      expect(existsSync(protectedFile)).toBe(true);
+      expect(store.worktrees()).toHaveLength(1);
+      expect(store.thread(id)).toBeDefined();
+      expect(git("branch", "--list", "kept-branch")).toContain("kept-branch");
+    },
+  );
+});
+
+describe("delete-thread", () => {
+  it("closes idle pi and its terminal before deleting only the selected file and metadata", async () => {
     const close = vi.spyOn(Terminals.prototype, "close");
     const { id: projectId } = store.addProject(dir, 1);
-    addThread(projectId, "thread-a");
-    const hidden = archived(true);
-    workspace.handle({ v, type: "archive-thread", threadId: "thread-a", archived: true });
-    expect((await hidden).type).toBe("sidebar");
+    const file = session("thread-a", projectId);
+    const sibling = session("thread-b", projectId);
+    store.setDraft("thread-a", "draft");
+    store.setDraftImages("thread-a", [IMAGE_FIXTURE]);
+    const thread = await openThread("thread-a");
+    thread.close.mockImplementationOnce(async () => {
+      expect(existsSync(file)).toBe(true);
+    });
+    const removed = deleted("thread-a");
+    workspace.handle({ v, type: "delete-thread", threadId: "thread-a" });
+    expect((await removed).type).toBe("sidebar");
     expect(close).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledWith("thread-a");
-    const shown = archived(false);
-    workspace.handle({ v, type: "archive-thread", threadId: "thread-a", archived: false });
-    expect((await shown).type).toBe("sidebar");
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(thread.close).toHaveBeenCalledTimes(1);
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
+    expect(store.thread("thread-a")).toBeUndefined();
+    expect(store.draftImages("thread-a")).toEqual([]);
+    expect(store.ui().openThread).toBeNull();
+    expect(
+      await new SessionIndex().list(dir, { dir: path.dirname(file), shared: true }),
+    ).toMatchObject([{ id: "thread-b" }]);
+    const stale = next(isError);
+    workspace.handle({ v, type: "open-thread", threadId: "thread-a" });
+    expect((await stale).type).toBe("error");
+    expect(threads.filter(({ id }) => id === "thread-a")).toHaveLength(1);
+  });
+
+  it("refuses busy pi including checkpoint work without closing or losing the session", async () => {
+    const close = vi.spyOn(Terminals.prototype, "close");
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("busy", projectId);
+    const thread = await openThread("busy");
+    thread.working = true;
+    const refused = next(isError);
+    workspace.handle({ v, type: "delete-thread", threadId: "busy" });
+    expect(await refused).toMatchObject({
+      type: "error",
+      message: expect.stringContaining("Stop pi first"),
+    });
+    expect(thread.close).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(existsSync(file)).toBe(true);
+    expect(store.thread("busy")).toBeDefined();
+  });
+
+  it("refuses deletion while only checkpoint work is busy", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("checkpoint-busy", projectId);
+    const thread = await openThread("checkpoint-busy");
+    vi.spyOn(thread.checkpoints, "busy", "get").mockReturnValue(true);
+    const refused = next(isError);
+    workspace.handle({ v, type: "delete-thread", threadId: thread.id });
+    expect((await refused).type).toBe("error");
+    expect(thread.close).not.toHaveBeenCalled();
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("guards reopening, drafts, prompts and terminals while closing pi", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("closing", projectId);
+    const thread = await openThread("closing");
+    const entered = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    thread.close.mockImplementationOnce(() => {
+      entered.resolve();
+      return closed.promise;
+    });
+    const removed = deleted("closing");
+    workspace.handle({ v, type: "delete-thread", threadId: "closing" });
+    await entered.promise;
+    workspace.handle({ v, type: "open-thread", threadId: "closing" });
+    workspace.handle({ v, type: "set-draft", threadId: "closing", text: "race" });
+    workspace.handle({
+      v,
+      type: "prompt",
+      threadId: "closing",
+      text: "race",
+      streamingBehavior: "steer",
+    });
+    workspace.handle({ v, type: "terminal-open", threadId: "closing", kind: "shell" });
+    expect(thread.prompt).not.toHaveBeenCalled();
+    expect(store.thread("closing")?.draft).toBe("");
+    expect(existsSync(file)).toBe(true);
+    closed.resolve();
+    expect((await removed).type).toBe("sidebar");
+    expect(store.thread("closing")).toBeUndefined();
+  });
+
+  it("keeps the row recoverable when unlink fails", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("failed", projectId);
+    const folder = path.dirname(file);
+    await openThread("failed");
+    chmodSync(folder, 0o500);
+    try {
+      const failed = next(isError);
+      workspace.handle({ v, type: "delete-thread", threadId: "failed" });
+      expect(await failed).toMatchObject({
+        type: "error",
+        message: expect.stringContaining("EACCES"),
+      });
+    } finally {
+      chmodSync(folder, 0o700);
+    }
+    expect(store.thread("failed")).toBeDefined();
+    expect(existsSync(file)).toBe(true);
+    await openThread("failed");
+    expect(threads.filter(({ id }) => id === "failed")).toHaveLength(2);
+  });
+
+  it("deletes a discovered session without preexisting metadata and does not rediscover it", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("discovered", projectId);
+    store.removeThread("discovered");
+    const discovered = next(
+      (message) =>
+        message.type === "sidebar" &&
+        message.projects.some((project) => project.threads.some(({ id }) => id === "discovered")),
+    );
+    workspace.handle({ v, type: "refresh" });
+    await discovered;
+    expect(store.thread("discovered")).toBeUndefined();
+    const removed = deleted("discovered");
+    workspace.handle({ v, type: "delete-thread", threadId: "discovered" });
+    expect((await removed).type).toBe("sidebar");
+    expect(existsSync(file)).toBe(false);
+    expect(store.thread("discovered")).toBeUndefined();
+    const index = new SessionIndex();
+    expect(await index.list(dir, { dir: path.dirname(file), shared: true })).toEqual([]);
+  });
+
+  it("unlinks recorded copies in order and stops at the first failure", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const first = session("ordered", projectId);
+    const blocked = path.join(dir, "blocked");
+    mkdirSync(blocked);
+    const second = path.join(blocked, "second.jsonl");
+    const last = path.join(dir, "last.jsonl");
+    const bytes = readFileSync(first, "utf8");
+    writeFileSync(second, bytes);
+    writeFileSync(last, bytes);
+    vi.spyOn(SessionIndex.prototype, "files").mockReturnValue([first, second, last]);
+    const unlink = vi.spyOn(SessionIndex.prototype, "delete");
+    chmodSync(blocked, 0o500);
+    try {
+      const failed = next(isError);
+      workspace.handle({ v, type: "delete-thread", threadId: "ordered" });
+      expect(await failed).toMatchObject({
+        type: "error",
+        message: expect.stringContaining("EACCES"),
+      });
+    } finally {
+      chmodSync(blocked, 0o700);
+    }
+    expect(unlink.mock.calls).toEqual([
+      [first, "ordered"],
+      [second, "ordered"],
+    ]);
+    expect(existsSync(first)).toBe(false);
+    expect(readFileSync(second, "utf8")).toBe(bytes);
+    expect(readFileSync(last, "utf8")).toBe(bytes);
+    expect(store.thread("ordered")).toBeDefined();
+  });
+
+  it("removes only the selected thread's checkpoint refs and metadata", async () => {
+    const checkout = repository("checkpoint-root", ["tracked"]);
+    const { id: projectId } = store.addProject(checkout, 1);
+    session("selected-checkpoints", projectId, checkout);
+    session("sibling-checkpoints", projectId, checkout);
+    await captureCheckpoint(checkout, "selected-checkpoints", 0);
+    await captureCheckpoint(checkout, "sibling-checkpoints", 0);
+    store.saveCheckpoint("selected-checkpoints", {
+      turn: 1,
+      startedAt: 1,
+      state: "ready",
+      reason: null,
+      root: checkout,
+      baseline: true,
+    });
+    const removed = deleted("selected-checkpoints");
+    workspace.handle({ v, type: "delete-thread", threadId: "selected-checkpoints" });
+    expect((await removed).type).toBe("sidebar");
+    expect(store.checkpoints("selected-checkpoints")).toEqual([]);
+    const refs = execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/tondo"], {
+      cwd: checkout,
+      encoding: "utf8",
+    });
+    expect(refs).not.toContain(
+      `refs/tondo/checkpoints/${Buffer.from("selected-checkpoints").toString("base64url")}/`,
+    );
+    expect(refs).toContain(
+      `refs/tondo/checkpoints/${Buffer.from("sibling-checkpoints").toString("base64url")}/`,
+    );
+  });
+
+  it("deletes a legacy archived session with a missing checkout and missing file", async () => {
+    const checkout = path.join(dir, "gone");
+    const { id: projectId } = store.addProject(checkout, 1);
+    store.addThread({
+      id: "gone",
+      projectId,
+      sessionFile: path.join(dir, "missing.jsonl"),
+      createdAt: 1,
+    });
+    store.setArchived("gone", true);
+    workspace.greet();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id: "gone" }] }],
+    });
+    const removed = deleted("gone");
+    workspace.handle({ v, type: "delete-thread", threadId: "gone" });
+    expect((await removed).type).toBe("sidebar");
+    expect(store.thread("gone")).toBeUndefined();
+  });
+
+  it("refuses a managed checkout without losing files or its ownership ledger", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("managed", projectId);
+    const checkout = path.join(dir, "checkout");
+    mkdirSync(checkout);
+    writeFileSync(path.join(checkout, "untracked"), "keep");
+    store.addWorktree({
+      path: checkout,
+      repository: dir,
+      branch: "keep-branch",
+      threadId: "managed",
+    });
+    const refused = next(isError);
+    workspace.handle({ v, type: "delete-thread", threadId: "managed" });
+    expect(await refused).toMatchObject({
+      type: "error",
+      message: expect.stringContaining("Remove this thread's managed worktree first"),
+    });
+    expect(readFileSync(path.join(checkout, "untracked"), "utf8")).toBe("keep");
+    expect(store.worktrees()).toHaveLength(1);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("repairs a missing managed checkout before forgetting its owner", async () => {
+    const missingRepository = path.join(dir, "gone-repository");
+    const { id: projectId } = store.addProject(missingRepository, 1);
+    const file = session("missing-managed", projectId, missingRepository);
+    store.addWorktree({
+      path: path.join(dir, "gone-checkout"),
+      repository: missingRepository,
+      branch: "kept",
+      threadId: "missing-managed",
+    });
+    const removed = deleted("missing-managed");
+    workspace.handle({ v, type: "delete-thread", threadId: "missing-managed" });
+    expect((await removed).type).toBe("sidebar");
+    expect(store.worktrees()).toEqual([]);
+    expect(existsSync(file)).toBe(false);
   });
 });
 

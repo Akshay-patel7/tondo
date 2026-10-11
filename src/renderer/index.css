@@ -74,7 +74,8 @@
  * Components color themselves with these names, never with palette colors, so
  * the look changes here alone. The names follow shadcn's, which streamdown uses
  * too. The values are the Warm direction from the Stage 4 design checkpoint
- * (docs/plan.md, "Decisions").
+ * (docs/plan.md, "Decisions"), the default palette. Slate, Ocean and Rose
+ * follow it.
  */
 @theme inline {
   --color-background: var(--background);
@@ -113,7 +114,8 @@
   --shadow-composer: var(--composer-shadow);
 }
 
-:root {
+:root,
+[data-palette="default"] {
   color-scheme: light dark;
   --background: oklch(98.4% 0.005 85);
   --foreground: oklch(26% 0.012 60);
@@ -156,7 +158,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root,
+  [data-palette="default"] {
     --background: oklch(21.5% 0.006 60);
     --foreground: oklch(93% 0.01 80);
     --card: oklch(25% 0.007 60);
@@ -184,6 +187,211 @@
     --input: oklch(100% 0 0 / 14%);
     --control-border: oklch(57% 0.012 70);
     --sidebar: oklch(24% 0.007 60);
+    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+  }
+}
+
+/*
+ * The other palettes. App.tsx puts the one your settings name on <html> as
+ * data-palette, and the color scheme still picks light or dark, so each one
+ * has both. Each declares every color the default does, in both schemes, so
+ * nothing of another palette or scheme shows through. The swatches in Settings
+ * put data-palette on themselves to show a palette before you pick it, which
+ * is why the default's blocks match [data-palette="default"] too.
+ *
+ * Each keeps the default's lightness steps, so its text and control edges
+ * reach the contrast the default's do, and --primary-foreground on --primary
+ * reaches 5.1:1 or more. --addition and --deletion keep 4.5:1 on the tints of
+ * pierre's added and removed lines, which no palette changes.
+ */
+[data-palette="slate"] {
+  --background: oklch(98.4% 0.004 255);
+  --foreground: oklch(26% 0.022 262);
+  --card: oklch(99.6% 0.0015 255);
+  --popover: oklch(99.6% 0.0015 255);
+  --message: oklch(94.8% 0.012 258);
+  --muted: oklch(96.4% 0.007 258);
+  --muted-foreground: oklch(51% 0.028 260);
+  --accent: oklch(94% 0.012 258);
+  --accent-foreground: oklch(24% 0.022 262);
+  --primary: oklch(51% 0.1 268);
+  --primary-foreground: oklch(99% 0.004 255);
+  --secondary: oklch(94.5% 0.011 258);
+  --secondary-foreground: oklch(24% 0.022 262);
+  --destructive: oklch(55% 0.2 27);
+  --destructive-foreground: oklch(99% 0 0);
+  --warning: oklch(58% 0.13 65);
+  --warning-foreground: oklch(99% 0.004 255);
+  --success: oklch(52% 0.13 150);
+  --success-foreground: oklch(99% 0.004 255);
+  --info: oklch(53% 0.12 240);
+  --info-foreground: oklch(99% 0.004 255);
+  --addition: oklch(52% 0.13 150);
+  --deletion: oklch(55% 0.19 27);
+  --border: oklch(89.5% 0.012 258);
+  --input: oklch(86.5% 0.015 258);
+  --control-border: oklch(62% 0.025 260);
+  --sidebar: oklch(96.8% 0.007 258);
+  --composer-shadow: 0 10px 30px -16px oklch(32% 0.05 262 / 28%);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="slate"] {
+    --background: oklch(21.5% 0.012 262);
+    --foreground: oklch(93% 0.008 255);
+    --card: oklch(25% 0.014 262);
+    --popover: oklch(27% 0.015 262);
+    --message: oklch(29.5% 0.016 262);
+    --muted: oklch(25.5% 0.014 262);
+    --muted-foreground: oklch(70% 0.02 258);
+    --accent: oklch(30% 0.016 262);
+    --accent-foreground: oklch(95% 0.008 255);
+    --primary: oklch(72% 0.1 270);
+    --primary-foreground: oklch(20% 0.03 270);
+    --secondary: oklch(28.5% 0.016 262);
+    --secondary-foreground: oklch(95% 0.008 255);
+    --destructive: oklch(66% 0.19 27);
+    --destructive-foreground: oklch(20% 0.02 27);
+    --warning: oklch(80% 0.13 80);
+    --warning-foreground: oklch(22% 0.03 70);
+    --success: oklch(74% 0.14 150);
+    --success-foreground: oklch(20% 0.02 150);
+    --info: oklch(74% 0.11 240);
+    --info-foreground: oklch(20% 0.02 240);
+    --addition: oklch(74% 0.14 150);
+    --deletion: oklch(70% 0.16 27);
+    --border: oklch(100% 0 0 / 9%);
+    --input: oklch(100% 0 0 / 14%);
+    --control-border: oklch(57% 0.02 260);
+    --sidebar: oklch(24% 0.013 262);
+    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+  }
+}
+
+[data-palette="ocean"] {
+  --background: oklch(98.4% 0.005 220);
+  --foreground: oklch(26% 0.022 235);
+  --card: oklch(99.6% 0.002 220);
+  --popover: oklch(99.6% 0.002 220);
+  --message: oklch(94.8% 0.014 222);
+  --muted: oklch(96.4% 0.008 222);
+  --muted-foreground: oklch(51% 0.03 230);
+  --accent: oklch(94% 0.014 222);
+  --accent-foreground: oklch(24% 0.022 235);
+  --primary: oklch(52% 0.09 220);
+  --primary-foreground: oklch(99% 0.004 220);
+  --secondary: oklch(94.5% 0.013 222);
+  --secondary-foreground: oklch(24% 0.022 235);
+  --destructive: oklch(55% 0.2 27);
+  --destructive-foreground: oklch(99% 0 0);
+  --warning: oklch(58% 0.13 65);
+  --warning-foreground: oklch(99% 0.004 220);
+  --success: oklch(52% 0.13 150);
+  --success-foreground: oklch(99% 0.004 220);
+  --info: oklch(53% 0.13 258);
+  --info-foreground: oklch(99% 0.004 220);
+  --addition: oklch(52% 0.13 150);
+  --deletion: oklch(55% 0.19 27);
+  --border: oklch(89.5% 0.013 222);
+  --input: oklch(86.5% 0.016 222);
+  --control-border: oklch(62% 0.026 228);
+  --sidebar: oklch(96.8% 0.008 222);
+  --composer-shadow: 0 10px 30px -16px oklch(32% 0.05 230 / 28%);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="ocean"] {
+    --background: oklch(21.5% 0.012 235);
+    --foreground: oklch(93% 0.01 220);
+    --card: oklch(25% 0.014 235);
+    --popover: oklch(27% 0.015 235);
+    --message: oklch(29.5% 0.016 235);
+    --muted: oklch(25.5% 0.014 235);
+    --muted-foreground: oklch(70% 0.025 225);
+    --accent: oklch(30% 0.016 235);
+    --accent-foreground: oklch(95% 0.01 220);
+    --primary: oklch(72% 0.11 215);
+    --primary-foreground: oklch(20% 0.03 220);
+    --secondary: oklch(28.5% 0.016 235);
+    --secondary-foreground: oklch(95% 0.01 220);
+    --destructive: oklch(66% 0.19 27);
+    --destructive-foreground: oklch(20% 0.02 27);
+    --warning: oklch(80% 0.13 80);
+    --warning-foreground: oklch(22% 0.03 70);
+    --success: oklch(74% 0.14 150);
+    --success-foreground: oklch(20% 0.02 150);
+    --info: oklch(74% 0.11 258);
+    --info-foreground: oklch(20% 0.02 258);
+    --addition: oklch(74% 0.14 150);
+    --deletion: oklch(70% 0.16 27);
+    --border: oklch(100% 0 0 / 9%);
+    --input: oklch(100% 0 0 / 14%);
+    --control-border: oklch(57% 0.022 230);
+    --sidebar: oklch(24% 0.013 235);
+    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+  }
+}
+
+[data-palette="rose"] {
+  --background: oklch(98.5% 0.004 350);
+  --foreground: oklch(26% 0.016 355);
+  --card: oklch(99.6% 0.002 350);
+  --popover: oklch(99.6% 0.002 350);
+  --message: oklch(94.8% 0.013 355);
+  --muted: oklch(96.4% 0.008 355);
+  --muted-foreground: oklch(51% 0.024 355);
+  --accent: oklch(94% 0.012 355);
+  --accent-foreground: oklch(24% 0.016 355);
+  --primary: oklch(55% 0.16 2);
+  --primary-foreground: oklch(99% 0.004 350);
+  --secondary: oklch(94.5% 0.012 355);
+  --secondary-foreground: oklch(24% 0.016 355);
+  --destructive: oklch(55% 0.2 30);
+  --destructive-foreground: oklch(99% 0 0);
+  --warning: oklch(58% 0.13 65);
+  --warning-foreground: oklch(99% 0.004 350);
+  --success: oklch(52% 0.13 150);
+  --success-foreground: oklch(99% 0.004 350);
+  --info: oklch(53% 0.12 245);
+  --info-foreground: oklch(99% 0.004 350);
+  --addition: oklch(52% 0.13 150);
+  --deletion: oklch(55% 0.19 27);
+  --border: oklch(89.5% 0.011 355);
+  --input: oklch(86.5% 0.013 355);
+  --control-border: oklch(62% 0.02 355);
+  --sidebar: oklch(96.8% 0.008 355);
+  --composer-shadow: 0 10px 30px -16px oklch(32% 0.05 355 / 28%);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="rose"] {
+    --background: oklch(21.5% 0.01 355);
+    --foreground: oklch(93% 0.01 355);
+    --card: oklch(25% 0.012 355);
+    --popover: oklch(27% 0.013 355);
+    --message: oklch(29.5% 0.014 355);
+    --muted: oklch(25.5% 0.012 355);
+    --muted-foreground: oklch(70% 0.02 355);
+    --accent: oklch(30% 0.014 355);
+    --accent-foreground: oklch(95% 0.008 355);
+    --primary: oklch(73% 0.13 2);
+    --primary-foreground: oklch(20% 0.03 2);
+    --secondary: oklch(28.5% 0.014 355);
+    --secondary-foreground: oklch(95% 0.008 355);
+    --destructive: oklch(66% 0.19 30);
+    --destructive-foreground: oklch(20% 0.02 30);
+    --warning: oklch(80% 0.13 80);
+    --warning-foreground: oklch(22% 0.03 70);
+    --success: oklch(74% 0.14 150);
+    --success-foreground: oklch(20% 0.02 150);
+    --info: oklch(74% 0.11 240);
+    --info-foreground: oklch(20% 0.02 240);
+    --addition: oklch(74% 0.14 150);
+    --deletion: oklch(70% 0.16 27);
+    --border: oklch(100% 0 0 / 9%);
+    --input: oklch(100% 0 0 / 14%);
+    --control-border: oklch(57% 0.016 355);
+    --sidebar: oklch(24% 0.011 355);
     --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
   }
 }
@@ -258,7 +466,7 @@
  * Main switches the theme through the page's color scheme, which swaps every
  * color token at once. main.tsx puts this class on <html> until the new colors
  * have painted, so controls with transition-colors switch with everything else
- * instead of fading.
+ * instead of fading. App.tsx does the same when the palette changes.
  */
 .theme-switching,
 .theme-switching *,

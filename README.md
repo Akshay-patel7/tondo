@@ -58,11 +58,13 @@ These rules come from studying how T3 Code stays fast:
 
 Tondo shows a problem with pi where it happens. If it can't find pi, or finds one older than 0.87.1, the thread shows how to install or update pi, with Choose pi… and Check again. If pi has no provider credentials, the thread offers a sign-in terminal, and closing that terminal restarts the thread's pi so the new models show up. A project whose `.pi` settings need trust asks before pi starts, and Tondo remembers the answer.
 
+A new thread opens its composer immediately but stays out of the sidebar until you type a message or attach an image. Unsent drafts stay with their threads across navigation and restart.
+
 Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has five sections:
 
-- **Appearance:** System, Light or Dark.
+- **Appearance:** System, Light or Dark, with Default, Slate, Ocean or Rose colors. Each palette has light and dark versions.
 - **pi:** the version and path in use. Choose a pi, go back to the one on your PATH, or open pi's global and project settings files.
-- **Accounts:** the providers pi is signed in to and how each one signs in, read from pi's `auth.json`. Tokens are never shown. When the thread on screen has the usage line that pi-claude-subscription-connector publishes, it shows here too. Sign in with Claude opens the sign-in terminal straight on Anthropic.
+- **Accounts:** the providers pi is signed in to and how each one signs in, read from pi's `auth.json`. Tokens are never shown. When the thread on screen has the usage line that pi-claude-subscription-connector publishes, it shows here too. Sign in with Claude opens the sign-in terminal straight on Anthropic; Sign in to a provider opens pi's general sign-in menu. The header offers sign-in only while no provider is configured.
 - **Threads:** how many pi processes may run at once (1 to 12, default 4), and how many idle minutes pass before a hidden thread's pi stops (1 to 240, default 10). Changes apply at once.
 - **Shortcuts:** rebind or turn off the app shortcuts, with conflicts refused. The composer and dialog keys are fixed, because they follow pi's terminal UI.
 
@@ -78,7 +80,9 @@ Each write needs an explicit action. **Commit** stages all changed and nonignore
 
 Branch changes are blocked while pi is starting or working in the same checkout, or while one of its Tondo terminals remains open. Git actions run one at a time. Sending during an action restores the prompt to the draft with an error, so you can retry afterward. External terminals and editors are not locked by Tondo.
 
-**Remove worktree** forgets its thread and deletes the checkout, but keeps its branch and external pi session file. Dirty and ignored files require a separate permanent-deletion confirmation. A session stored inside the checkout blocks removal. Startup cleanup checks only Tondo's recorded, ownerless worktrees. It preserves dirty folders, ignored files, changed branches, symlinks and folders still used as projects. Archiving a thread does not remove its worktree.
+**Remove worktree** deletes the checkout but keeps its branch, thread and external pi session file. Dirty and ignored files require a separate permanent-deletion confirmation. A session stored inside the checkout blocks removal. Startup cleanup checks only Tondo's recorded, ownerless worktrees. It preserves dirty folders, ignored files, changed branches, symlinks and folders still used as projects.
+
+**Delete thread** asks for confirmation, then removes the thread, its saved draft and its associated pi session files. The session no longer appears in pi's `/resume` picker. Stop active work before deleting. For a managed worktree, use **Remove worktree** first, then delete the retained thread separately; Delete never removes a checkout or branch.
 
 ## Known limits
 

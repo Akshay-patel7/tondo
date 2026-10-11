@@ -17,11 +17,10 @@ export type PaletteAction =
   | { readonly type: "terminal"; readonly open: boolean }
   | { readonly type: "rename-thread"; readonly threadId: string }
   | { readonly type: "pin-thread"; readonly threadId: string; readonly pinned: boolean }
-  | { readonly type: "archive-thread"; readonly threadId: string; readonly archived: boolean }
-  /** Opens a thread, taking it out of the archive first if it's there. */
-  | { readonly type: "open-thread"; readonly threadId: string; readonly archived: boolean };
+  | { readonly type: "delete-thread"; readonly threadId: string }
+  | { readonly type: "open-thread"; readonly threadId: string };
 
-export type PaletteGroup = "Actions" | "Threads" | "Projects" | "Archived threads";
+export type PaletteGroup = "Actions" | "Threads" | "Projects";
 
 export interface PaletteItem {
   readonly key: string;
@@ -100,17 +99,7 @@ export function paletteItems({
       threadId,
       pinned: !shown.pinned,
     });
-    action(
-      "archive-thread",
-      shown.archived ? "Unarchive thread" : "Archive thread",
-      shown.title,
-      "",
-      {
-        type: "archive-thread",
-        threadId,
-        archived: !shown.archived,
-      },
-    );
+    action("delete-thread", "Delete thread…", shown.title, "", { type: "delete-thread", threadId });
   }
 
   const newestFirst: { thread: SidebarThread; path: string }[] = projects
@@ -119,11 +108,11 @@ export function paletteItems({
   for (const { thread, path } of newestFirst) {
     items.push({
       key: `thread:${thread.id}`,
-      group: thread.archived ? "Archived threads" : "Threads",
+      group: "Threads",
       label: thread.title,
       detail: folderName(path),
       shortcut: "",
-      action: { type: "open-thread", threadId: thread.id, archived: thread.archived },
+      action: { type: "open-thread", threadId: thread.id },
     });
   }
 
@@ -138,7 +127,7 @@ export function paletteItems({
     });
   }
 
-  const order: PaletteGroup[] = ["Actions", "Threads", "Projects", "Archived threads"];
+  const order: PaletteGroup[] = ["Actions", "Threads", "Projects"];
   return order.flatMap((group) => items.filter((item) => item.group === group));
 }
 

@@ -15,10 +15,12 @@ import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 import {
+  isPaletteSetting,
   isPoolValue,
   isShortcutCommand,
   isThemeSetting,
   type AppSettings,
+  type PaletteSetting,
   type PoolSettings,
   type SettingsPatch,
   type ShortcutCommand,
@@ -27,7 +29,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 15;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -225,6 +227,7 @@ export interface SidebarThread {
   /** When the thread last had a message, in milliseconds since 1970. */
   readonly updatedAt: number;
   readonly pinned: boolean;
+  /** Deprecated persisted metadata; legacy sessions remain listed for deletion. */
   readonly archived: boolean;
   readonly activity: ThreadActivity;
   /** Whether pi finished or failed in the thread since you last looked at it. */
@@ -241,7 +244,7 @@ export interface SidebarProject {
   readonly path: string;
   /** Whether the sidebar hides the project's threads. */
   readonly collapsed: boolean;
-  /** Its threads, archived ones too, pinned first and then the most recently updated. */
+  /** Its threads, including legacy archives, pinned first and then most recently updated. */
   readonly threads: readonly SidebarThread[];
 }
 
@@ -277,9 +280,9 @@ export type ClientMessage = Versioned<
   | { type: "open-thread"; threadId: string }
   | { type: "rename-thread"; threadId: string; name: string }
   | { type: "pin-thread"; threadId: string; pinned: boolean }
-  | { type: "archive-thread"; threadId: string; archived: boolean }
+  | { type: "delete-thread"; threadId: string }
   /** What a thread's composer holds, which Tondo keeps across restarts. */
-  | { type: "set-draft"; threadId: string; text: string }
+  | { type: "set-draft"; threadId: string; text: string; userInput?: boolean }
   | { type: "set-draft-images"; threadId: string; images: readonly DraftImage[] }
   /** List project files for @ completion, correlated so stale scans can't replace a new menu. */
   | { type: "list-files"; threadId: string; id: number }
@@ -457,7 +460,7 @@ export type HostToMainMessage =
   /** Show the file dialog for pi and answer with pi-chosen. */
   | { type: "choose-pi" }
   /** The theme your settings ask for, which main applies to the window. */
-  | { type: "theme"; theme: ThemeSetting }
+  | { type: "theme"; theme: ThemeSetting; palette: PaletteSetting }
   /**
    * An extension in the thread waits for your answer. Main raises a
    * notification unless the thread is on screen in the focused window.
@@ -548,6 +551,7 @@ export function parseClientMessage(data: unknown): ParseResult {
       return exactly(message, { v, type, projectId: projectId as number, collapsed });
     }
     case "open-thread":
+    case "delete-thread":
     case "stop":
     case "dequeue":
     case "restart":
@@ -579,15 +583,6 @@ export function parseClientMessage(data: unknown): ParseResult {
       }
       return exactly(message, { v, type, threadId: threadId as string, pinned });
     }
-    case "archive-thread": {
-      const bad = badThreadId(type, threadId);
-      if (bad) return invalid(bad);
-      const { archived } = message;
-      if (typeof archived !== "boolean") {
-        return invalid(`archive-thread: archived must be true or false, not ${describe(archived)}`);
-      }
-      return exactly(message, { v, type, threadId: threadId as string, archived });
-    }
     case "set-draft": {
       const bad = badThreadId(type, threadId);
       if (bad) return invalid(bad);
@@ -595,7 +590,16 @@ export function parseClientMessage(data: unknown): ParseResult {
       if (typeof text !== "string") {
         return invalid(`set-draft: text must be a string, not ${describe(text)}`);
       }
-      return exactly(message, { v, type, threadId: threadId as string, text });
+      const { userInput } = message;
+      if (userInput !== undefined && typeof userInput !== "boolean")
+        return invalid("set-draft: userInput must be a boolean");
+      return exactly(message, {
+        v,
+        type,
+        threadId: threadId as string,
+        text,
+        ...(userInput === undefined ? {} : { userInput }),
+      });
     }
     case "set-draft-images": {
       const bad = badThreadId(type, threadId);
@@ -892,12 +896,13 @@ const MAX_PATH = 4096;
 function parsePatch(patch: unknown): SettingsPatch | string {
   if (!isRecord(patch)) return `patch must be an object, not ${describe(patch)}`;
   const extra = Object.keys(patch).find(
-    (key) => !["theme", "pool", "shortcuts", "piPath"].includes(key),
+    (key) => !["theme", "palette", "pool", "shortcuts", "piPath"].includes(key),
   );
   if (extra !== undefined) return `patch has an unexpected field ${describe(extra)}`;
-  const { theme, pool, shortcuts, piPath } = patch;
+  const { theme, palette, pool, shortcuts, piPath } = patch;
   const parsed: {
     theme?: ThemeSetting;
+    palette?: PaletteSetting;
     pool?: Partial<PoolSettings>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
@@ -906,6 +911,11 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     if (!isThemeSetting(theme))
       return `theme must be "system", "light" or "dark", not ${describe(theme)}`;
     parsed.theme = theme;
+  }
+  if (palette !== undefined) {
+    if (!isPaletteSetting(palette))
+      return `palette must be "default", "slate", "ocean" or "rose", not ${describe(palette)}`;
+    parsed.palette = palette;
   }
   if (pool !== undefined) {
     if (!isRecord(pool)) return `pool must be an object, not ${describe(pool)}`;

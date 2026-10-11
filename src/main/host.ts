@@ -21,6 +21,7 @@ import {
   type MainToHostMessage,
 } from "../shared/protocol";
 import { stopProcessGroups } from "./processGroups";
+import { setWindowPalette } from "./window";
 
 const FIRST_RESTART_DELAY_MS = 500;
 const MAX_RESTART_DELAY_MS = 10_000;
@@ -147,6 +148,7 @@ export function startHost(options: HostOptions): Host {
       } else if (message.type === "theme") {
         // Electron then sets prefers-color-scheme in the page and tells the window.
         nativeTheme.themeSource = message.theme;
+        setWindowPalette(message.palette);
       }
     });
     current.once("exit", (code) => {
