@@ -27,7 +27,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -388,9 +388,15 @@ export type HostMessage = Versioned<
   | { type: "error"; message: string }
   /**
    * Tondo's settings, sent to each new port and after every set-settings.
-   * `error` says why the last change wasn't saved, or why the file can't be read.
+   * `error` says why the last change wasn't saved. `fileProblem` says why
+   * Tondo can't read settings.json, whose `path` the page may reveal.
    */
-  | { type: "settings"; settings: AppSettings; error: string | null }
+  | {
+      type: "settings";
+      settings: AppSettings;
+      error: string | null;
+      fileProblem: { readonly path: string; readonly message: string } | null;
+    }
   /** The pi Tondo runs, sent to each new port and whenever Tondo looks for pi again. */
   | { type: "pi-env"; pi: PiDiscovery }
   | { type: "pi-config-files"; files: readonly SettingsFile[] }

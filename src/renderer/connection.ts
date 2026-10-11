@@ -53,6 +53,10 @@ export const useHost = create<{
   settings: AppSettings | null;
   /** Why the host refused the last settings change, or null if it took it. */
   settingsError: string | null;
+  /** Why Tondo can't use settings.json, or null if it can. */
+  settingsFileError: string | null;
+  /** settings.json, which the page may show in Finder while settingsFileError is set. */
+  settingsFilePath: string | null;
   /** The pi Tondo would run, or null until the host has looked. */
   piEnv: PiDiscovery | null;
   /** pi's config files, or null until requestPiConfigFiles is answered. */
@@ -71,6 +75,8 @@ export const useHost = create<{
   errors: [],
   settings: null,
   settingsError: null,
+  settingsFileError: null,
+  settingsFilePath: null,
   piEnv: null,
   piConfigFiles: null,
   piAccounts: null,
@@ -305,7 +311,13 @@ function receive(message: HostMessage): void {
       if (message.threadId === shownId()) openSheet(message.sheet);
       break;
     case "settings":
-      useHost.setState({ settings: message.settings, settingsError: message.error });
+      useHost.setState({
+        settings: message.settings,
+        // A change refused because the file is broken shows as the file's problem.
+        settingsError: message.error === message.fileProblem?.message ? null : message.error,
+        settingsFileError: message.fileProblem?.message ?? null,
+        settingsFilePath: message.fileProblem?.path ?? null,
+      });
       break;
     case "pi-env":
       useHost.setState({ piEnv: message.pi });

@@ -23,12 +23,7 @@ import {
   type ThreadActivity,
 } from "../shared/protocol";
 import { threadFromMessages } from "../shared/thread";
-import {
-  DEFAULT_SETTINGS,
-  type AppSettings,
-  type SettingsPatch,
-  type ThemeSetting,
-} from "../shared/settings";
+import type { AppSettings, SettingsPatch, ThemeSetting } from "../shared/settings";
 import { shortcutProblems } from "../shared/shortcuts";
 import type { Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
@@ -101,6 +96,10 @@ export class Workspace {
   private readonly chooseFolder: () => void;
   private readonly choosePi: () => void;
   private readonly setTheme: (theme: ThemeSetting) => void;
+  /** The theme main last heard, which an outside edit to settings.json doesn't change. */
+  private theme: ThemeSetting | null = null;
+  /** The problem with settings.json Tondo last told you about as it started a pi. */
+  private settingsProblem: string | null = null;
   private choosingPi = false;
   private readonly attention: (attention: Attention) => void;
   private readonly copy: (text: string) => void;
@@ -172,14 +171,19 @@ export class Workspace {
    * as it starts, before any page connects.
    */
   applySettings(): void {
-    let settings: AppSettings = DEFAULT_SETTINGS;
-    try {
-      settings = this.supervisor.settings();
-    } catch (error) {
-      console.error(`Tondo Host uses the default settings: ${messageOf(error)}`);
+    const { settings, problem } = this.supervisor.readableSettings();
+    if (problem !== null) {
+      console.error(`Tondo Host uses the defaults for what it can't read: ${problem}`);
     }
     this.setLimits(this.poolLimits(settings));
-    this.setTheme(settings.theme);
+    this.applyTheme(settings.theme);
+  }
+
+  /** Tells main the theme, unless main has it already. */
+  private applyTheme(theme: ThemeSetting): void {
+    if (theme === this.theme) return;
+    this.theme = theme;
+    this.setTheme(theme);
   }
 
   /** Changes the pool's limits, and stops the pi processes they no longer allow. */
@@ -491,21 +495,43 @@ export class Workspace {
     }
     this.sendSettings(null);
     this.setLimits(this.poolLimits(after));
-    if (after.theme !== before.theme) this.setTheme(after.theme);
+    // settings.json may have changed outside Tondo since main last heard the theme.
+    this.applyTheme(after.theme);
     if (after.piPath !== before.piPath) await this.rediscoverPi();
   }
 
-  /** Sends the page the settings, or the defaults if the file can't be read. */
+  /**
+   * Sends the page the settings Tondo uses, with defaults for what the file
+   * gets wrong, why a change was refused (`error`) and, apart from that,
+   * what's wrong with the file.
+   */
   private sendSettings(error: string | null): void {
-    let settings: AppSettings = DEFAULT_SETTINGS;
-    let problem = error;
-    try {
-      const { piPath, theme, pool, shortcuts } = this.supervisor.settings();
-      settings = { piPath, theme, pool, shortcuts };
-    } catch (cause) {
-      problem ??= messageOf(cause);
-    }
-    this.send({ v, type: "settings", settings, error: problem });
+    const { settings, problem } = this.supervisor.readableSettings();
+    // The page may offer to show a broken file in Finder.
+    if (problem !== null) this.offered.add(this.supervisor.settingsFile);
+    const { piPath, theme, pool, shortcuts } = settings;
+    this.send({
+      v,
+      type: "settings",
+      settings: { piPath, theme, pool, shortcuts },
+      error,
+      fileProblem:
+        problem === null ? null : { path: this.supervisor.settingsFile, message: problem },
+    });
+  }
+
+  /**
+   * Tells you, once for each problem, that pi starts with defaults for what
+   * settings.json gets wrong, and offers to show the file.
+   */
+  private noteSettingsProblem(): void {
+    const { problem } = this.supervisor.readableSettings();
+    if (problem === this.settingsProblem) return;
+    this.settingsProblem = problem;
+    if (problem === null) return;
+    const file = this.supervisor.settingsFile;
+    this.offered.add(file);
+    this.toast("warning", `${problem}. Tondo uses the defaults for what it can't read.`, file);
   }
 
   private async sendPiEnv(): Promise<void> {
@@ -690,6 +716,7 @@ export class Workspace {
       }),
     );
     this.live.set(id, thread);
+    this.noteSettingsProblem();
     this.run(() => thread.open());
     return thread;
   }

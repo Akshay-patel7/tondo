@@ -13,7 +13,14 @@ import { captureLoginEnv } from "./loginEnv";
 import { startPi, type PiLaunch, type PiProcess } from "./piProcess";
 import type { PiRecord } from "./piRpc";
 import { sessionFolder, type SessionFolder } from "./sessionFolder";
-import { readSettings, saveTrustAnswer, updateSettings, type Settings } from "./settings";
+import {
+  readSettings,
+  readSettingsLeniently,
+  saveTrustAnswer,
+  updateSettings,
+  type Settings,
+  type SettingsRead,
+} from "./settings";
 import { canonical, needsTrustDecision, piAgentDir, piTrust, trustArgs } from "./trust";
 
 /** A thread's pi session: its id, and the file pi keeps it in once pi has said where. */
@@ -81,7 +88,8 @@ export class Supervisor {
     onRecord: (record: PiRecord) => void,
   ): Promise<PiProcess> {
     const env = await this.captureLoginEnv();
-    const settings = readSettings(this.settingsFile);
+    // A settings file with a mistake in it mustn't stop pi. The page reports it.
+    const { settings } = this.readableSettings();
     const choice =
       session.file !== null && existsSync(session.file)
         ? { file: session.file }
@@ -102,7 +110,7 @@ export class Supervisor {
     if (kind === "shell") {
       return { command: env.SHELL || os.userInfo().shell || "/bin/sh", args: ["-i"], cwd, env };
     }
-    const settings = readSettings(this.settingsFile);
+    const { settings } = this.readableSettings();
     const pi = findPi(env, settings.piPath);
     return {
       command: pi.node,
@@ -126,13 +134,18 @@ export class Supervisor {
   /** Whether pi in `cwd` needs a trust decision that you haven't given Tondo yet. */
   async needsTrustAnswer(cwd: string): Promise<boolean> {
     const env = piEnv(await this.captureLoginEnv(), this.config);
-    const { projectTrust } = readSettings(this.settingsFile);
+    const { projectTrust } = this.readableSettings().settings;
     return projectTrust[canonical(cwd)] === undefined && needsTrustDecision(cwd, env);
   }
 
   /** Tondo's settings, read afresh. It throws if settings.json is invalid. */
   settings(): Settings {
     return readSettings(this.settingsFile);
+  }
+
+  /** Tondo's settings, read afresh, with defaults for what settings.json gets wrong, and what that is. */
+  readableSettings(): SettingsRead {
+    return readSettingsLeniently(this.settingsFile);
   }
 
   /** Saves a change to the settings and returns them. An invalid change throws and saves nothing. */
@@ -143,10 +156,11 @@ export class Supervisor {
   /** The pi the next start runs, or why there's none. */
   async discover(): Promise<PiDiscovery> {
     const env = piEnv(await this.captureLoginEnv(), this.config);
-    let source: "path" | "setting" = "path";
+    // A broken settings file is a problem with the file, which the page shows
+    // as one, not with pi. pi is looked for as if the file left piPath out.
+    const { piPath } = this.readableSettings().settings;
+    const source = piPath === null ? "path" : "setting";
     try {
-      const { piPath } = this.settings();
-      if (piPath !== null) source = "setting";
       const { version, command } = findPi(env, piPath);
       return { state: "found", version, command, source };
     } catch (error) {
@@ -176,7 +190,7 @@ export class Supervisor {
   async trustInfo(cwd: string): Promise<TrustInfo> {
     const trust = piTrust(cwd, piEnv(await this.captureLoginEnv(), this.config));
     if (trust.decidedBy !== "ask") return trust;
-    const answer = readSettings(this.settingsFile).projectTrust[canonical(cwd)];
+    const answer = this.readableSettings().settings.projectTrust[canonical(cwd)];
     return { decidedBy: "tondo", trusted: answer ?? null };
   }
 
@@ -202,7 +216,8 @@ export class Supervisor {
     return readPiAccounts(piAgentDir(home, env, home));
   }
 
-  private get settingsFile(): string {
+  /** Tondo's settings.json. */
+  get settingsFile(): string {
     return path.join(this.config.userData, "settings.json");
   }
 

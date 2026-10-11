@@ -366,8 +366,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 11, which added accounts and login providers", () => {
-    expect(PROTOCOL_VERSION).toBe(11);
+  it("speaks version 12, which split the settings file's problem from a refused change", () => {
+    expect(PROTOCOL_VERSION).toBe(12);
   });
 
   it("rejects get-pi-accounts with any field besides its type", () => {
