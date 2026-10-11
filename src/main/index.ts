@@ -136,6 +136,7 @@ if (!app.requestSingleInstanceLock()) {
     // Closing the window quits again on Linux (window-all-closed); one stop is enough.
     if (quitting) return;
     quitting = true;
+    running.quitting();
     closeWindow()
       .then(() => running.stop())
       .catch((error: unknown) => console.error("Tondo couldn't stop its host:", error))
