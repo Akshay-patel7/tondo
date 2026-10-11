@@ -309,8 +309,10 @@ export class Workspace {
         });
         break;
       case "archive-thread":
-        this.run(() => {
+        this.run(async () => {
           this.row(message.threadId);
+          // An archived thread leaves the sidebar, so its shell must not run on unseen.
+          if (message.archived) await this.terminals.close(message.threadId);
           this.store.setArchived(message.threadId, message.archived);
           this.sendSidebar();
         });

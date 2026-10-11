@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { bringToFront, type Tondo } from "./launch";
 import { processesIn, reportProcesses } from "./processes";
-import { addProject, composer, launchWithPi, reply, send, threadRows, waitForPi } from "./pi";
+import {
+  addProject,
+  composer,
+  launchWithPi,
+  reply,
+  send,
+  threadRows,
+  threads,
+  waitForPi,
+} from "./pi";
 import { pickerOptions } from "./ui";
 
 let workDir: string;
@@ -336,4 +345,33 @@ test("/login starts a sign-in terminal in place of a shell that exited", async (
   await expect(page.getByRole("heading", { name: "Provider sign-in" })).toBeVisible();
   await expect(status).toHaveText("");
   await expect(output()).toContainText("faux", { timeout: 30_000 });
+});
+
+test("archiving a thread stops its terminal's shell and background jobs", async () => {
+  const { page } = tondo;
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  const pids = path.join(workDir, "archived-pids");
+  await command(`echo $$ > '${pids}'; sleep 401 & echo $! >> '${pids}'`);
+  await expect
+    .poll(() => (existsSync(pids) ? readFileSync(pids, "utf8").trim().split("\n").length : 0))
+    .toBe(2);
+  // The shell leads its process group, and job control gives the background sleep its own.
+  const groups = readFileSync(pids, "utf8").trim().split("\n").map(Number);
+  expect(processesIn(groups)).not.toEqual([]);
+
+  // A draft keeps the first thread listed. Mod+N from the composer, since xterm may take it.
+  await composer(page).pressSequentially("keep");
+  await page.keyboard.press("ControlOrMeta+n");
+  await expect(threadRows(page)).toHaveCount(2);
+  await waitForPi(page);
+  await threads(page)
+    .locator("li > button[title]:not([aria-label]):not([aria-current])")
+    .click({ button: "right" });
+  await page
+    .getByRole("menu", { name: "Thread actions" })
+    .getByRole("menuitem", { name: "Archive", exact: true })
+    .click();
+  await expect(threadRows(page)).toHaveCount(1);
+  await expect.poll(() => processesIn(groups)).toEqual([]);
 });
