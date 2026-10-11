@@ -46,12 +46,6 @@ test.beforeEach(async () => {
   });
   const { app, page } = tondo;
   await bringToFront(tondo);
-  await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0];
-    if (!window) throw new Error("Tondo has no window to resize");
-    window.setSize(1200, 800);
-  });
-  await page.waitForFunction(() => innerWidth === 1200 && innerHeight === 800);
   await answerFolderDialog(app, project);
   const addProject = page.getByRole("button", { name: "Add project", exact: true });
   await expect(addProject).toBeEnabled();

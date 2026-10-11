@@ -173,23 +173,20 @@ test("pi with no model you can use offers the sign-in terminal, and reloads afte
 // The sign-in prompt, the composer and the Git toolbar sit above the drawer.
 // When they need more height than the drawer leaves, they give it up, so the
 // header and the whole drawer stay in the window and the page never scrolls.
-for (const [width, height] of [
-  [1200, 800],
-  [840, 620],
-] as const) {
-  test(`in a ${width}x${height} window the sign-in drawer fits beside the sign-in prompt`, async () => {
+// The default window is 1200x800 where the screen has room. macOS CI runners
+// fit only 1024x677, and macOS shrinks windows to the screen, so the default
+// case takes the size the window got.
+for (const size of ["default", "minimum"] as const) {
+  test(`in a window at its ${size} size the sign-in drawer fits beside the sign-in prompt`, async () => {
     tondo = await launchSignedOut();
     await bringToFront(tondo);
     const { app, page } = tondo;
-    await app.evaluate(
-      ({ BrowserWindow }, size) =>
-        BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height),
-      { width, height },
-    );
-    await page.waitForFunction(
-      (size) => window.innerWidth === size.width && window.innerHeight === size.height,
-      { width, height },
-    );
+    if (size === "minimum") {
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0]!.setSize(840, 620),
+      );
+      await page.waitForFunction(() => window.innerWidth === 840 && window.innerHeight === 620);
+    }
     // A Git checkout, as most projects are, shows the whole Git toolbar.
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
     await addProject(tondo, project);
@@ -219,7 +216,7 @@ for (const [width, height] of [
         .getBoundingClientRect().bottom,
       windowHeight: window.innerHeight,
     }));
-    await page.screenshot({ path: `test-results/sign-in-drawer-${width}x${height}.png` });
+    await page.screenshot({ path: `test-results/sign-in-drawer-${size}.png` });
     expect.soft(layout.scrollTop, "the page scrolled").toBe(0);
     expect.soft(layout.headerTop, "the header left the window").toBeGreaterThanOrEqual(0);
     expect
