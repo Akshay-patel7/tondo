@@ -610,6 +610,71 @@ async function auditNames(page: Page): Promise<{ checked: number; unnamed: strin
   }
 }
 
+test("closing Settings gives focus back to the composer that opened it", async () => {
+  const { page } = await launch([]);
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  const settings = page.getByRole("region", { name: "Settings", exact: true });
+  const title = settings.getByRole("heading", { level: 1, name: "Settings" });
+
+  await composer(page).focus();
+  await page.keyboard.press("ControlOrMeta+Comma");
+  await expectFocused(page, title);
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeAttached();
+  await expectComposerFocused(page);
+
+  await page.keyboard.press("ControlOrMeta+Comma");
+  await expectFocused(page, title);
+  await settings.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(settings).not.toBeAttached();
+  await expectComposerFocused(page);
+});
+
+test("Shift+Tab reaches the open thread's actions on the way back, as Tab does on the way out", async () => {
+  const { page } = await launch([]);
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  const row = threads(page).locator(THREAD_ROW).first();
+  const actions = threads(page).getByRole("button", { name: "Thread actions" });
+  const changes = page.getByRole("button", { name: "Changes", exact: true });
+
+  await changes.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expectFocused(page, actions);
+  // Focus in the row shows the button, which fades out at rest.
+  await expect
+    .poll(() => actions.evaluate((button) => getComputedStyle(button.parentElement!).opacity))
+    .toBe("1");
+  await page.keyboard.press("Shift+Tab");
+  await expectFocused(page, row);
+  await page.keyboard.press("Tab");
+  await expectFocused(page, actions);
+  await page.keyboard.press("Tab");
+  await expectFocused(page, changes);
+});
+
+test("each picker's open list has the picker's name", async () => {
+  const { page } = await launch([]);
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "Turn changes" })).toBeVisible();
+  await expectListNamed(page, "Model");
+  await expectListNamed(page, "Thinking level");
+  await expectListNamed(page, "Git branch");
+  await expectListNamed(page, "Checkpoint turn");
+});
+
+/** Opens the picker named `picker`, expects its list to take the same name, and closes it. */
+async function expectListNamed(page: Page, picker: string): Promise<void> {
+  await page.getByRole("combobox", { name: picker, exact: true }).click();
+  const list = page.getByRole("listbox", { name: picker, exact: true });
+  await expect(list).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+}
+
 /** Opens Settings with its shortcut and goes to the Shortcuts section. */
 async function openShortcuts(page: Page): Promise<Locator> {
   await page.keyboard.press("ControlOrMeta+Comma");

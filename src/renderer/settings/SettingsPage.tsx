@@ -38,7 +38,7 @@ import { AccountsSettings } from "./AccountsSettings";
 import { PiSettings } from "./PiSettings";
 import { Loading, SectionHeading, SettingsGroup, SettingsRow } from "./rows";
 import { ShortcutSettings } from "./ShortcutSettings";
-import { closeSettings, useSettingsPage, type SettingsSection } from "./store";
+import { closeSettings, takeSettingsOpener, useSettingsPage, type SettingsSection } from "./store";
 
 const SECTIONS: readonly {
   readonly id: SettingsSection;
@@ -69,13 +69,23 @@ export function SettingsPage() {
 
   // Focus starts on the title, and goes back to what opened the page, such as
   // the sidebar's Settings button, if it's still there when the page closes.
+  // An opener in the thread, such as the composer, left with the thread, so
+  // the thread's composer takes focus once the thread is back. The title
+  // shows focus if the opener did, as when a shortcut opened the page.
   useLayoutEffect(() => {
-    const opener = document.activeElement;
-    title.current?.focus();
+    const { element: opener, focusVisible } = takeSettingsOpener();
+    title.current?.focus({ focusVisible });
     return () => {
-      if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) {
+      if (!(opener instanceof HTMLElement) || opener === document.body) return;
+      if (opener.isConnected) {
         opener.focus();
+        return;
       }
+      // The thread comes back in the same commit that removes the page.
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]')?.focus();
+      });
     };
   }, []);
 
