@@ -541,7 +541,10 @@ test("drafts stay with their threads, and Tondo's store keeps them through a hos
   const first = threadRow(page, "Remember this.");
   await expect(first.getByRole("img", { name: "Unsent draft" })).toBeVisible();
   await composer(page).fill("Another thought");
-  const second = threadRow(page, "New thread");
+  // Session titles are rediscovered after a host restart; several rows can
+  // temporarily say "New thread", but their stored IDs remain distinct.
+  const secondId = await threadRow(page, "New thread").getAttribute("data-thread-id");
+  const second = threads(page).locator(`[data-thread-id="${secondId}"]`);
   await expect(second.getByRole("img", { name: "Unsent draft" })).toBeVisible();
 
   const statuses = await recordStatuses(page);

@@ -233,7 +233,10 @@ test("the terminal takes the palette's colors whenever it changes", async () => 
   const warm = await terminalOnBackground(page);
 
   // The settings page takes the thread's place, so the terminal comes back in the new palette.
-  const settings = await openSettings(page);
+  // Linux leaves Ctrl shortcuts to the focused shell; use the sidebar instead.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = settingsPage(page);
+  await expect(settings.getByRole("heading", { level: 2 })).toBeFocused();
   await pickPalette(page, settings, profileDir, "ocean");
   await back(page).click();
   await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
