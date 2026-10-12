@@ -154,6 +154,22 @@ async function submit(name: string) {
   await expect(dialog).toBeHidden();
 }
 
+/** Commits `file` in a second checkout of the remote and pushes it to main, as a teammate would. Returns the pushed commit. */
+function pushFromElsewhere(file: string, text: string): string {
+  const other = path.join(dir, "other");
+  if (!existsSync(other)) {
+    git(dir, "clone", "-b", "main", remote, other);
+    git(other, "config", "user.name", "Other");
+    git(other, "config", "user.email", "other@example.com");
+    git(other, "config", "commit.gpgsign", "false");
+  }
+  writeFileSync(path.join(other, file), text);
+  git(other, "add", file);
+  git(other, "commit", "-m", `add ${file}`);
+  git(other, "push", "origin", "main");
+  return git(other, "rev-parse", "HEAD");
+}
+
 function worktreePath(): string {
   const fields = git(project, "worktree", "list", "--porcelain", "-z").split("\0");
   const field = fields.find(
@@ -332,6 +348,7 @@ test("Commit & push commits, then pushes to the remote, and is disabled with a c
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Commit",
     "Push",
+    "Pull",
     "Create PR",
     "Switch branch",
     "New branch",
@@ -357,6 +374,47 @@ test("Commit & push commits, then pushes to the remote, and is disabled with a c
   // The clean tree disables Commit & push, so focus lands on the split button's chevron.
   await expect(commitAndPush).toBeDisabled();
   await expect(page.getByRole("button", { name: "Git actions", exact: true })).toBeFocused();
+});
+
+test("Pull fast-forwards to the upstream and says what came in, and a diverged branch stays put", async () => {
+  const { page } = await start([reply("Hello")]);
+  const toast = (text: string) => page.getByRole("status").filter({ hasText: text });
+  const theirs = pushFromElsewhere("teammate.txt", "from a teammate\n");
+  await gitAction(page, "Pull");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Pull branch", exact: true })).toBeVisible();
+  await expect(dialog).toContainText("Fetch origin/main and fast-forward main to it.");
+  await page.screenshot({ path: "test-results/git-pull.png" });
+  await submit("Pull branch");
+  expect(git(project, "rev-parse", "HEAD")).toBe(theirs);
+  expect(readFileSync(path.join(project, "teammate.txt"), "utf8")).toBe("from a teammate\n");
+  await expect(toast("Pulled origin/main into main.")).toBeVisible();
+  await gitAction(page, "Pull");
+  await submit("Pull branch");
+  await expect(toast("Already up to date with origin/main.")).toBeVisible();
+
+  // With a local commit and a newer one on the remote, no fast-forward is possible, so nothing moves.
+  pushFromElsewhere("second.txt", "second\n");
+  writeFileSync(path.join(project, "local.txt"), "local\n");
+  git(project, "add", "local.txt");
+  git(project, "commit", "-m", "local");
+  const local = git(project, "rev-parse", "HEAD");
+  await gitAction(page, "Pull");
+  await dialog.getByRole("button", { name: "Pull branch", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Not possible to fast-forward");
+  await page.screenshot({ path: "test-results/git-pull-diverged.png" });
+  expect(git(project, "rev-parse", "HEAD")).toBe(local);
+  expect(existsSync(path.join(project, "second.txt"))).toBe(false);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // The pull's fetch still ran, so the pill now counts the remote's commit.
+  await expect(gitPill(page)).toContainText("1 ahead, 1 behind origin/main");
+
+  // A branch with no upstream has nothing to pull from.
+  git(project, "switch", "-c", "topic");
+  await gitAction(page, "Refresh");
+  await expectBranch(page, "topic");
+  await expectGitAction(page, "Pull", false);
 });
 
 test("branch changes are refused while a background local thread is mid-turn", async () => {
@@ -448,6 +506,8 @@ test("an unresolved merge is shown and Commit waits until its conflicts are reso
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Commit & push", exact: true })).toBeDisabled();
   await expectGitAction(page, "Commit", false);
+  // main has an upstream, but Git can't pull in the middle of a merge.
+  await expectGitAction(page, "Pull", false);
   writeFileSync(path.join(project, "README.md"), "resolved\n");
   git(project, "add", "README.md");
   await gitAction(page, "Refresh");

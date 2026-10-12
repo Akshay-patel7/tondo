@@ -95,9 +95,9 @@ test("an extension's dialogs, toasts, status, widgets, title and composer text",
   await expect(
     page.getByRole("status").filter({ hasText: "The extension says hello" }),
   ).toBeVisible();
-  // The status row names each entry by its key, then shows the extension's text.
+  // The status row shows the extension's text without its key, as pi's footer does.
   const status = page.getByLabel("Extension status").getByRole("listitem");
-  await expect(status).toHaveText(["tondoChecking the extension UI"]);
+  await expect(status).toHaveText(["Checking the extension UI"]);
   await expect(status).toHaveAttribute("data-status", "tondo");
   await expect(page.getByLabel("Extension widgets", { exact: true })).toHaveText(
     "Widget above the composer",

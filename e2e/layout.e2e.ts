@@ -336,9 +336,9 @@ test("many extension status entries wrap under the composer without clipping, an
   const page = await launch(gitProject("project"), { piArgs: ["-e", extension] });
   const entries = page.getByLabel("Extension status").getByRole("listitem");
   await send(page, "/tondo-statuses");
-  // In key order, each entry its key and then the extension's text verbatim.
+  // In key order, each entry the extension's text verbatim, without its key.
   await expect(entries).toHaveText(
-    STATUS_ENTRIES.toSorted(([a], [b]) => a.localeCompare(b)).map(([key, text]) => key + text),
+    STATUS_ENTRIES.toSorted(([a], [b]) => a.localeCompare(b)).map(([, text]) => text),
   );
   const fit = await measureStatusRow(page);
   expect(fit.lines, "the entries take more than one line").toBeGreaterThan(1);

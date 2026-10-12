@@ -10,6 +10,7 @@ it("accepts only bounded literal Git actions and exact request fields", () => {
     { kind: "remove-worktree", force: false },
     { kind: "commit", message: "fix: issue" },
     { kind: "push", remote: "origin" },
+    { kind: "pull" },
     { kind: "create-pr", remote: "origin", base: "main", title: "Fix", body: "" },
   ];
   for (const action of actions) {
@@ -34,6 +35,8 @@ it("rejects malformed actions and identities before they cross into the host", (
     [],
     {},
     { kind: "push", remote: "" },
+    // The host pulls from the branch's upstream, so a pull names nothing.
+    { kind: "pull", remote: "origin" },
     { kind: "commit", message: "a\0b" },
     { kind: "remove-worktree", force: "yes" },
     { kind: "switch", branch: "a".repeat(251) },

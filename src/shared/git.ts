@@ -6,6 +6,8 @@ export type GitAction =
   | { kind: "remove-worktree"; force: boolean }
   | { kind: "commit"; message: string }
   | { kind: "push"; remote: string }
+  /** Fast-forwards the branch to its upstream. The host reads the upstream from Git. */
+  | { kind: "pull" }
   | { kind: "create-pr"; remote: string; base: string; title: string; body: string };
 
 export interface PullRequest {
@@ -110,6 +112,9 @@ export function isGitAction(value: unknown): value is GitAction {
     case "push":
       if (!text(action.remote, 250)) return false;
       fields = ["kind", "remote"];
+      break;
+    case "pull":
+      fields = ["kind"];
       break;
     case "create-pr":
       if (

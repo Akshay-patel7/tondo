@@ -391,8 +391,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 15, which replaces archiving with session deletion", () => {
-    expect(PROTOCOL_VERSION).toBe(15);
+  it("speaks version 16, which adds the pull Git action", () => {
+    expect(PROTOCOL_VERSION).toBe(16);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {

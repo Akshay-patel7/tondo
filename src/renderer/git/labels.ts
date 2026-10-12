@@ -44,6 +44,7 @@ export const TITLES: Record<GitAction["kind"], string> = {
   "remove-worktree": "Remove worktree",
   commit: "Stage all and commit",
   push: "Push branch",
+  pull: "Pull branch",
   "create-pr": "Create pull request",
 };
 
@@ -54,5 +55,6 @@ export const FAILURES: Record<GitAction["kind"], string> = {
   "remove-worktree": "Couldn't remove the worktree",
   commit: "Couldn't commit",
   push: "Couldn't push",
+  pull: "Couldn't pull",
   "create-pr": "Couldn't create the pull request",
 };

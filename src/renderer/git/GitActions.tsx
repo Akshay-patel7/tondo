@@ -1,6 +1,7 @@
 // The header's Git control: "Commit & push", and behind its chevron the menu
 // with every other Git action. It replaces the footer's Git toolbar.
 import {
+  ArrowDownToLine,
   ArrowUpFromLine,
   ExternalLink,
   FolderGit2,
@@ -88,6 +89,8 @@ export function GitActions() {
       !!status.branch &&
       !status.conflicts,
     push: !!status && !disabled && !!status.branch && !!status.remote,
+    // Not while Git is stopped in a merge, rebase, cherry-pick or revert.
+    pull: !!status && !disabled && !!status.branch && !!status.upstream && !status.operation,
     createPr:
       !!status &&
       pr?.state !== "OPEN" &&
@@ -126,6 +129,10 @@ export function GitActions() {
                   <DropdownMenuItem disabled={!can.push} onClick={() => open("push", "menu")}>
                     <ArrowUpFromLine aria-hidden />
                     Push
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={!can.pull} onClick={() => open("pull", "menu")}>
+                    <ArrowDownToLine aria-hidden />
+                    Pull
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuGroup>

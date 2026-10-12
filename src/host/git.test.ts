@@ -51,6 +51,32 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+/** A second checkout of the remote, where someone else commits and pushes. Runs Git there. */
+function elsewhere(): (...args: string[]) => string {
+  const other = path.join(dir, "other");
+  native("clone", "-b", "main", remote, other);
+  const run = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: other,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  run("config", "user.name", "Other");
+  run("config", "user.email", "other@example.com");
+  return run;
+}
+
+/** Commits `file` with `text` elsewhere and pushes it to the remote's main. */
+function pushedElsewhere(file: string, text: string): string {
+  const other = elsewhere();
+  writeFileSync(path.join(dir, "other", file), text);
+  other("add", file);
+  other("commit", "-m", `theirs: ${file}`);
+  other("push");
+  return other("rev-parse", "HEAD");
+}
+
 function stubGh() {
   const bin = path.join(dir, "bin");
   mkdirSync(bin);
@@ -125,6 +151,62 @@ it("shows Git's own reason when a push is rejected", async () => {
   const push = git.act(cwd, { kind: "push", remote: "origin" }, "main");
   await expect(push).rejects.toThrow("Tondo never force-pushes. git push:");
   await expect(push).rejects.toThrow("rejected");
+});
+
+it("pulls by fast-forward, keeps uncommitted changes it doesn't touch, and says what came in", async () => {
+  const theirs = pushedElsewhere("b", "theirs");
+  writeFileSync(path.join(cwd, "a"), "mine, uncommitted");
+  expect(await git.act(cwd, { kind: "pull" }, "main")).toBe("Pulled origin/main into main.");
+  expect(native("rev-parse", "HEAD")).toBe(theirs);
+  expect(readFileSync(path.join(cwd, "b"), "utf8")).toBe("theirs");
+  expect(readFileSync(path.join(cwd, "a"), "utf8")).toBe("mine, uncommitted");
+  expect(await git.act(cwd, { kind: "pull" }, "main")).toBe("Already up to date with origin/main.");
+});
+
+it("leaves a diverged branch alone, even when pull.rebase asks for a rebase", async () => {
+  pushedElsewhere("b", "theirs");
+  writeFileSync(path.join(cwd, "c"), "mine");
+  native("add", "c");
+  native("commit", "-m", "mine");
+  native("config", "pull.rebase", "true");
+  const head = native("rev-parse", "HEAD");
+  // Tondo's hint, then Git's reason without its advice lines.
+  await expect(git.act(cwd, { kind: "pull" }, "main")).rejects.toThrow(
+    "merge or rebase a diverged branch yourself. git pull: fatal: Not possible to fast-forward, aborting.",
+  );
+  expect(native("rev-parse", "HEAD")).toBe(head);
+  // The fetch still ran, so the branch now knows it's behind.
+  expect(await git.status(cwd, false)).toMatchObject({ ahead: 1, behind: 1, operation: null });
+});
+
+it("keeps uncommitted changes that a pull would overwrite", async () => {
+  pushedElsewhere("a", "theirs");
+  writeFileSync(path.join(cwd, "a"), "mine, uncommitted");
+  const head = native("rev-parse", "HEAD");
+  await expect(git.act(cwd, { kind: "pull" }, "main")).rejects.toThrow("would be overwritten");
+  expect(native("rev-parse", "HEAD")).toBe(head);
+  expect(readFileSync(path.join(cwd, "a"), "utf8")).toBe("mine, uncommitted");
+});
+
+it("refuses to pull without a branch or an upstream", async () => {
+  await git.act(cwd, { kind: "create-branch", branch: "topic" }, "main");
+  await expect(git.act(cwd, { kind: "pull" }, "topic")).rejects.toThrow(
+    "topic has no upstream to pull from. Push it to set one.",
+  );
+  native("switch", "--detach", "main");
+  await expect(git.act(cwd, { kind: "pull" }, null)).rejects.toThrow(
+    "Switch to a branch before pulling.",
+  );
+});
+
+it("pulls into a clone of an empty repository, whose branch has no commit yet", async () => {
+  const empty = path.join(dir, "empty.git");
+  const clone = path.join(dir, "clone");
+  native("init", "--bare", "-b", "main", empty);
+  native("clone", empty, clone);
+  native("push", empty, "main");
+  expect(await git.act(clone, { kind: "pull" }, "main")).toBe("Pulled origin/main into main.");
+  expect(readFileSync(path.join(clone, "a"), "utf8")).toBe("original");
 });
 
 it("reads status without writing the index, and handles non-repos and detached HEAD", async () => {

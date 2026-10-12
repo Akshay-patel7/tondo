@@ -55,13 +55,6 @@ interface Found {
 
 /** The most a notification's body says of a dialog's title. */
 const NOTIFICATION_CHARS = 200;
-const GIT_SUCCEEDED = {
-  switch: "Changed branch.",
-  "create-branch": "Changed branch.",
-  commit: "Committed changes.",
-  push: "Pushed branch.",
-  "create-pr": "Created pull request.",
-};
 
 export interface WorkspaceOptions {
   readonly userData: string;
@@ -1069,8 +1062,7 @@ export class Workspace {
           "Removed the worktree. Its branch and pi session were kept; you can now delete the session.",
         );
       } else {
-        await this.git.act(cwd, action, expectedBranch);
-        this.toast("info", GIT_SUCCEEDED[action.kind]);
+        this.toast("info", await this.git.act(cwd, action, expectedBranch));
       }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);

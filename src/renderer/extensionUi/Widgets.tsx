@@ -27,10 +27,12 @@ export function Widgets({ placement }: { placement: WidgetPlacement }) {
 }
 
 /**
- * The row under the composer card: the extensions' status entries on the
+ * The row under the composer card: the extensions' status texts on the
  * left, and `end` on the right, such as the thread's Git pill or the home
- * page's project picker. The entries wrap before `end` does, and `end`
- * keeps its own width. Nothing renders with no entries and no `end`.
+ * page's project picker. As in pi's footer, the texts go in key order and
+ * the keys stay hidden, because extensions use them as ids and to sort, like
+ * "0-claude-max". The texts wrap before `end` does, and `end` keeps its own
+ * width. Nothing renders with no texts and no `end`.
  */
 export function StatusRow({ end }: { end?: ReactNode }) {
   const statuses = useExtensionUi((ui) => ui.statuses);
@@ -45,8 +47,7 @@ export function StatusRow({ end }: { end?: ReactNode }) {
           className="flex min-w-0 flex-[1_1_320px] flex-wrap items-center gap-x-3"
         >
           {entries.map((status) => (
-            <li key={status.key} data-status={status.key} className="flex items-center gap-1.5">
-              <span className="text-[10px] text-faint-foreground">{status.key}</span>
+            <li key={status.key} data-status={status.key}>
               {status.text}
             </li>
           ))}

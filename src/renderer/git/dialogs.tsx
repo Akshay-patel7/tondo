@@ -64,6 +64,8 @@ function describe({ kind, status }: Action, worktree: boolean, branch: string): 
       return `Stage all ${status.untrackedHidden ? "" : `${status.changes} `}changed paths in this checkout and commit. This includes untracked files that Git does not ignore. ${status.operation ? `This concludes the ${status.operation} in progress. ` : ""}Git hooks and your signing settings still apply.`;
     case "push":
       return `Push ${status.branch} to ${status.remote} and set its upstream. This publishes committed changes. No force push.`;
+    case "pull":
+      return `Fetch ${status.upstream} and fast-forward ${status.branch} to it. If ${status.branch} has diverged, or uncommitted changes are in the way, Git stops before your branch or files change. No merge or rebase.`;
     case "create-pr":
       return `Create a pull request for ${status.branch} on ${status.remote}. Push first. This action does not push or merge.`;
     case "remove-worktree":
@@ -223,6 +225,9 @@ export function ActionDialog({
         break;
       case "push":
         gitAction = { kind, remote: status.remote! };
+        break;
+      case "pull":
+        gitAction = { kind };
         break;
       case "create-pr":
         gitAction = {

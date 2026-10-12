@@ -22,6 +22,15 @@ const EMPTY: GitStatus = {
   untrackedHidden: false,
 };
 
+/** What act() reports when an action other than a pull worked. */
+const SUCCEEDED = {
+  switch: "Changed branch.",
+  "create-branch": "Changed branch.",
+  commit: "Committed changes.",
+  push: "Pushed branch.",
+  "create-pr": "Created pull request.",
+};
+
 /** The state files Git leaves while an operation waits, most specific first. */
 const OPERATIONS: readonly (readonly [string, GitOperation])[] = [
   ["rebase-merge", "rebase"],
@@ -280,15 +289,17 @@ export class Git {
     this.remoteCache.set(key, { at: Date.now(), status });
   }
 
+  /** Runs `action` and returns what it did, for a toast. */
   async act(
     cwd: string,
     action: Exclude<GitAction, { kind: "new-worktree" | "remove-worktree" }>,
     expectedBranch: string | null,
-  ): Promise<void> {
+  ): Promise<string> {
     const status = await this.status(cwd, false);
     if (!status.root) throw new Error("This folder is not a Git checkout.");
     if (status.branch !== expectedBranch)
       throw new Error("The branch changed. Review the current branch and try again.");
+    if (action.kind === "pull") return this.pull(cwd, status);
     switch (action.kind) {
       case "switch":
         await this.branchName(cwd, action.branch);
@@ -388,5 +399,47 @@ export class Git {
       }
     }
     this.remoteCache.clear();
+    return SUCCEEDED[action.kind];
+  }
+
+  /**
+   * Fetches the branch's upstream and fast-forwards to it. Git leaves the
+   * branch and its files alone when the branch has diverged from its
+   * upstream, or when the update would overwrite uncommitted changes.
+   */
+  private async pull(cwd: string, { branch, upstream }: GitStatus): Promise<string> {
+    if (!branch) throw new Error("Switch to a branch before pulling.");
+    if (!upstream) throw new Error(`${branch} has no upstream to pull from. Push it to set one.`);
+    const before = await this.head(cwd);
+    try {
+      // --no-rebase merges whatever pull.rebase says, and --ff-only allows only a fast-forward
+      // merge. --quiet and the advice setting leave just Git's reason when it refuses.
+      await this.run(cwd, [
+        "-c",
+        "advice.diverging=false",
+        "pull",
+        "--quiet",
+        "--ff-only",
+        "--no-rebase",
+      ]);
+    } catch (error) {
+      throw because(
+        "Pull failed. Check remote access and whether uncommitted changes are in the way. Tondo only fast-forwards, so merge or rebase a diverged branch yourself.",
+        error,
+      );
+    }
+    return (await this.head(cwd)) === before
+      ? `Already up to date with ${upstream}.`
+      : `Pulled ${upstream} into ${branch}.`;
+  }
+
+  /** The commit HEAD names, or "" on a branch with no commits yet, as in a clone of an empty repository. */
+  private async head(cwd: string): Promise<string> {
+    try {
+      return (await this.run(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"])).trim();
+    } catch (error) {
+      if (error instanceof GitCommandError && error.code === 1) return "";
+      throw error;
+    }
   }
 }
