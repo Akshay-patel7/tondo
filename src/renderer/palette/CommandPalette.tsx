@@ -132,7 +132,7 @@ export function CommandPalette() {
               <div
                 id={`${id}-group-${groupIndex}`}
                 aria-hidden="true"
-                className="px-2.5 pb-1 text-xs font-medium text-muted-foreground"
+                className="px-2.5 pb-1 text-2xs font-medium text-faint-foreground"
               >
                 {group.name}
               </div>
@@ -145,15 +145,20 @@ export function CommandPalette() {
                     aria-selected={index === current}
                     onPointerMove={() => setHighlighted(index)}
                     onClick={() => runPaletteAction(item.action)}
-                    className={`flex items-center gap-3 rounded-control px-2.5 py-1.5 text-sm ${
+                    className={`flex h-7 items-center gap-3 rounded-control px-2.5 ${
                       index === current ? "bg-accent text-accent-foreground" : ""
                     }`}
                   >
                     <span className="min-w-0 shrink truncate">{item.label}</span>
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    <span className="min-w-0 flex-1 truncate text-xs text-faint-foreground">
                       {item.detail}
                     </span>
-                    {item.shortcut ? <Kbd className="shrink-0">{item.shortcut}</Kbd> : null}
+                    {/* A bare hint, as menus and the sidebar show their shortcuts. */}
+                    {item.shortcut ? (
+                      <Kbd variant="hint" className="shrink-0">
+                        {item.shortcut}
+                      </Kbd>
+                    ) : null}
                   </div>
                 ))}
               </div>

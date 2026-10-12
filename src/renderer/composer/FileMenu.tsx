@@ -33,12 +33,12 @@ export function FileMenu({
       onMouseDown={(event) => event.preventDefault()}
       className="max-h-64 overflow-y-auto border-b border-border p-1.5"
     >
-      {status ? <p className="px-2.5 py-1.5 text-xs text-muted-foreground">{status}</p> : null}
+      {status ? <p className="px-2 py-1.5 text-xs text-muted-foreground">{status}</p> : null}
       {index && !status && paths.length === 0 ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground">No matching file.</p>
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">No matching file.</p>
       ) : null}
       {index?.truncated ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">
           This project has over 10,000 files. Keep typing to search all of them by name or path.
         </p>
       ) : null}
@@ -51,7 +51,7 @@ export function FileMenu({
           onPointerMove={() => onHighlight(row)}
           onClick={() => onPick(path)}
           title={path}
-          className="truncate rounded-control px-2.5 py-1 text-sm aria-selected:bg-accent aria-selected:text-accent-foreground"
+          className="truncate rounded-control px-2 py-1.5 font-mono text-xs aria-selected:bg-selected aria-selected:text-foreground"
         >
           {path}
         </div>

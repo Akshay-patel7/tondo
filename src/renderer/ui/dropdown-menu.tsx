@@ -19,7 +19,7 @@ const menuItemVariants = cva(
     variants: {
       variant: {
         default:
-          "data-highlighted:bg-accent data-highlighted:text-accent-foreground [&>svg]:text-muted-foreground data-highlighted:[&>svg]:text-accent-foreground",
+          "data-highlighted:bg-accent data-highlighted:text-foreground [&>svg]:text-muted-foreground data-highlighted:[&>svg]:text-foreground",
         // A quarter of the text color keeps the label above 4.5:1 on the
         // highlight's tint in both themes, as in badge.tsx.
         destructive:
@@ -119,7 +119,7 @@ function DropdownMenuLabel({ className, ...props }: LabelProps) {
   return (
     <MenuPrimitive.GroupLabel
       data-slot="dropdown-menu-label"
-      className={cn("px-2 py-1.5 text-xs font-medium text-muted-foreground", className)}
+      className={cn("px-2 py-1.5 text-2xs font-medium text-faint-foreground", className)}
       {...props}
     />
   );
@@ -195,8 +195,12 @@ function DropdownMenuSeparator({ className, ...props }: SeparatorProps) {
  * The item's keyboard shortcut, at its end, such as `⌘N`. Its text becomes
  * part of the item's accessible name.
  */
-function DropdownMenuShortcut({ className, ...props }: ComponentProps<typeof Kbd>) {
-  return <Kbd className={cn("ml-auto", className)} {...props} />;
+function DropdownMenuShortcut({
+  className,
+  variant = "hint",
+  ...props
+}: ComponentProps<typeof Kbd>) {
+  return <Kbd variant={variant} className={cn("ml-auto", className)} {...props} />;
 }
 
 export {

@@ -95,7 +95,10 @@ test("an extension's dialogs, toasts, status, widgets, title and composer text",
   await expect(
     page.getByRole("status").filter({ hasText: "The extension says hello" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Extension status")).toHaveText("Checking the extension UI");
+  // The status row names each entry by its key, then shows the extension's text.
+  const status = page.getByLabel("Extension status").getByRole("listitem");
+  await expect(status).toHaveText(["tondoChecking the extension UI"]);
+  await expect(status).toHaveAttribute("data-status", "tondo");
   await expect(page.getByLabel("Extension widgets", { exact: true })).toHaveText(
     "Widget above the composer",
   );

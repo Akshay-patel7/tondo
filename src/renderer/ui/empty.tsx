@@ -55,11 +55,7 @@ function EmptyMedia({ className, variant, ...props }: EmptyMediaProps) {
 
 function EmptyTitle({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div
-      data-slot="empty-title"
-      className={cn("text-base font-semibold tracking-tight", className)}
-      {...props}
-    />
+    <div data-slot="empty-title" className={cn("text-title font-semibold", className)} {...props} />
   );
 }
 

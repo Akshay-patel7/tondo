@@ -13,9 +13,10 @@ import { stripAnsi } from "./ansi";
 
 // Alert centers its icon and button on the whole text unless there's a
 // description, so each banner keeps them on the first line of its text. Beside
-// a 24 px button, the title's 2 px margins make that line as tall as the
-// button, and the icon sits 4 px down. Without a button, the icon sits 2 px
-// down, as Alert puts it beside a description. One line looks as it did.
+// a 24 px button, the title's 3 px margins make its 18 px line as tall as the
+// button, and the icon sits 4 px down. With details under the title, the title
+// keeps no margins, so the button moves 3 px up to center on its line instead.
+// Without a button, the icon sits 1 px down, centered on the line.
 
 function PiStopped({ error }: { error: string }) {
   // PiExitError puts the exit on the first line and pi's stderr, colors and all, after it.
@@ -24,11 +25,11 @@ function PiStopped({ error }: { error: string }) {
   return (
     <Alert variant="destructive" role="alert">
       <CircleAlert aria-hidden className={details ? undefined : "self-start translate-y-1"} />
-      <AlertTitle className={details ? "break-words" : "my-0.5 break-words"}>{summary}</AlertTitle>
+      <AlertTitle className={details ? "break-words" : "my-0.75 break-words"}>{summary}</AlertTitle>
       {details ? (
         <AlertDescription>
           <details className="group/details">
-            <summary className="inline-flex cursor-default list-none items-center gap-1 rounded-sm text-xs outline-none select-none hover:text-foreground focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
+            <summary className="inline-flex cursor-default list-none items-center gap-1 rounded-chip text-xs outline-none select-none hover:text-foreground focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
               <ChevronRight
                 aria-hidden
                 className="size-3 transition-transform duration-150 group-open/details:rotate-90"
@@ -42,8 +43,8 @@ function PiStopped({ error }: { error: string }) {
         </AlertDescription>
       ) : null}
       {/* On the summary's line, so opening the details doesn't move it. */}
-      <AlertAction className="self-start">
-        <Button size="xs" onClick={restartPi}>
+      <AlertAction className={details ? "-mt-0.75 self-start" : "self-start"}>
+        <Button size="sm" onClick={restartPi}>
           Restart pi
         </Button>
       </AlertAction>
@@ -73,7 +74,7 @@ export function Banners() {
       {pi.state === "exited" && pi.problem === undefined ? <PiStopped error={pi.error} /> : null}
       {retry ? (
         <Alert variant="warning" role="status">
-          <RotateCw aria-hidden className="self-start translate-y-0.5" />
+          <RotateCw aria-hidden className="self-start translate-y-px" />
           <AlertTitle>{retryText(retry)}</AlertTitle>
           {retry.errorMessage ? (
             <AlertDescription className="break-words">{retry.errorMessage}</AlertDescription>
@@ -83,18 +84,18 @@ export function Banners() {
       {compaction ? (
         <Alert role="status">
           {/* It spins only while pi compacts, and the banner goes when pi is done. */}
-          <Spinner className="self-start translate-y-0.5" />
+          <Spinner className="self-start translate-y-px" />
           <AlertTitle>{compactionText(compaction)}</AlertTitle>
         </Alert>
       ) : null}
       {errors.map((error) => (
         <Alert key={error} variant="destructive" role="alert">
           <CircleAlert aria-hidden className="self-start translate-y-1" />
-          <AlertTitle className="my-0.5 break-words whitespace-pre-wrap">{error}</AlertTitle>
+          <AlertTitle className="my-0.75 break-words whitespace-pre-wrap">{error}</AlertTitle>
           <AlertAction className="self-start">
             <Button
-              variant="ghost"
-              size="icon-xs"
+              variant="faint-ghost"
+              size="icon-sm"
               aria-label="Dismiss error"
               onClick={() => dismissError(error)}
             >

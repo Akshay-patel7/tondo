@@ -1,6 +1,7 @@
-// Tool cards: every built-in tool and an extension's tool from a recorded
-// turn, a shell command's output while it runs, and edit diffs highlighted by
-// @pierre/diffs's worker pool under the CSP, in colors legible in both schemes.
+// The work log: every built-in tool and an extension's tool from a recorded
+// turn, grouped into one log whose header folds it, a shell command's output
+// while it runs, and edit diffs highlighted by @pierre/diffs's worker pool
+// under the CSP, in colors legible in both schemes.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,12 +38,12 @@ test.afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-/** The card of the tool call with id `id`. */
+/** The work log row of the tool call with id `id`. */
 function card(page: Page, id: string): Locator {
   return page.locator(`[data-tool-call="${id}"]`);
 }
 
-/** The button that opens and closes a card. */
+/** The button that opens and closes a row, or folds a work log. */
 function header(of: Locator): Locator {
   return of.getByRole("button").first();
 }
@@ -71,7 +72,7 @@ async function waitForHighlighting(of: Locator): Promise<void> {
     .toBe(true);
 }
 
-test("every built-in tool and an extension's tool get a card that opens to its output", async () => {
+test("every built-in tool and an extension's tool get a work log row that opens to its output", async () => {
   // A turn pi really ran, recorded by `pnpm fixtures tool-cards`.
   const session = seedSession(workDir, project, { fixture: "tool-cards.json" });
   tondo = await launchWithPi({ workDir, script: { responses: [] }, piArgs: ["--fork", session] });
@@ -79,29 +80,45 @@ test("every built-in tool and an extension's tool get a card that opens to its o
   await bringToFront(tondo);
   const violations = await recordCspViolations(page);
   await addProject(tondo, project);
-  // 13 messages, and the 9 results show inside their calls' cards.
-  await expect(page.locator('[data-index="12"]')).toContainText("The parser skips spaces now", {
+  // 13 messages: the prompt, and one turn whose 9 results show inside its work log.
+  await expect(page.locator('[data-index="1"]')).toContainText("The parser skips spaces now", {
     timeout: PI_START_TIMEOUT_MS,
   });
-  await expect(page.locator("[data-index]")).toHaveCount(4);
-  await page.screenshot({ path: test.info().outputPath("closed.png"), animations: "disabled" });
+  await expect(page.locator("[data-index]")).toHaveCount(2);
 
-  const cards: [id: string, header: string, body: string][] = [
-    ["look_0", "ls src", "parser.ts"],
-    ["look_1", "find *.ts", "src/lexer.ts"],
-    ["look_2", "grep export function in src", "parser.ts:8: export function parse"],
-    ["look_3", "read src/parser.ts", "export function parse(source: string): Node[] {"],
-    ["look_4", "bash wc -l src/*.ts", "29 total"],
-    ["look_5", "powershell Get-ChildItem src", "The powershell tool is only available on Windows."],
+  // The turn's two messages of tool calls share one work log. It starts
+  // open, with every row closed, and its header folds the list.
+  const log = page.locator("[data-work-log]");
+  await expect(log).toHaveCount(1);
+  await expect(header(log)).toHaveText(/^Worked for \d+s · 9 tool calls$/);
+  await expect(header(log)).toHaveAttribute("aria-expanded", "true");
+  await expect(log.locator("[data-tool-call]")).toHaveCount(9);
+  await expect(log.locator("[data-tool-call] > button[aria-expanded=true]")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("closed.png"), animations: "disabled" });
+  await header(log).click();
+  await expect(header(log)).toHaveAttribute("aria-expanded", "false");
+  await expect(log.locator("[data-tool-call]")).toHaveCount(0);
+  await header(log).click();
+  await expect(header(log)).toHaveAttribute("aria-expanded", "true");
+  const list = log.locator(`[id="${await header(log).getAttribute("aria-controls")}"]`);
+  await expect(list.locator("[data-tool-call]")).toHaveCount(9);
+
+  const rows: [id: string, header: string, body: string][] = [
+    ["look_0", "List src 2 entries", "parser.ts"],
+    ["look_1", "Search *.ts 2 files", "src/lexer.ts"],
+    ["look_2", "Search export function in src 2 matches", "parser.ts:8: export function parse"],
+    ["look_3", "Read src/parser.ts 18 lines", "export function parse(source: string): Node[] {"],
+    ["look_4", "Run wc -l src/*.ts", "29 total"],
+    ["look_5", "Run Get-ChildItem src", "The powershell tool is only available on Windows."],
     ["look_6", 'word_count {"path":"README.md"}', "README.md has 11 words."],
-    ["change_0", "edit src/parser.ts +1 −0", 'if (token.type === "space") continue;'],
-    ["change_1", "write src/kinds.ts 3 lines", "export const KINDS"],
+    ["change_0", "Edit src/parser.ts +1 −0", 'if (token.type === "space") continue;'],
+    ["change_1", "Write src/kinds.ts 3 lines", "export const KINDS"],
   ];
-  for (const [id, title, body] of cards) {
-    // oxlint-disable-next-line eslint/no-await-in-loop -- one card at a time, each opened and photographed in turn.
+  for (const [id, title, body] of rows) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one row at a time, each opened and photographed in turn.
     await openCard(page, id, title, body);
   }
-  // The extension's tool gets the generic card, with its arguments.
+  // The extension's tool gets the generic row, with its arguments.
   await expect(card(page, "look_6")).toContainText('"path": "README.md"');
 
   // The diffs came from the worker pool, and the CSP let everything load.
@@ -109,9 +126,9 @@ test("every built-in tool and an extension's tool get a card that opens to its o
   expect(await violations.jsonValue()).toEqual([]);
 });
 
-test("a running command shows its last lines under its card until it ends", async () => {
+test("a running command shows its last lines under its row until it ends", async () => {
   const release = path.join(workDir, "release");
-  // More lines than an open card shows at once, so its output scrolls.
+  // More lines than an open row shows at once, so its output scrolls.
   const lines = Array.from({ length: 30 }, (_, index) => `echo line${index + 1}`).join("; ");
   tondo = await launchWithPi({
     workDir,
@@ -136,7 +153,7 @@ test("a running command shows its last lines under its card until it ends", asyn
   const spinner = running.locator("[data-slot=spinner]");
   await expect(spinner).toBeVisible();
 
-  // Open, the card shows the output from its end, and stays there as the
+  // Open, the row shows the output from its end, and stays there as the
   // command finishes. The header names the body it opens.
   await header(running).click();
   await expect(latest).not.toBeAttached();
@@ -152,6 +169,29 @@ test("a running command shows its last lines under its card until it ends", asyn
   // Closed, a finished command shows no output.
   await header(running).click();
   await expect(latest).not.toBeAttached();
+});
+
+test("a test runner's verdict shows in the command's row", async () => {
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      responses: [
+        bashCall(
+          "printf ' Test Files  3 passed (3)\\n      Tests  42 passed (42)\\n'",
+          "call_test",
+        ),
+        reply("All green."),
+      ],
+    },
+  });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Run the tests.");
+  await expect(page.getByText("All green.")).toBeVisible();
+  // The status mark leads the button's text with a space.
+  await expect(header(card(page, "call_test"))).toHaveText(/^\s*Run printf .* 42 passed$/);
 });
 
 test("an edit shows its diff, and a failed call its error", async () => {
@@ -187,7 +227,7 @@ test("an edit shows its diff, and a failed call its error", async () => {
   await expect(page.getByText("Edited.")).toBeVisible();
 
   const edited = card(page, "call_edit");
-  await expect(header(edited)).toHaveText("edit notes.md +1 −0");
+  await expect(header(edited)).toHaveText("Edit notes.md +1 −0");
   await header(edited).click();
   await waitForHighlighting(edited);
   await expect(edited.getByRole("region", { name: "Diff" })).toContainText("second");
@@ -235,7 +275,7 @@ test("a command's colors show as plain text, not as escape codes", async () => {
   await waitForPi(page);
   await send(page, "Color it.");
 
-  // Under the card while the command runs, and in the card once it's done.
+  // Under the row while the command runs, and in the row once it's done.
   const colored = card(page, "call_color");
   await expect(colored.getByRole("log", { name: "Latest output" })).toHaveText("RED plain GREEN");
   writeFileSync(release, "");
@@ -372,14 +412,14 @@ function illegibleText(root: Locator): Promise<string[]> {
   });
 }
 
-/** How far the card's output box is scrolled from its end. */
+/** How far the row's output box is scrolled from its end. */
 function pixelsBelowView(of: Locator): Promise<number> {
   return of
     .locator("[tabindex='0']")
     .evaluate((box) => box.scrollHeight - box.scrollTop - box.clientHeight);
 }
 
-/** Checks a closed card's header and status, opens it, checks its body and takes its picture. */
+/** Checks a closed row's header and status, opens it, checks its body and takes its picture. */
 async function openCard(page: Page, id: string, title: string, body: string): Promise<void> {
   const toolCard = card(page, id);
   await toolCard.scrollIntoViewIfNeeded();

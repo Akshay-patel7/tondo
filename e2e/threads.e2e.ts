@@ -311,7 +311,7 @@ test("explicit worktree removal retains an addressable session for Delete across
   git("add", ".");
   git("commit", "-m", "initial");
   const { app, page, profileDir } = await startThread("Local session", "Done.");
-  await page.getByRole("button", { name: "New worktree", exact: true }).click();
+  await gitAction(page, "New worktree");
   await page.getByLabel("Branch name", { exact: true }).fill("deletion-preserved");
   await page
     .getByRole("dialog")
@@ -345,10 +345,12 @@ test("explicit worktree removal retains an addressable session for Delete across
   expect(readFileSync(path.join(checkout, "ignored"), "utf8")).toBe("Keep ignored files");
   expect(existsSync(file)).toBe(true);
   expect(git("branch", "--list", "deletion-preserved")).toContain("deletion-preserved");
-  await expect(page.getByRole("button", { name: "Remove worktree", exact: true })).toBeEnabled();
   await page.screenshot({ path: path.join(deletionEvidence, "managed-refusal.png") });
 
-  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await page.getByRole("button", { name: "Git actions", exact: true }).click();
+  const removeWorktree = page.getByRole("menuitem", { name: "Remove worktree", exact: true });
+  await expect(removeWorktree).toBeEnabled();
+  await removeWorktree.click();
   const removal = page.getByRole("alertdialog");
   await removal.getByRole("button", { name: "Remove worktree", exact: true }).click();
   await expect(removal.getByRole("alert")).toContainText("ignored files");
@@ -490,11 +492,17 @@ test("the keyboard moves through the sidebar, opens threads and their menu, and 
   await expect(menu).not.toBeAttached();
   await expect(beta).toBeFocused();
 
-  // Past the row's own button, Tab leaves the list.
+  // Past the row's own button, Tab leaves the list for the sidebar's footer,
+  // and then the sidebar.
   await page.keyboard.press("Tab");
   await expect(rowActions(page, "Beta.")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Changes", exact: true })).toBeFocused();
+  await expect(threads(page).getByRole("button", { name: "Settings", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  expect(
+    await threads(page).evaluate((sidebar) => sidebar.contains(document.activeElement)),
+    "Tab leaves the sidebar",
+  ).toBe(false);
 
   // The palette takes focus, and gives it back when Escape closes it.
   await beta.focus();
@@ -703,6 +711,12 @@ function rowActions(page: Page, title: string) {
     .getByRole("listitem")
     .filter({ has: page.getByTitle(title, { exact: true }) })
     .getByRole("button", { name: "Thread actions" });
+}
+
+/** Opens the header's Git actions menu, and chooses `action` in it. */
+async function gitAction(page: Page, action: string): Promise<void> {
+  await page.getByRole("button", { name: "Git actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: action, exact: true }).click();
 }
 
 /** Right-clicks the row of the thread titled `title`, and chooses `action` in its menu. */

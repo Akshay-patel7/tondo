@@ -1,8 +1,9 @@
 // The layout at the window's 840x620 minimum, at its default size and at 200%
 // zoom, with the real pi offline: a long folder name in the header, Changes
 // and the terminal beside a usable thread, the sidebar stepping aside when the
-// window has no room for it, and toasts kept off the composer and an
-// extension's dialog. Screenshots go to test-results/layout/.
+// window has no room for it, toasts kept off the composer and an extension's
+// dialog, and many extension status entries wrapping under the composer.
+// Screenshots go to test-results/layout/.
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -42,6 +43,31 @@ export default function toastExtension(pi) {
 }
 `;
 
+/** Nine status entries, more than one line holds, with emoji and text as extensions post them. */
+const STATUS_ENTRIES: readonly (readonly [key: string, text: string])[] = [
+  ["usage", "🧠 5h 2% · wk 0% · fable 0%"],
+  ["soul", "✦ soul: global"],
+  ["context", "📦 38% of 200k tokens"],
+  ["model", "🤖 faux-1 · medium thinking"],
+  ["lint", "✅ lint clean · 0 warnings"],
+  ["tests", "🧪 742 passed · 0 failed"],
+  ["branch", "⎇ feature/a-long-branch-name-that-needs-room"],
+  ["clock", "⏱ 12:34 · session 1h 02m"],
+  ["mood", "😀 all good"],
+];
+
+/** /tondo-statuses posts STATUS_ENTRIES as the extension's status line. */
+const STATUS_EXTENSION = `
+export default function statusExtension(pi) {
+  pi.registerCommand("tondo-statuses", {
+    description: "Posts many status entries",
+    handler: async (_args, ctx) => {
+      for (const [key, text] of ${JSON.stringify(STATUS_ENTRIES)}) ctx.ui.setStatus(key, text);
+    },
+  });
+}
+`;
+
 let dir: string;
 let env: Record<string, string>;
 let tondo: Tondo | undefined;
@@ -69,7 +95,7 @@ test.afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** A Git checkout named `name` with one commit, so the footer shows the whole Git toolbar. */
+/** A Git checkout named `name` with one commit, so the header shows the Git controls and the status row its Git pill. */
 function gitProject(name: string): string {
   const project = path.join(dir, name);
   mkdirSync(project);
@@ -272,6 +298,55 @@ test("at 200% zoom the sidebar steps aside, and the header and transcript keep t
 
   await zoom(tondo!, 1);
   await expect(sidebar).toBeVisible();
+});
+
+/**
+ * How the status row under the composer laid out: how many lines its entries
+ * take, the entries outside the row's box or wider than their own, and the
+ * Git pill's height and whether it's inside the row.
+ */
+function measureStatusRow(page: Page) {
+  return page.evaluate(() => {
+    const list = document.querySelector('[aria-label="Extension status"]')!;
+    const row = list.parentElement!.getBoundingClientRect();
+    const inside = (box: DOMRect) =>
+      box.left >= row.left - 0.5 &&
+      box.right <= row.right + 0.5 &&
+      box.top >= row.top - 0.5 &&
+      box.bottom <= row.bottom + 0.5;
+    const entries = [...list.querySelectorAll("li")];
+    const pill = document.querySelector('[aria-label="Git status"]')!.getBoundingClientRect();
+    return {
+      lines: new Set(entries.map((entry) => Math.round(entry.getBoundingClientRect().top))).size,
+      outside: entries
+        .filter((entry) => !inside(entry.getBoundingClientRect()))
+        .map((entry) => entry.dataset.status),
+      overflowing: entries
+        .filter((entry) => entry.scrollWidth > entry.clientWidth + 1)
+        .map((entry) => entry.dataset.status),
+      pillHeight: pill.height,
+      pillInside: inside(pill),
+    };
+  });
+}
+
+test("many extension status entries wrap under the composer without clipping, and the Git pill keeps one line", async () => {
+  const extension = path.join(dir, "status-ext.ts");
+  writeFileSync(extension, STATUS_EXTENSION);
+  const page = await launch(gitProject("project"), { piArgs: ["-e", extension] });
+  const entries = page.getByLabel("Extension status").getByRole("listitem");
+  await send(page, "/tondo-statuses");
+  // In key order, each entry its key and then the extension's text verbatim.
+  await expect(entries).toHaveText(
+    STATUS_ENTRIES.toSorted(([a], [b]) => a.localeCompare(b)).map(([key, text]) => key + text),
+  );
+  const fit = await measureStatusRow(page);
+  expect(fit.lines, "the entries take more than one line").toBeGreaterThan(1);
+  expect(fit.outside, "entries outside the status row").toEqual([]);
+  expect(fit.overflowing, "entries wider than their box").toEqual([]);
+  expect(fit.pillHeight, "the Git pill's height").toBeLessThanOrEqual(23);
+  expect(fit.pillInside, "the Git pill is inside the status row").toBe(true);
+  await page.screenshot({ path: path.join(SHOTS, "status-row-wrapping.png") });
 });
 
 /** The toasts whose boxes meet the box of the element `selector` finds, with the area they share. */

@@ -57,8 +57,7 @@ export function ModelPicker({ session }: { session: PiSession }) {
       <SelectTrigger
         data-picker="model"
         aria-label="Model"
-        variant="ghost"
-        size="xs"
+        variant="ghost-picker"
         className="max-w-56"
       >
         <SelectValue placeholder="No model" />
@@ -102,7 +101,7 @@ export function ThinkingPicker({ session }: { session: PiSession }) {
       value={thinkingLevel}
       onValueChange={pick}
     >
-      <SelectTrigger data-picker="thinking" aria-label="Thinking level" variant="ghost" size="xs">
+      <SelectTrigger data-picker="thinking" aria-label="Thinking level" variant="ghost-picker">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

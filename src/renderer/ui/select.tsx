@@ -30,19 +30,31 @@ function Select<Value, Multiple extends boolean | undefined = false>({
   );
 }
 
+// Ghost in muted text that comes up to foreground on hover or while open.
+const GHOST =
+  "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground";
+
+// Each size names its radius, so the look of a size never fights the base.
 const selectTriggerVariants = cva(
-  "flex w-fit min-w-0 items-center justify-between gap-1.5 rounded-control border whitespace-nowrap transition-colors outline-none select-none app-no-drag focus-visible:focus-ring data-disabled:pointer-events-none data-disabled:opacity-50 data-placeholder:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "flex w-fit min-w-0 items-center justify-between border whitespace-nowrap transition-colors outline-none select-none app-no-drag focus-visible:focus-ring data-disabled:pointer-events-none data-disabled:opacity-50 data-placeholder:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "border-input bg-transparent hover:bg-accent data-popup-open:bg-accent dark:bg-input/30 dark:hover:bg-input/50 dark:data-popup-open:bg-input/50 [&_svg]:text-muted-foreground",
-        ghost:
-          "border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground data-popup-open:bg-accent data-popup-open:text-accent-foreground",
+          "border-input bg-transparent text-foreground hover:bg-accent data-popup-open:bg-accent [&_svg]:text-muted-foreground",
+        ghost: GHOST,
+        // The composer's model and thinking pickers: ghost at 12px with a 12px
+        // chevron. Without a size it's `picker`.
+        "ghost-picker": GHOST,
+        // "Turn 3 of 3", the home page's project picker: a 24px --input edge on
+        // a transparent fill. Without a size it's `xs`.
+        "outline-sm":
+          "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground",
       },
       size: {
-        sm: "h-7 px-2.5 text-sm [&_svg:not([class*='size-'])]:size-3.5",
-        xs: "h-6 gap-1 px-2 text-xs [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-7 gap-1.5 rounded-control px-2.5 text-sm [&_svg:not([class*='size-'])]:size-3.5",
+        xs: "h-6 gap-1 rounded-chip px-2 text-xs [&_svg:not([class*='size-'])]:size-3",
+        picker: "h-7 gap-1 rounded-control px-2 text-xs [&_svg:not([class*='size-'])]:size-3",
       },
     },
     defaultVariants: {
@@ -51,6 +63,14 @@ const selectTriggerVariants = cva(
     },
   },
 );
+
+type TriggerVariants = VariantProps<typeof selectTriggerVariants>;
+
+function defaultTriggerSize(variant: TriggerVariants["variant"]): TriggerVariants["size"] {
+  if (variant === "ghost-picker") return "picker";
+  if (variant === "outline-sm") return "xs";
+  return undefined;
+}
 
 // Base UI keeps the value off the trigger's attributes. data-value puts it
 // back, so e2e can read what a picker holds without opening it (e2e/ui.ts).
@@ -61,7 +81,7 @@ function renderTrigger(props: HTMLProps, state: SelectPrimitive.Trigger.State) {
 // className is a string: cn can't merge Base UI's state callback.
 type TriggerProps = Omit<SelectPrimitive.Trigger.Props, "className" | "render"> & {
   className?: string;
-} & VariantProps<typeof selectTriggerVariants>;
+} & TriggerVariants;
 
 /** Put a SelectValue inside it. */
 function SelectTrigger({ className, variant, size, children, ...props }: TriggerProps) {
@@ -71,7 +91,10 @@ function SelectTrigger({ className, variant, size, children, ...props }: Trigger
     <>
       <SelectPrimitive.Trigger
         data-slot="select-trigger"
-        className={cn(selectTriggerVariants({ variant, size }), className)}
+        className={cn(
+          selectTriggerVariants({ variant, size: size ?? defaultTriggerSize(variant) }),
+          className,
+        )}
         render={renderTrigger}
         {...props}
       >
@@ -178,7 +201,7 @@ function SelectGroupLabel({ className, ...props }: GroupLabelProps) {
   return (
     <SelectPrimitive.GroupLabel
       data-slot="select-group-label"
-      className={cn("px-2 py-1.5 text-xs font-medium text-muted-foreground", className)}
+      className={cn("px-2 py-1.5 text-2xs font-medium text-faint-foreground", className)}
       {...props}
     />
   );
@@ -192,7 +215,7 @@ function SelectItem({ className, children, ...props }: ItemProps) {
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-2 rounded-[calc(var(--control-radius)-4px)] py-1.5 pr-8 pl-2 outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative flex w-full cursor-default items-center gap-2 rounded-[calc(var(--control-radius)-4px)] py-1.5 pr-8 pl-2 outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -230,4 +253,6 @@ export {
   SelectGroupLabel,
   SelectItem,
   SelectSeparator,
+  defaultTriggerSize,
+  selectTriggerVariants,
 };

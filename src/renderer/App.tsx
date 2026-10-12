@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect } from "react";
 import type { PaletteSetting } from "../shared/settings";
 import { Banners } from "./banners/Banners";
-import { BranchToolbar } from "./git/BranchToolbar";
 import { runAppCommand } from "./commands";
 import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
@@ -10,7 +9,8 @@ import { useTerminals } from "./terminal/store";
 import { DialogPanel } from "./extensionUi/DialogPanel";
 import { DiffPanel, useDiffPanel } from "./diffs/DiffPanel";
 import { useExtensionUi } from "./extensionUi/store";
-import { StatusLine, Widgets } from "./extensionUi/Widgets";
+import { StatusRow, Widgets } from "./extensionUi/Widgets";
+import { GitPill } from "./git/GitPill";
 import { PiSetup } from "./onboarding/PiSetup";
 import { SignInPrompt } from "./onboarding/SignInPrompt";
 import { CommandPalette } from "./palette/CommandPalette";
@@ -18,7 +18,6 @@ import { closePalette, usePalette } from "./palette/store";
 import { isMac } from "./platform";
 import { NoThread } from "./project/NoThread";
 import { TrustPrompt } from "./project/TrustPrompt";
-import { SettingsPage } from "./settings/SettingsPage";
 import { useSettingsPage } from "./settings/store";
 import { Sheets } from "./sheets/Sheets";
 import { appCommand } from "./shortcuts";
@@ -30,6 +29,9 @@ import { Timeline } from "./timeline/Timeline";
 import { Toasts } from "./toasts/Toasts";
 
 const TerminalDrawer = lazy(() => import("./terminal/TerminalDrawer"));
+const SettingsPage = lazy(() =>
+  import("./settings/SettingsPage").then((settings) => ({ default: settings.SettingsPage })),
+);
 
 let paletteSwitchFrame = 0;
 
@@ -114,7 +116,18 @@ function Body() {
     const pi = host.thread?.pi;
     return pi?.state === "exited" ? pi.problem : undefined;
   });
-  if (settingsOpen) return <SettingsPage />;
+  if (settingsOpen)
+    return (
+      <Suspense
+        fallback={
+          <p role="status" className="p-3 text-sm">
+            Loading settings…
+          </p>
+        }
+      >
+        <SettingsPage />
+      </Suspense>
+    );
   if (project === undefined) return <NoThread />;
   // Keyed by thread, so each thread's question takes focus when you open it.
   if (askingTrust) return <TrustPrompt key={threadId} project={project} />;
@@ -142,8 +155,8 @@ function Thread() {
         </main>
         {/* When the terminal drawer needs the room, the footer gives up height and clips. The
             clip margin keeps the composer card's shadow, which reaches 20px past the footer. */}
-        <footer className="min-h-0 overflow-clip px-4 pb-4 [overflow-clip-margin:20px]">
-          <div className="mx-auto max-w-3xl">
+        <footer className="min-h-0 overflow-clip px-8 pb-4 [overflow-clip-margin:20px]">
+          <div className="mx-auto max-w-176">
             <Banners />
             {needsSignIn ? <SignInPrompt /> : null}
             <QueueList />
@@ -151,9 +164,8 @@ function Thread() {
             {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
             <DialogPanel />
             <Composer key={threadId} hidden={asking} />
+            <StatusRow end={<GitPill />} />
             <Widgets placement="belowEditor" />
-            <StatusLine />
-            <BranchToolbar key={`git:${threadId}`} />
           </div>
         </footer>
         {threadId && terminal ? (

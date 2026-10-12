@@ -30,6 +30,7 @@ describe("parseClientMessage", () => {
       { v, type: "remove-project", projectId: 1 },
       { v, type: "set-collapsed", projectId: 1, collapsed: true },
       { v, type: "new-thread", projectId: 2 },
+      { v, type: "get-project-git", projectId: 2 },
       { v, type: "open-thread", threadId },
       { v, type: "rename-thread", threadId, name: "Parser fix" },
       { v, type: "pin-thread", threadId, pinned: true },

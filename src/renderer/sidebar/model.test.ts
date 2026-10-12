@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { SidebarProject, SidebarThread } from "../../shared/protocol";
-import { keepUnchanged, listedThreads, stepThread, threadOrder } from "./model";
+import { keepUnchanged, listedThreads, runningCount, stepThread, threadOrder } from "./model";
 
 function thread(id: string, extra: Partial<SidebarThread> = {}): SidebarThread {
   return {
@@ -83,6 +83,24 @@ describe("listedThreads", () => {
     const { listed, more } = listedThreads(withArchived, 2, "x");
     expect(listed.map(({ id }) => id)).toEqual(["x", "a"]);
     expect(more).toBe(4);
+  });
+});
+
+describe("runningCount", () => {
+  test("counts the threads with a turn going, across projects", () => {
+    const projects = [
+      project(1, [
+        thread("a", { activity: "working" }),
+        thread("b", { activity: "waiting" }),
+        thread("c", { activity: "starting" }),
+        thread("d", { activity: "error" }),
+        thread("e", { unread: true }),
+      ]),
+      project(2, [thread("f", { activity: "working" })], true),
+    ];
+    expect(runningCount(projects)).toBe(3);
+    expect(runningCount([project(3, [thread("g")])])).toBe(0);
+    expect(runningCount([])).toBe(0);
   });
 });
 

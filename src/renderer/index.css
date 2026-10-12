@@ -73,9 +73,14 @@
 /*
  * Components color themselves with these names, never with palette colors, so
  * the look changes here alone. The names follow shadcn's, which streamdown uses
- * too. The values are the Warm direction from the Stage 4 design checkpoint
- * (docs/plan.md, "Decisions"), the default palette. Slate, Ocean and Rose
- * follow it.
+ * too, plus the ones the v1.1 design handoff adds. The dark default palette is
+ * the handoff's token table; the light scheme and the Slate, Ocean and Rose
+ * palettes apply its lightness steps to their own hue.
+ *
+ * --message has no --color-message on purpose: Tailwind resolves text-<name>
+ * as a color before a font size, so it would turn text-message, the 14px
+ * message size below, into a color. The bg-message utility further down fills
+ * the user bubble instead.
  */
 @theme inline {
   --color-background: var(--background);
@@ -84,39 +89,104 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
-  --color-message: var(--message);
   --color-message-foreground: var(--message-foreground);
+  --color-segment: var(--segment);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-faint-foreground: var(--faint-foreground);
+  --color-line-number: var(--line-number);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-selected: var(--selected);
+  --color-neutral: var(--neutral);
+  --color-neutral-hover: var(--neutral-hover);
+  --color-subtle: var(--subtle);
+  --color-code-fill: var(--code-fill);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-palette-preview: var(--palette-preview);
+  --color-palette-preview-primary: var(--palette-preview-primary);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-warning-text: var(--warning-text);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
   --color-addition: var(--addition);
+  --color-addition-line: var(--addition-line);
+  --color-addition-line-foreground: var(--addition-line-foreground);
   --color-deletion: var(--deletion);
+  --color-deletion-line: var(--deletion-line);
+  --color-deletion-line-foreground: var(--deletion-line-foreground);
+  --color-terminal-tail: var(--terminal-tail);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-control-border: var(--control-border);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
+  --radius-chip: var(--chip-radius);
   --radius-control: var(--control-radius);
+  --radius-card: var(--card-radius);
   --radius-panel: var(--panel-radius);
   --shadow-composer: var(--composer-shadow);
 }
 
+/*
+ * The type scale, in pixels so the root rem, and with it every spacing value,
+ * stays as it is. Each size carries its line height. text-sm is the UI base;
+ * text-message is the composer and the transcript; the three largest are
+ * settings section titles and the home and welcome headlines.
+ */
+@theme {
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-message: 14px;
+  --text-message--line-height: 22px;
+  --text-title: 16px;
+  --text-title--line-height: 22px;
+  --text-headline: 22px;
+  --text-headline--line-height: 28px;
+  --text-display: 24px;
+  --text-display--line-height: 30px;
+}
+
+@layer base {
+  body {
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+}
+
+/* The user bubble's fill. See the note above @theme inline for why it's static. */
+@utility bg-message {
+  background-color: var(--message);
+}
+
+/*
+ * The light scheme keeps the dark one's structure: --sidebar a step below
+ * --background, --card a step above, --message and --segment the raised fills.
+ * The dark scheme's white alphas become black alphas with the same step. The
+ * text tokens keep 4.5:1 on --background, --card and --sidebar, except the two
+ * the handoff sets lower: --faint-foreground, for ages, hints and labels.
+ * --line-number is dimmer in the handoff, but diff text keeps 4.5:1 on
+ * --sidebar (tools.e2e.ts, settings.e2e.ts), so it sits at the faint step.
+ * The -foreground of a solid color is the text on a fill of it.
+ */
 :root,
 [data-palette="default"] {
   color-scheme: light dark;
+  --palette-preview: oklch(21.5% 0.006 60);
+  --palette-preview-primary: oklch(70% 0.14 45);
   --background: oklch(98.4% 0.005 85);
   --foreground: oklch(26% 0.012 60);
   --card: oklch(99.6% 0.002 85);
@@ -125,26 +195,51 @@
   --popover-foreground: var(--foreground);
   --message: oklch(94.8% 0.011 75);
   --message-foreground: var(--foreground);
-  --muted: oklch(96.4% 0.007 80);
+  /* The selected item of a segmented control, on a --neutral track. */
+  --segment: oklch(100% 0 0);
+  --muted: oklch(0% 0 0 / 5%);
   --muted-foreground: oklch(51% 0.018 60);
-  --accent: oklch(94% 0.01 75);
-  --accent-foreground: oklch(24% 0.012 60);
+  /* 4.5:1 on --sidebar, the darkest of the three surfaces text sits on. */
+  --faint-foreground: oklch(54.5% 0.014 60);
+  --line-number: oklch(54% 0.012 70);
+  /* Hover fill. Hovered text lifts to --foreground. */
+  --accent: oklch(0% 0 0 / 5%);
+  --accent-foreground: var(--foreground);
+  /* Selected row and pressed fill. */
+  --selected: oklch(0% 0 0 / 7%);
+  /* Neutral button fill and its hover. */
+  --neutral: oklch(0% 0 0 / 5%);
+  --neutral-hover: oklch(0% 0 0 / 8%);
+  /* Hunk headers and the filter field. */
+  --subtle: oklch(0% 0 0 / 3%);
+  /* Inline code. */
+  --code-fill: oklch(0% 0 0 / 6%);
   /* White text on it is 4.6:1, AA for normal text. */
   --primary: oklch(57% 0.15 42);
   --primary-foreground: oklch(99% 0.005 85);
-  --secondary: oklch(94.5% 0.01 75);
-  --secondary-foreground: oklch(24% 0.012 60);
+  /* --primary as a link or "running" text: 4.5:1 on the three surfaces. */
+  --primary-text: oklch(56% 0.15 42);
+  /* Raised buttons and the floating controls over the transcript. */
+  --secondary: oklch(94.8% 0.011 75);
+  --secondary-foreground: var(--foreground);
   --destructive: oklch(55% 0.2 27);
   --destructive-foreground: oklch(99% 0 0);
   --warning: oklch(58% 0.13 65);
-  /* A -foreground color is the text on a solid fill of its color. */
   --warning-foreground: oklch(99% 0.005 85);
+  --warning-text: oklch(55% 0.12 65);
   --success: oklch(52% 0.13 150);
   --success-foreground: oklch(99% 0.005 85);
   --info: oklch(53% 0.12 245);
   --info-foreground: oklch(99% 0.005 85);
   --addition: oklch(52% 0.13 150);
+  /* Diff lines with additions and deletions: the fill, and the text on it. */
+  --addition-line: oklch(52% 0.13 150 / 11%);
+  --addition-line-foreground: oklch(32% 0.06 150);
   --deletion: oklch(55% 0.19 27);
+  --deletion-line: oklch(55% 0.19 27 / 11%);
+  --deletion-line-foreground: oklch(34% 0.08 27);
+  /* The last lines of a running shell command. */
+  --terminal-tail: oklch(93.5% 0.006 80);
   --border: oklch(89.5% 0.01 75);
   /* Field borders, a step stronger than dividers. */
   --input: oklch(86.5% 0.012 75);
@@ -152,42 +247,66 @@
   --control-border: oklch(62% 0.016 70);
   --ring: var(--primary);
   --sidebar: oklch(96.8% 0.007 80);
-  --control-radius: 0.75rem;
-  --panel-radius: 1.25rem;
+  /* Chips and segmented items 6px, controls 8px, cards 12px, composer 16px. */
+  --chip-radius: 0.375rem;
+  --control-radius: 0.5rem;
+  --card-radius: 0.75rem;
+  --panel-radius: 1rem;
   --composer-shadow: 0 10px 30px -16px rgb(70 45 20 / 28%);
 }
 
+/*
+ * The handoff's table. Surfaces climb in steps: --terminal-tail 12.5%,
+ * --sidebar 15.5%, --background 17.5%, --card 21%, --message and --popover
+ * 24.5%, --segment 28%. Fills on top of them are white alphas, so they show on
+ * any surface. --faint-foreground is 3.8:1 on --background and 3.5:1 on --card,
+ * by the handoff's choice. --line-number is raised from the handoff's 42% to
+ * keep diff text at 4.5:1 on --sidebar.
+ */
 @media (prefers-color-scheme: dark) {
   :root,
   [data-palette="default"] {
-    --background: oklch(21.5% 0.006 60);
-    --foreground: oklch(93% 0.01 80);
-    --card: oklch(25% 0.007 60);
-    --popover: oklch(27% 0.008 60);
-    --message: oklch(29.5% 0.009 60);
-    --muted: oklch(25.5% 0.007 60);
-    --muted-foreground: oklch(70% 0.014 70);
-    --accent: oklch(30% 0.009 60);
-    --accent-foreground: oklch(95% 0.01 80);
+    --background: oklch(17.5% 0.003 60);
+    --foreground: oklch(94% 0.006 80);
+    --card: oklch(21% 0.004 60);
+    --popover: oklch(24.5% 0.005 60);
+    --message: oklch(24.5% 0.005 60);
+    --segment: oklch(28% 0.006 60);
+    --muted: oklch(100% 0 0 / 5%);
+    --muted-foreground: oklch(68% 0.01 70);
+    --faint-foreground: oklch(54% 0.008 70);
+    --line-number: oklch(59% 0.006 70);
+    --accent: oklch(100% 0 0 / 5%);
+    --selected: oklch(100% 0 0 / 7%);
+    --neutral: oklch(100% 0 0 / 5%);
+    --neutral-hover: oklch(100% 0 0 / 8%);
+    --subtle: oklch(100% 0 0 / 3%);
+    --code-fill: oklch(100% 0 0 / 6%);
     --primary: oklch(70% 0.14 45);
     --primary-foreground: oklch(20% 0.02 45);
-    --secondary: oklch(28.5% 0.009 60);
-    --secondary-foreground: oklch(95% 0.01 80);
+    --primary-text: oklch(74% 0.12 45);
+    --secondary: oklch(24.5% 0.005 60);
     --destructive: oklch(66% 0.19 27);
     --destructive-foreground: oklch(20% 0.02 27);
     --warning: oklch(80% 0.13 80);
     --warning-foreground: oklch(22% 0.03 70);
+    --warning-text: oklch(82% 0.12 80);
     --success: oklch(74% 0.14 150);
     --success-foreground: oklch(20% 0.02 150);
     --info: oklch(74% 0.11 240);
     --info-foreground: oklch(20% 0.02 240);
     --addition: oklch(74% 0.14 150);
+    --addition-line: oklch(74% 0.14 150 / 11%);
+    --addition-line-foreground: oklch(90% 0.05 150);
     --deletion: oklch(70% 0.16 27);
-    --border: oklch(100% 0 0 / 9%);
-    --input: oklch(100% 0 0 / 14%);
+    --deletion-line: oklch(70% 0.16 27 / 11%);
+    --deletion-line-foreground: oklch(88% 0.05 27);
+    --terminal-tail: oklch(12.5% 0.002 60);
+    --border: oklch(100% 0 0 / 7.5%);
+    --input: oklch(100% 0 0 / 11%);
     --control-border: oklch(57% 0.012 70);
-    --sidebar: oklch(24% 0.007 60);
-    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+    --sidebar: oklch(15.5% 0.003 60);
+    --composer-shadow: 0 18px 40px -20px rgb(0 0 0 / 80%);
   }
 }
 
@@ -197,37 +316,55 @@
  * has both. Each declares every color the default does, in both schemes, so
  * nothing of another palette or scheme shows through. The swatches in Settings
  * put data-palette on themselves to show a palette before you pick it, which
- * is why the default's blocks match [data-palette="default"] too.
+ * is why the default's blocks match [data-palette="default"] too. The radii
+ * and the aliases of --foreground are the same everywhere and stay in :root.
  *
- * Each keeps the default's lightness steps, so its text and control edges
- * reach the contrast the default's do, and --primary-foreground on --primary
- * reaches 5.1:1 or more. --addition and --deletion keep 4.5:1 on the tints of
- * pierre's added and removed lines, which no palette changes.
+ * Each keeps the default's lightness steps with its own hue and chroma, so its
+ * text and control edges reach the contrast the default's do, and
+ * --primary-foreground on --primary reaches 4.6:1 or more. The alphas, the
+ * additions, deletions, warnings and successes are the default's, and
+ * --addition-line-foreground and --deletion-line-foreground keep 4.5:1 on
+ * their lines over --sidebar and --card.
  */
 [data-palette="slate"] {
+  --palette-preview: oklch(21.5% 0.012 262);
+  --palette-preview-primary: oklch(72% 0.1 270);
   --background: oklch(98.4% 0.004 255);
   --foreground: oklch(26% 0.022 262);
   --card: oklch(99.6% 0.0015 255);
   --popover: oklch(99.6% 0.0015 255);
   --message: oklch(94.8% 0.012 258);
-  --muted: oklch(96.4% 0.007 258);
+  --segment: oklch(100% 0 0);
+  --muted: oklch(0% 0 0 / 5%);
   --muted-foreground: oklch(51% 0.028 260);
-  --accent: oklch(94% 0.012 258);
-  --accent-foreground: oklch(24% 0.022 262);
+  --faint-foreground: oklch(54.5% 0.022 260);
+  --line-number: oklch(54% 0.018 260);
+  --accent: oklch(0% 0 0 / 5%);
+  --selected: oklch(0% 0 0 / 7%);
+  --neutral: oklch(0% 0 0 / 5%);
+  --neutral-hover: oklch(0% 0 0 / 8%);
+  --subtle: oklch(0% 0 0 / 3%);
+  --code-fill: oklch(0% 0 0 / 6%);
   --primary: oklch(51% 0.1 268);
   --primary-foreground: oklch(99% 0.004 255);
-  --secondary: oklch(94.5% 0.011 258);
-  --secondary-foreground: oklch(24% 0.022 262);
+  --primary-text: oklch(51% 0.1 268);
+  --secondary: oklch(94.8% 0.012 258);
   --destructive: oklch(55% 0.2 27);
   --destructive-foreground: oklch(99% 0 0);
   --warning: oklch(58% 0.13 65);
   --warning-foreground: oklch(99% 0.004 255);
+  --warning-text: oklch(55% 0.12 65);
   --success: oklch(52% 0.13 150);
   --success-foreground: oklch(99% 0.004 255);
   --info: oklch(53% 0.12 240);
   --info-foreground: oklch(99% 0.004 255);
   --addition: oklch(52% 0.13 150);
+  --addition-line: oklch(52% 0.13 150 / 11%);
+  --addition-line-foreground: oklch(32% 0.06 150);
   --deletion: oklch(55% 0.19 27);
+  --deletion-line: oklch(55% 0.19 27 / 11%);
+  --deletion-line-foreground: oklch(34% 0.08 27);
+  --terminal-tail: oklch(93.5% 0.008 258);
   --border: oklch(89.5% 0.012 258);
   --input: oklch(86.5% 0.015 258);
   --control-border: oklch(62% 0.025 260);
@@ -237,61 +374,89 @@
 
 @media (prefers-color-scheme: dark) {
   [data-palette="slate"] {
-    --background: oklch(21.5% 0.012 262);
-    --foreground: oklch(93% 0.008 255);
-    --card: oklch(25% 0.014 262);
-    --popover: oklch(27% 0.015 262);
-    --message: oklch(29.5% 0.016 262);
-    --muted: oklch(25.5% 0.014 262);
-    --muted-foreground: oklch(70% 0.02 258);
-    --accent: oklch(30% 0.016 262);
-    --accent-foreground: oklch(95% 0.008 255);
+    --background: oklch(17.5% 0.012 262);
+    --foreground: oklch(94% 0.008 255);
+    --card: oklch(21% 0.013 262);
+    --popover: oklch(24.5% 0.015 262);
+    --message: oklch(24.5% 0.015 262);
+    --segment: oklch(28% 0.016 262);
+    --muted: oklch(100% 0 0 / 5%);
+    --muted-foreground: oklch(68% 0.02 258);
+    --faint-foreground: oklch(54% 0.016 258);
+    --line-number: oklch(59% 0.012 258);
+    --accent: oklch(100% 0 0 / 5%);
+    --selected: oklch(100% 0 0 / 7%);
+    --neutral: oklch(100% 0 0 / 5%);
+    --neutral-hover: oklch(100% 0 0 / 8%);
+    --subtle: oklch(100% 0 0 / 3%);
+    --code-fill: oklch(100% 0 0 / 6%);
     --primary: oklch(72% 0.1 270);
     --primary-foreground: oklch(20% 0.03 270);
-    --secondary: oklch(28.5% 0.016 262);
-    --secondary-foreground: oklch(95% 0.008 255);
+    --primary-text: oklch(76% 0.08 270);
+    --secondary: oklch(24.5% 0.015 262);
     --destructive: oklch(66% 0.19 27);
     --destructive-foreground: oklch(20% 0.02 27);
     --warning: oklch(80% 0.13 80);
     --warning-foreground: oklch(22% 0.03 70);
+    --warning-text: oklch(82% 0.12 80);
     --success: oklch(74% 0.14 150);
     --success-foreground: oklch(20% 0.02 150);
     --info: oklch(74% 0.11 240);
     --info-foreground: oklch(20% 0.02 240);
     --addition: oklch(74% 0.14 150);
+    --addition-line: oklch(74% 0.14 150 / 11%);
+    --addition-line-foreground: oklch(90% 0.05 150);
     --deletion: oklch(70% 0.16 27);
-    --border: oklch(100% 0 0 / 9%);
-    --input: oklch(100% 0 0 / 14%);
+    --deletion-line: oklch(70% 0.16 27 / 11%);
+    --deletion-line-foreground: oklch(88% 0.05 27);
+    --terminal-tail: oklch(12.5% 0.01 262);
+    --border: oklch(100% 0 0 / 7.5%);
+    --input: oklch(100% 0 0 / 11%);
     --control-border: oklch(57% 0.02 260);
-    --sidebar: oklch(24% 0.013 262);
-    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+    --sidebar: oklch(15.5% 0.011 262);
+    --composer-shadow: 0 18px 40px -20px rgb(0 0 0 / 80%);
   }
 }
 
 [data-palette="ocean"] {
+  --palette-preview: oklch(21.5% 0.012 235);
+  --palette-preview-primary: oklch(72% 0.11 215);
   --background: oklch(98.4% 0.005 220);
   --foreground: oklch(26% 0.022 235);
   --card: oklch(99.6% 0.002 220);
   --popover: oklch(99.6% 0.002 220);
   --message: oklch(94.8% 0.014 222);
-  --muted: oklch(96.4% 0.008 222);
+  --segment: oklch(100% 0 0);
+  --muted: oklch(0% 0 0 / 5%);
   --muted-foreground: oklch(51% 0.03 230);
-  --accent: oklch(94% 0.014 222);
-  --accent-foreground: oklch(24% 0.022 235);
+  --faint-foreground: oklch(54.5% 0.024 230);
+  --line-number: oklch(54% 0.02 230);
+  --accent: oklch(0% 0 0 / 5%);
+  --selected: oklch(0% 0 0 / 7%);
+  --neutral: oklch(0% 0 0 / 5%);
+  --neutral-hover: oklch(0% 0 0 / 8%);
+  --subtle: oklch(0% 0 0 / 3%);
+  --code-fill: oklch(0% 0 0 / 6%);
   --primary: oklch(52% 0.09 220);
   --primary-foreground: oklch(99% 0.004 220);
-  --secondary: oklch(94.5% 0.013 222);
-  --secondary-foreground: oklch(24% 0.022 235);
+  --primary-text: oklch(52% 0.09 220);
+  --secondary: oklch(94.8% 0.014 222);
   --destructive: oklch(55% 0.2 27);
   --destructive-foreground: oklch(99% 0 0);
   --warning: oklch(58% 0.13 65);
   --warning-foreground: oklch(99% 0.004 220);
+  --warning-text: oklch(55% 0.12 65);
   --success: oklch(52% 0.13 150);
   --success-foreground: oklch(99% 0.004 220);
   --info: oklch(53% 0.13 258);
   --info-foreground: oklch(99% 0.004 220);
   --addition: oklch(52% 0.13 150);
+  --addition-line: oklch(52% 0.13 150 / 11%);
+  --addition-line-foreground: oklch(32% 0.06 150);
   --deletion: oklch(55% 0.19 27);
+  --deletion-line: oklch(55% 0.19 27 / 11%);
+  --deletion-line-foreground: oklch(34% 0.08 27);
+  --terminal-tail: oklch(93.5% 0.009 222);
   --border: oklch(89.5% 0.013 222);
   --input: oklch(86.5% 0.016 222);
   --control-border: oklch(62% 0.026 228);
@@ -301,61 +466,89 @@
 
 @media (prefers-color-scheme: dark) {
   [data-palette="ocean"] {
-    --background: oklch(21.5% 0.012 235);
-    --foreground: oklch(93% 0.01 220);
-    --card: oklch(25% 0.014 235);
-    --popover: oklch(27% 0.015 235);
-    --message: oklch(29.5% 0.016 235);
-    --muted: oklch(25.5% 0.014 235);
-    --muted-foreground: oklch(70% 0.025 225);
-    --accent: oklch(30% 0.016 235);
-    --accent-foreground: oklch(95% 0.01 220);
+    --background: oklch(17.5% 0.012 235);
+    --foreground: oklch(94% 0.01 220);
+    --card: oklch(21% 0.013 235);
+    --popover: oklch(24.5% 0.015 235);
+    --message: oklch(24.5% 0.015 235);
+    --segment: oklch(28% 0.016 235);
+    --muted: oklch(100% 0 0 / 5%);
+    --muted-foreground: oklch(68% 0.025 225);
+    --faint-foreground: oklch(54% 0.02 225);
+    --line-number: oklch(59% 0.014 225);
+    --accent: oklch(100% 0 0 / 5%);
+    --selected: oklch(100% 0 0 / 7%);
+    --neutral: oklch(100% 0 0 / 5%);
+    --neutral-hover: oklch(100% 0 0 / 8%);
+    --subtle: oklch(100% 0 0 / 3%);
+    --code-fill: oklch(100% 0 0 / 6%);
     --primary: oklch(72% 0.11 215);
     --primary-foreground: oklch(20% 0.03 220);
-    --secondary: oklch(28.5% 0.016 235);
-    --secondary-foreground: oklch(95% 0.01 220);
+    --primary-text: oklch(76% 0.09 215);
+    --secondary: oklch(24.5% 0.015 235);
     --destructive: oklch(66% 0.19 27);
     --destructive-foreground: oklch(20% 0.02 27);
     --warning: oklch(80% 0.13 80);
     --warning-foreground: oklch(22% 0.03 70);
+    --warning-text: oklch(82% 0.12 80);
     --success: oklch(74% 0.14 150);
     --success-foreground: oklch(20% 0.02 150);
     --info: oklch(74% 0.11 258);
     --info-foreground: oklch(20% 0.02 258);
     --addition: oklch(74% 0.14 150);
+    --addition-line: oklch(74% 0.14 150 / 11%);
+    --addition-line-foreground: oklch(90% 0.05 150);
     --deletion: oklch(70% 0.16 27);
-    --border: oklch(100% 0 0 / 9%);
-    --input: oklch(100% 0 0 / 14%);
+    --deletion-line: oklch(70% 0.16 27 / 11%);
+    --deletion-line-foreground: oklch(88% 0.05 27);
+    --terminal-tail: oklch(12.5% 0.01 235);
+    --border: oklch(100% 0 0 / 7.5%);
+    --input: oklch(100% 0 0 / 11%);
     --control-border: oklch(57% 0.022 230);
-    --sidebar: oklch(24% 0.013 235);
-    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+    --sidebar: oklch(15.5% 0.011 235);
+    --composer-shadow: 0 18px 40px -20px rgb(0 0 0 / 80%);
   }
 }
 
 [data-palette="rose"] {
+  --palette-preview: oklch(21.5% 0.01 355);
+  --palette-preview-primary: oklch(73% 0.13 2);
   --background: oklch(98.5% 0.004 350);
   --foreground: oklch(26% 0.016 355);
   --card: oklch(99.6% 0.002 350);
   --popover: oklch(99.6% 0.002 350);
   --message: oklch(94.8% 0.013 355);
-  --muted: oklch(96.4% 0.008 355);
+  --segment: oklch(100% 0 0);
+  --muted: oklch(0% 0 0 / 5%);
   --muted-foreground: oklch(51% 0.024 355);
-  --accent: oklch(94% 0.012 355);
-  --accent-foreground: oklch(24% 0.016 355);
+  --faint-foreground: oklch(54.5% 0.02 355);
+  --line-number: oklch(54% 0.016 355);
+  --accent: oklch(0% 0 0 / 5%);
+  --selected: oklch(0% 0 0 / 7%);
+  --neutral: oklch(0% 0 0 / 5%);
+  --neutral-hover: oklch(0% 0 0 / 8%);
+  --subtle: oklch(0% 0 0 / 3%);
+  --code-fill: oklch(0% 0 0 / 6%);
   --primary: oklch(55% 0.16 2);
   --primary-foreground: oklch(99% 0.004 350);
-  --secondary: oklch(94.5% 0.012 355);
-  --secondary-foreground: oklch(24% 0.016 355);
+  --primary-text: oklch(55% 0.16 2);
+  --secondary: oklch(94.8% 0.013 355);
   --destructive: oklch(55% 0.2 30);
   --destructive-foreground: oklch(99% 0 0);
   --warning: oklch(58% 0.13 65);
   --warning-foreground: oklch(99% 0.004 350);
+  --warning-text: oklch(55% 0.12 65);
   --success: oklch(52% 0.13 150);
   --success-foreground: oklch(99% 0.004 350);
   --info: oklch(53% 0.12 245);
   --info-foreground: oklch(99% 0.004 350);
   --addition: oklch(52% 0.13 150);
+  --addition-line: oklch(52% 0.13 150 / 11%);
+  --addition-line-foreground: oklch(32% 0.06 150);
   --deletion: oklch(55% 0.19 27);
+  --deletion-line: oklch(55% 0.19 27 / 11%);
+  --deletion-line-foreground: oklch(34% 0.08 27);
+  --terminal-tail: oklch(93.5% 0.008 355);
   --border: oklch(89.5% 0.011 355);
   --input: oklch(86.5% 0.013 355);
   --control-border: oklch(62% 0.02 355);
@@ -365,34 +558,47 @@
 
 @media (prefers-color-scheme: dark) {
   [data-palette="rose"] {
-    --background: oklch(21.5% 0.01 355);
-    --foreground: oklch(93% 0.01 355);
-    --card: oklch(25% 0.012 355);
-    --popover: oklch(27% 0.013 355);
-    --message: oklch(29.5% 0.014 355);
-    --muted: oklch(25.5% 0.012 355);
-    --muted-foreground: oklch(70% 0.02 355);
-    --accent: oklch(30% 0.014 355);
-    --accent-foreground: oklch(95% 0.008 355);
+    --background: oklch(17.5% 0.01 355);
+    --foreground: oklch(94% 0.01 355);
+    --card: oklch(21% 0.011 355);
+    --popover: oklch(24.5% 0.013 355);
+    --message: oklch(24.5% 0.013 355);
+    --segment: oklch(28% 0.014 355);
+    --muted: oklch(100% 0 0 / 5%);
+    --muted-foreground: oklch(68% 0.02 355);
+    --faint-foreground: oklch(54% 0.016 355);
+    --line-number: oklch(59% 0.012 355);
+    --accent: oklch(100% 0 0 / 5%);
+    --selected: oklch(100% 0 0 / 7%);
+    --neutral: oklch(100% 0 0 / 5%);
+    --neutral-hover: oklch(100% 0 0 / 8%);
+    --subtle: oklch(100% 0 0 / 3%);
+    --code-fill: oklch(100% 0 0 / 6%);
     --primary: oklch(73% 0.13 2);
     --primary-foreground: oklch(20% 0.03 2);
-    --secondary: oklch(28.5% 0.014 355);
-    --secondary-foreground: oklch(95% 0.008 355);
+    --primary-text: oklch(77% 0.11 2);
+    --secondary: oklch(24.5% 0.013 355);
     --destructive: oklch(66% 0.19 30);
     --destructive-foreground: oklch(20% 0.02 30);
     --warning: oklch(80% 0.13 80);
     --warning-foreground: oklch(22% 0.03 70);
+    --warning-text: oklch(82% 0.12 80);
     --success: oklch(74% 0.14 150);
     --success-foreground: oklch(20% 0.02 150);
     --info: oklch(74% 0.11 240);
     --info-foreground: oklch(20% 0.02 240);
     --addition: oklch(74% 0.14 150);
+    --addition-line: oklch(74% 0.14 150 / 11%);
+    --addition-line-foreground: oklch(90% 0.05 150);
     --deletion: oklch(70% 0.16 27);
-    --border: oklch(100% 0 0 / 9%);
-    --input: oklch(100% 0 0 / 14%);
+    --deletion-line: oklch(70% 0.16 27 / 11%);
+    --deletion-line-foreground: oklch(88% 0.05 27);
+    --terminal-tail: oklch(12.5% 0.008 355);
+    --border: oklch(100% 0 0 / 7.5%);
+    --input: oklch(100% 0 0 / 11%);
     --control-border: oklch(57% 0.016 355);
-    --sidebar: oklch(24% 0.011 355);
-    --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 70%);
+    --sidebar: oklch(15.5% 0.009 355);
+    --composer-shadow: 0 18px 40px -20px rgb(0 0 0 / 80%);
   }
 }
 
@@ -439,13 +645,13 @@
  * which App.tsx names --transcript, and no taller or wider than it. The stack's
  * padding, 1rem at the sides and 1.5rem below, holds the toasts' shadows. With
  * no transcript, as on the Settings page, it takes the window's corner below
- * the 2.5rem title bar.
+ * the 2.75rem title bar, the 44px header in src/main/window.ts.
  */
 @utility toast-stack {
-  top: calc(anchor(--transcript top, 2.5rem) + 0.5rem);
+  top: calc(anchor(--transcript top, 2.75rem) + 0.5rem);
   right: calc(anchor(--transcript right, 0px) - 0.25rem);
   max-width: calc(anchor-size(--transcript width, 100vw) + 0.5rem);
-  max-height: calc(anchor-size(--transcript height, calc(100vh - 2.5rem)) - 0.5rem);
+  max-height: calc(anchor-size(--transcript height, calc(100vh - 2.75rem)) - 0.5rem);
 }
 
 /*

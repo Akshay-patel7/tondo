@@ -494,6 +494,17 @@ export class Workspace {
           this.send({ v, type: "pi-accounts", accounts, error });
         });
         break;
+      case "get-project-git":
+        this.run(async () => {
+          const { projectId } = message;
+          // Removing a project closes its thread first, so home can ask about the
+          // project on its way out. The project list that follows answers that.
+          if (this.removingProjects.has(projectId)) return;
+          const status = await this.git.status(this.project(projectId).path, false);
+          const git = status.root !== null;
+          this.send({ v, type: "project-git", projectId, git, branch: status.branch });
+        });
+        break;
     }
   }
 

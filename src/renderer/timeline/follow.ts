@@ -8,7 +8,7 @@
  */
 export const FOLLOW_THRESHOLD_PX = 40;
 
-/** Where the view is, in Legend List's measurements. */
+/** The scroll viewport and its content, in CSS pixels. */
 export interface ScrollPosition {
   /** How far the list is scrolled from its top. */
   readonly scroll: number;
@@ -22,7 +22,7 @@ export interface ScrollPosition {
  * Whether the timeline follows new output after a scroll. Coming within
  * FOLLOW_THRESHOLD_PX of the end turns following on. Only a scroll up turns it
  * off: while pi streams, the list can grow more than FOLLOW_THRESHOLD_PX past
- * the view before Legend List scrolls to the new end, so distance alone can't
+ * the view before the timeline scrolls to the new end, so distance alone can't
  * tell growth from a reader scrolling away.
  */
 export function followsAfterScroll(

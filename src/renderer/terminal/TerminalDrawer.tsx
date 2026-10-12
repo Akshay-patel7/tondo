@@ -21,16 +21,19 @@ import { GraphemeUnicode } from "./unicode";
 type ThemeColor = Exclude<keyof ITheme, "extendedAnsi">;
 
 // xterm takes colors, not classes, so the theme names the tokens in index.css
-// and terminalTheme resolves them. Magenta and cyan have no token: they turn
-// info's and addition's lightness and chroma to their own hue. light-dark()
-// keeps black dark and white pale in both themes, as programs expect.
+// and terminalTheme resolves them. The terminal sits on the page's background
+// in its text color, like the drawer around it. Magenta and cyan have no
+// token: they turn info's and addition's lightness and chroma to their own
+// hue. light-dark() keeps black dark and white pale in both themes, as
+// programs expect. --accent is a translucent wash, so black takes --secondary,
+// the opaque step above the page.
 const TERMINAL_COLORS: Partial<Record<ThemeColor, string>> = {
-  background: "var(--card)",
-  foreground: "var(--card-foreground)",
+  background: "var(--background)",
+  foreground: "var(--foreground)",
   cursor: "var(--primary)",
   cursorAccent: "var(--primary-foreground)",
   selectionBackground: "color-mix(in oklab, var(--primary) 30%, transparent)",
-  black: "light-dark(var(--foreground), var(--accent))",
+  black: "light-dark(var(--foreground), var(--secondary))",
   red: "var(--deletion)",
   green: "var(--addition)",
   yellow: "var(--warning)",
@@ -195,7 +198,7 @@ export default function TerminalDrawer({
     <section
       ref={region}
       aria-label="Terminal"
-      className="relative flex shrink-0 flex-col border-t border-border bg-card"
+      className="relative flex shrink-0 flex-col border-t border-border bg-background"
       style={{ height }}
     >
       <div
@@ -235,12 +238,12 @@ export default function TerminalDrawer({
           className="h-1 w-8 rounded-full bg-control-border opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
         />
       </div>
-      <div className="flex h-9 shrink-0 items-center gap-2 ps-4 pe-2 text-xs">
+      <div className="flex h-9 shrink-0 items-center gap-2 ps-4 pe-2">
         <SquareTerminal aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <h2 className="shrink-0 font-medium">
           {session.kind === "login" ? "Provider sign-in" : "Terminal"}
         </h2>
-        <span className="min-w-0 truncate text-muted-foreground" title={project}>
+        <span className="min-w-0 truncate font-mono text-xs text-faint-foreground" title={project}>
           {project}
         </span>
         <span role="status" className="ml-auto flex shrink-0 items-center">
@@ -250,8 +253,8 @@ export default function TerminalDrawer({
           <TooltipTrigger
             render={
               <Button
-                variant="ghost"
-                size="xs"
+                variant="faint-ghost"
+                size="icon"
                 aria-label="Close terminal"
                 disabled={session.status === "closing"}
                 onClick={close}
@@ -259,7 +262,6 @@ export default function TerminalDrawer({
             }
           >
             <X aria-hidden />
-            Close
           </TooltipTrigger>
           <TooltipContent>Stop this terminal and its commands</TooltipContent>
         </Tooltip>
@@ -271,8 +273,8 @@ export default function TerminalDrawer({
             /reload too.
           </span>
           <Button
-            variant="outline"
-            size="xs"
+            variant="neutral"
+            size="sm"
             disabled={pi?.state !== "ready" || busy}
             onClick={reloadPi}
           >
@@ -442,7 +444,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
     };
   }, [threadId, terminalId]);
   return (
-    <div className="min-h-0 flex-1 overflow-hidden bg-card p-2">
+    <div className="min-h-0 flex-1 overflow-hidden bg-background p-2">
       {/* FitAddon measures this parent's full size, so its padding stays outside. */}
       <div ref={mount} data-terminal-view className="h-full w-full" />
     </div>

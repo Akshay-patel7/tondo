@@ -155,6 +155,134 @@ function disconnectGit(): void {
   useGit.setState({ status: null, error: null, busy: false });
 }
 
+/** Each project folder's checkout as the host last read it, for the home page. */
+export const useProjectGit = create<
+  ReadonlyMap<number, { readonly git: boolean; readonly branch: string | null }>
+>()(() => new Map());
+
+/** Asks the host whether a project folder is a Git checkout, and on which branch. */
+export function requestProjectGit(projectId: number): void {
+  send({ v, type: "get-project-git", projectId });
+}
+
+/** What the home page sends to start a thread. */
+export interface FirstSend {
+  readonly projectId: number;
+  /** Start in a new managed worktree from `base`, the project's branch (null: its detached HEAD). */
+  readonly worktree: { readonly base: string | null } | null;
+  readonly text: string;
+  readonly images: readonly DraftImage[];
+}
+
+/**
+ * The home page's send, from asking for its thread until pi takes it:
+ * "thread" waits for the new thread, "worktree" for the worktree thread made
+ * from it, and "pi" for that thread's pi to be ready.
+ */
+let firstSend:
+  | (FirstSend & { readonly stage: "thread" | "worktree" })
+  | (FirstSend & { readonly stage: "pi"; readonly threadId: string })
+  | undefined;
+
+/**
+ * Starts a thread in the project, in its local checkout or a new worktree,
+ * and sends it `text` and `images` once its pi is ready. Until then they wait
+ * in the thread's composer, so nothing is lost if pi can't start.
+ */
+export function startThread(request: FirstSend): void {
+  send({ v, type: "new-thread", projectId: request.projectId });
+  firstSend = { ...request, stage: "thread" };
+}
+
+/** A branch for a worktree thread: a few words of its prompt, and a suffix that keeps it new. */
+function worktreeBranch(text: string): string {
+  const words =
+    text
+      .toLowerCase()
+      .match(/[a-z0-9]+/g)
+      ?.slice(0, 5) ?? [];
+  const suffix = crypto.randomUUID().slice(0, 6);
+  return `tondo/${[...words, suffix].join("-")}`;
+}
+
+/** Moves the home page's send along after the thread on screen changed. */
+function continueFirstSend(): void {
+  const pending = firstSend;
+  const thread = useHost.getState().thread;
+  if (pending === undefined || thread === null) return;
+  switch (pending.stage) {
+    case "thread":
+      if (thread.projectId !== pending.projectId) return;
+      if (pending.worktree === null) {
+        holdFirstSend(pending, thread.id);
+        return;
+      }
+      // The host changes no checkout while a pi in it is starting.
+      if (thread.pi.state === "starting") return;
+      firstSend = { ...pending, stage: "worktree" };
+      // The host opens the worktree thread, then forgets the unused local one.
+      performGit(
+        {
+          kind: "new-worktree",
+          branch: worktreeBranch(pending.text),
+          base: pending.worktree.base ?? "HEAD",
+        },
+        pending.worktree.base,
+      ).then(
+        () => {
+          const shown = useHost.getState().thread;
+          if (firstSend?.stage === "worktree" && shown?.worktree) holdFirstSend(pending, shown.id);
+        },
+        (error: unknown) => {
+          // Keep the draft, but never run a worktree request in the local checkout.
+          if (firstSend?.stage === "worktree" && shownId() === thread.id) {
+            firstSend = undefined;
+            editDraft(pending.text);
+            if (pending.images.length > 0) editImages(pending.images);
+          }
+          fail(
+            `Couldn't create the worktree: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        },
+      );
+      return;
+    case "worktree":
+      return;
+    case "pi":
+      if (thread.id !== pending.threadId) {
+        // You opened another thread. The text stays in this one's draft.
+        firstSend = undefined;
+        return;
+      }
+      switch (thread.pi.state) {
+        case "stopped":
+        case "starting":
+          return;
+        case "exited":
+          firstSend = undefined;
+          return;
+        case "ready": {
+          firstSend = undefined;
+          // Send what the composer holds now, in case you edited it while pi started.
+          const text = useDraft.getState().trim();
+          const images = useDraftImages.getState();
+          if (text === "" && images.length === 0) return;
+          editDraft("");
+          prompt(text, "steer", images);
+          return;
+        }
+      }
+  }
+}
+
+/** Puts the send in the new thread's composer, where it waits for pi. */
+function holdFirstSend(pending: FirstSend, threadId: string): void {
+  firstSend = { ...pending, stage: "pi", threadId };
+  editDraft(pending.text);
+  if (pending.images.length > 0) editImages(pending.images);
+  continueFirstSend();
+}
+
 /** Per-thread so switching away during pi's acknowledgement doesn't unlock that draft. */
 export const useImageSends = create<ReadonlySet<string>>(() => new Set());
 
@@ -299,13 +427,17 @@ function receive(message: HostMessage): void {
           id: id + 1,
         }));
       }
+      continueFirstSend();
       break;
     }
     case "events":
       if (message.threadId === shownId()) receiveEvents(message.events);
       break;
     case "status":
-      if (message.thread.id === shownId()) useHost.setState({ thread: message.thread });
+      if (message.thread.id === shownId()) {
+        useHost.setState({ thread: message.thread });
+        continueFirstSend();
+      }
       break;
     case "sidebar":
       useHost.setState(({ projects }) => ({ projects: keepUnchanged(projects, message.projects) }));
@@ -392,6 +524,14 @@ function receive(message: HostMessage): void {
     case "pi-accounts":
       useHost.setState({ piAccounts: { accounts: message.accounts, error: message.error } });
       break;
+    case "project-git": {
+      const { projectId, git, branch } = message;
+      useProjectGit.setState(
+        new Map(useProjectGit.getState()).set(projectId, { git, branch }),
+        true,
+      );
+      break;
+    }
     case "pong":
       break;
     case "error":
@@ -402,6 +542,8 @@ function receive(message: HostMessage): void {
 
 function accept(next: MessagePort): void {
   answeringTrust = undefined;
+  // A new host may not have made the thread; what you wrote stays in its draft if it did.
+  firstSend = undefined;
   resetTerminals();
   useCheckpoints.setState(({ id }) => ({
     turns: [],

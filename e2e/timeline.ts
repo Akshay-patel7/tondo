@@ -11,7 +11,8 @@ import { seedSession } from "./sessions";
 
 /**
  * transcript-1000.json holds pi's system prompt and 1,000 messages. The
- * timeline doesn't show the system prompt, so its rows are 0 to 999.
+ * timeline doesn't show the system prompt, so its messages are 0 to 999, and
+ * its last row, the reply to message 998, starts at 999.
  */
 export const TRANSCRIPT_MESSAGES = 1000;
 export const LAST_TRANSCRIPT_ROW = TRANSCRIPT_MESSAGES - 1;

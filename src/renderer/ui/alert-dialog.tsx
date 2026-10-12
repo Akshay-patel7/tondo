@@ -69,7 +69,7 @@ function AlertDialogPopup({ className, ...props }: AlertDialogPopupProps) {
         <AlertDialogPrimitive.Popup
           data-slot="alert-dialog-popup"
           className={cn(
-            "app-no-drag relative flex max-h-full w-full max-w-sm flex-col gap-4 overflow-y-auto rounded-panel border border-border bg-popover p-5 text-sm text-popover-foreground shadow-composer outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0",
+            "app-no-drag relative flex max-h-full w-full max-w-sm flex-col gap-4 overflow-y-auto rounded-card border border-border bg-popover p-5 text-sm text-popover-foreground shadow-composer outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0",
             className,
           )}
           {...props}
@@ -106,7 +106,7 @@ function AlertDialogTitle({ className, ...props }: AlertDialogTitleProps) {
   return (
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
-      className={cn("text-base leading-snug font-medium", className)}
+      className={cn("text-title font-semibold", className)}
       {...props}
     />
   );

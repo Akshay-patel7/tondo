@@ -1,7 +1,3 @@
-// The send and stop buttons follow T3 Code's
-// apps/web/src/components/chat/ComposerPrimaryActions.tsx.
-// Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { ArrowUp, Plus, Square } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/protocol";
 import { builtinIn } from "../../shared/slashCommands";
@@ -26,28 +22,18 @@ import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
 import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
 import { useThread } from "../thread/store";
-import { isMac } from "../platform";
 import { Button } from "../ui/button";
-import { Kbd } from "../ui/kbd";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { ContextMeter } from "./ContextMeter";
+import { ComposerCard } from "./ComposerCard";
+import { ComposerToolbar, SendButton, StopButton } from "./ComposerToolbar";
 import { useDraft, useDraftImages } from "./draft";
 import { FileMenu, fileOptionId } from "./FileMenu";
 import { promptHistory, stepHistory, type HistoryPosition } from "./history";
 import { composerAction } from "./keys";
 import { completeFile, fileQuery, matchingFiles } from "./mentions";
+import { composerPlaceholder } from "./placeholder";
 import { PromptEditor, type EditorSnapshot, type PromptEditorHandle } from "./PromptEditor";
-import { ModelPicker, ThinkingPicker } from "./SessionControls";
 
 const NO_COMMANDS: readonly SlashCommand[] = [];
-
-function placeholder(pi: PiStatus, working: boolean): string {
-  if (pi.state === "starting") return "Starting pi…";
-  if (pi.state !== "ready") return "pi isn't running";
-  return working
-    ? `Steer pi with ${isMac ? "Return" : "Enter"}, or queue a follow-up with ${isMac ? "Option+Return" : "Alt+Enter"}`
-    : "Message pi, or type / for commands";
-}
 
 function extensionCommand(text: string, pi: PiStatus): boolean {
   if (pi.state !== "ready" || !text.startsWith("/")) return false;
@@ -98,7 +84,6 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const connection = useHost((host) => host.connection);
   const sendingImages = useImageSends((sending) => threadId !== undefined && sending.has(threadId));
   const [loadingImages, setLoadingImages] = useState(0);
-  const fileInput = useRef<HTMLInputElement>(null);
   const pi = usePi();
   const preparing = useHost((host) => host.thread?.preparing ?? false);
   const piWorking = useThread(
@@ -282,9 +267,8 @@ export function Composer({ hidden }: { hidden: boolean }) {
     return true;
   };
 
-  // Give the card its own raster layer instead of using the wider footer.
   return (
-    <div
+    <ComposerCard
       hidden={hidden}
       onPasteCapture={(event) => {
         if (event.clipboardData.files.length === 0) return;
@@ -301,7 +285,6 @@ export function Composer({ hidden }: { hidden: boolean }) {
         event.stopPropagation();
         void attach([...event.dataTransfer.files]);
       }}
-      className="rounded-panel border border-border bg-card shadow-composer will-change-transform focus-within:border-ring"
     >
       {query === null ? null : (
         <SlashMenu
@@ -329,7 +312,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
               <ImagePreview data={image.data} mimeType={image.mimeType} name={image.name} />
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 aria-label={`Remove ${image.name}`}
                 disabled={sendingImages}
                 onClick={() => editImages(images.filter((item) => item.id !== image.id))}
@@ -362,88 +345,17 @@ export function Composer({ hidden }: { hidden: boolean }) {
         }}
         onSelection={({ from, to }) => setSelection({ from, to })}
         onKeyDown={onKeyDown}
-        placeholder={placeholder(pi, working)}
+        placeholder={composerPlaceholder(pi, working)}
       />
-      <div className="flex flex-wrap items-center gap-1 px-2 pb-2">
-        <input
-          ref={fileInput}
-          type="file"
-          aria-label="Choose images"
-          accept="image/png,image/jpeg,image/gif,image/webp"
-          multiple
-          hidden
-          onChange={(event) => {
-            void attach([...(event.currentTarget.files ?? [])]);
-            event.currentTarget.value = "";
-          }}
-        />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Attach images"
-                disabled={locked || images.length >= IMAGE_COUNT}
-                onClick={() => fileInput.current?.click()}
-              />
-            }
-          >
-            <Plus aria-hidden />
-          </TooltipTrigger>
-          <TooltipContent>Attach PNG, JPEG, GIF or WebP images</TooltipContent>
-        </Tooltip>
-        {pi.state === "ready" ? (
-          <>
-            <ModelPicker session={pi.session} />
-            <ThinkingPicker session={pi.session} />
-          </>
-        ) : null}
-        <div className="ml-auto flex items-center gap-1.5">
-          {pi.state === "ready" && pi.session.context ? (
-            <ContextMeter context={pi.session.context} />
-          ) : null}
-          {working ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="destructive"
-                    size="icon-round"
-                    aria-label="Stop pi"
-                    onClick={stop}
-                  />
-                }
-              >
-                <Square aria-hidden className="size-3 fill-current" />
-              </TooltipTrigger>
-              <TooltipContent>
-                Stop pi <Kbd>Esc</Kbd>
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          {working && text === "" && images.length === 0 ? null : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="default"
-                    size="icon-round"
-                    aria-label="Send message"
-                    disabled={!canSend}
-                    onClick={() => send("steer")}
-                  />
-                }
-              >
-                <ArrowUp aria-hidden />
-              </TooltipTrigger>
-              <TooltipContent>
-                {working ? "Steer pi" : "Send"} <Kbd>Enter</Kbd>
-              </TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-      </div>
-    </div>
+      <ComposerToolbar
+        pi={pi}
+        attach={{ disabled: locked || images.length >= IMAGE_COUNT, onFiles: attach }}
+      >
+        {working ? <StopButton onClick={stop} /> : null}
+        {working && text === "" && images.length === 0 ? null : (
+          <SendButton working={working} disabled={!canSend} onClick={() => send("steer")} />
+        )}
+      </ComposerToolbar>
+    </ComposerCard>
   );
 }

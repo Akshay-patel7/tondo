@@ -21,14 +21,14 @@ export function TrustPrompt({ project }: { project: string }) {
       actions={
         <>
           {/* Focus starts on the answer that loads nothing. */}
-          <Button variant="outline" autoFocus onClick={() => answerTrust(false)}>
+          <Button variant="neutral" autoFocus onClick={() => answerTrust(false)}>
             Don't trust
           </Button>
           <Button onClick={() => answerTrust(true)}>Trust</Button>
         </>
       }
     >
-      <p className="font-mono text-xs break-all text-muted-foreground">{project}</p>
+      <p className="font-mono text-xs break-all text-faint-foreground">{project}</p>
       <p>
         This allows pi to load .pi settings and resources, install missing project packages, and
         execute project extensions. If you don't trust it, pi starts without them. Tondo remembers
@@ -40,7 +40,12 @@ export function TrustPrompt({ project }: { project: string }) {
           <AlertTitle className="break-words whitespace-pre-wrap">{error.message}</AlertTitle>
           {reveal === undefined ? null : (
             <AlertDescription>
-              <Button variant="link" size="xs" className="-ml-2" onClick={() => revealFile(reveal)}>
+              <Button
+                variant="neutral"
+                size="sm"
+                className="mt-2"
+                onClick={() => revealFile(reveal)}
+              >
                 {isMac ? "Show in Finder" : "Show in folder"}
               </Button>
             </AlertDescription>

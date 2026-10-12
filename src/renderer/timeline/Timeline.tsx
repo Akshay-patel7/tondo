@@ -1,150 +1,204 @@
-// The list setup is adapted from T3 Code,
+// The follow behavior is adapted from T3 Code,
 // apps/web/src/components/chat/MessagesTimeline.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import {
-  LegendList,
-  type LegendListRef,
-  type LegendListRenderItemProps,
-  type MaintainScrollAtEndOptions,
-} from "@legendapp/list/react";
 import { ArrowDown } from "lucide-react";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useThread } from "../thread/store";
-import { timelineRows } from "../tools/model";
 import { Button } from "../ui/button";
 import { followsAfterScroll } from "./follow";
-import { MessageView } from "./MessageView";
-
-/**
- * A row is the index of the message it shows. The row after the last message
- * shows the message pi is writing, which lands at that index when it ends.
- */
-type TimelineRow = number;
-
-/**
- * Follow the end only for new rows and growing rows. Scrolling to the end
- * without animation keeps up with a reply that grows every frame.
- */
-const FOLLOW: MaintainScrollAtEndOptions = {
-  animated: false,
-  on: { dataChange: true, footerLayout: false, itemLayout: true, layout: true },
-};
-const KEEP_POSITION = { data: true, size: true };
-
-// Messages are only ever appended, so a message's index is a stable key. It
-// also lets the finished message take over the streaming row instead of
-// remounting it.
-const keyByMessage = (row: TimelineRow) => String(row);
-const renderRow = ({ item }: LegendListRenderItemProps<TimelineRow>) => <Row index={item} />;
+import { RowView } from "./MessageView";
+import { rowAt, streamingRowStart, timelineRows } from "./turns";
 
 function Row({ index }: { index: number }) {
-  // Only the streaming row reads the streaming message, so only it re-renders
-  // while pi writes. Once message_end lands, the same index holds the message.
-  const message = useThread((thread) => thread.messages[index] ?? thread.streaming);
-  const streaming = useThread(
-    (thread) => index >= thread.messages.length && thread.streaming !== null,
+  // A row's object only changes when a message joins its turn, and only the
+  // streaming row reads the streaming message, so only it re-renders while
+  // pi writes. Once message_end lands, the same row holds the message.
+  const row = useThread((thread) => rowAt(thread.messages, index));
+  const streaming = useThread((thread) =>
+    streamingRowStart(thread.messages, thread.streaming) === index ? thread.streaming : null,
+  );
+  // The last turn is over once pi stops working; an earlier one once a message follows it.
+  const settled = useThread(
+    (thread) =>
+      !thread.running ||
+      (rowAt(thread.messages, index)?.end ?? thread.messages.length) < thread.messages.length,
   );
   // A long path or URL breaks rather than running past a narrow transcript, which clips it.
   return (
     <div
-      className="mx-auto max-w-3xl break-words"
+      className={`mx-auto max-w-176 break-words ${index === 0 ? "pt-8" : "pt-6"}`}
       data-index={index}
-      data-streaming={streaming || undefined}
+      data-streaming={streaming === null ? undefined : true}
     >
-      {message ? <MessageView message={message} streaming={streaming} /> : null}
+      <RowView row={row} streaming={streaming} settled={settled} />
     </div>
   );
 }
 
 export function Timeline() {
   const messages = useThread((thread) => thread.messages);
-  const streaming = useThread((thread) => thread.streaming !== null);
-  const listRef = useRef<LegendListRef>(null);
-  const opened = useRef(false);
-  const [following, setFollowing] = useState(true);
-  // Size changes read whether to follow before React re-renders with it.
+  const streamingRow = useThread((thread) => streamingRowStart(thread.messages, thread.streaming));
+  const scroller = useRef<HTMLDivElement>(null);
   const followingNow = useRef(true);
   const lastScroll = useRef(0);
-  const shown = timelineRows(messages);
-  const rows: readonly TimelineRow[] = streaming ? [...shown, messages.length] : shown;
-  const rowType = (row: TimelineRow) => messages[row]?.role ?? "assistant";
+  const programmedScroll = useRef<number | null>(null);
+  const [following, setFollowing] = useState(true);
+  const [layout, setLayout] = useState(() => ({
+    heights: new Map<number, number>(),
+    viewport: 0,
+    scroll: 0,
+  }));
+  const shown = timelineRows(messages).map((row) => row.start);
+  const rows = streamingRow === messages.length ? [...shown, messages.length] : shown;
+  let contentHeight = 0;
+  const positions: { index: number; top: number; height: number }[] = [];
+  for (const index of rows) {
+    const top = contentHeight;
+    const height = layout.heights.get(index) ?? 90;
+    contentHeight += height;
+    positions.push({ index, top, height });
+  }
+  const totalHeight = contentHeight + 16;
+  const end = Math.max(0, totalHeight - layout.viewport);
+  const top = following ? end : Math.max(0, Math.min(end, layout.scroll));
+  const first = positions.findIndex((row) => row.top + row.height >= top - 200);
+  const after = positions.findIndex((row) => row.top > top + layout.viewport + 200);
+  // Keep a neighboring row on either side, including the prompt above a long reply.
+  const visible =
+    layout.viewport === 0
+      ? positions.slice(-1)
+      : positions.slice(
+          Math.max(0, first - 1),
+          after === -1 ? positions.length : Math.min(positions.length, after + 1),
+        );
+
+  // Measure only mounted rows. A size change above the row being read shifts
+  // the scroll by the same amount, preserving its position in the viewport.
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    const elements = [...node.querySelectorAll<HTMLElement>("[data-virtual-row]")];
+    const measure = () => {
+      const measured = new Map(
+        elements.map((element) => [
+          Number(element.dataset.virtualRow),
+          element.getBoundingClientRect().height,
+        ]),
+      );
+      const viewport = node.clientHeight;
+      const follow = followingNow.current;
+      setLayout((previous) => {
+        let changed = viewport !== previous.viewport;
+        let beforeTop = 0;
+        let correction = 0;
+        const heights = new Map(previous.heights);
+        for (const index of rows) {
+          const oldHeight = previous.heights.get(index) ?? 90;
+          const height = measured.get(index);
+          if (height !== undefined && height !== previous.heights.get(index)) {
+            heights.set(index, height);
+            changed = true;
+            if (!follow && beforeTop + oldHeight <= previous.scroll) {
+              correction += height - oldHeight;
+            }
+          }
+          beforeTop += oldHeight;
+        }
+        return changed ? { heights, viewport, scroll: previous.scroll + correction } : previous;
+      });
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    for (const element of elements) observer.observe(element);
+    measure();
+    return () => observer.disconnect();
+  });
+
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    const desired = following ? node.scrollHeight - node.clientHeight : top;
+    if (Math.abs(node.scrollTop - desired) > 0.5) {
+      node.scrollTop = desired;
+      programmedScroll.current = node.scrollTop;
+    }
+    lastScroll.current = node.scrollTop;
+  });
 
   const onScroll = () => {
-    const state = listRef.current?.getState();
-    if (!state) return;
-    const previousScroll = lastScroll.current;
-    lastScroll.current = state.scroll;
-    followingNow.current = followsAfterScroll(followingNow.current, previousScroll, state);
-    setFollowing(followingNow.current);
-  };
-
-  // Legend List hides the rows until its opening scroll to the end finishes.
-  // That scroll can't finish while the last row grows, so a thread opened
-  // mid-reply stays blank until a fallback timer ends it, 150 to 170 ms in.
-  // It also stays alive for 2 s, and a new row in that window restarts it with
-  // visible-position upkeep off: the rows above move by their size estimates'
-  // error, about 325,000 px in the 1,000-message fixture, for a frame. Any
-  // imperative scroll ends it for good. Ending it while the view is still far
-  // from the end shows the rows there for a frame, so wait until the view is
-  // within a screen of the end, or until Legend List finishes it.
-  const endOpeningScroll = () => {
-    if (opened.current) return;
-    opened.current = true;
-    void listRef.current?.scrollToEnd({ animated: false });
-  };
-  // Legend List follows a row that grows only while the view is within a
-  // screen of the end. A row that grows by more in one layout, like a long
-  // reply that lands whole in a new thread, would leave the view behind.
-  const onItemSizeChanged = () => {
-    const state = listRef.current?.getState();
-    if (!state) return;
-    const gap = state.contentLength - state.scroll - state.scrollLength;
-    if (!opened.current) {
-      if (gap <= state.scrollLength) endOpeningScroll();
-    } else if (followingNow.current && gap > state.scrollLength) {
-      void listRef.current?.scrollToEnd({ animated: false });
+    const node = scroller.current;
+    if (!node) return;
+    const scroll = node.scrollTop;
+    if (programmedScroll.current === scroll) {
+      programmedScroll.current = null;
+      return;
     }
+    programmedScroll.current = null;
+    followingNow.current = followsAfterScroll(followingNow.current, lastScroll.current, {
+      scroll,
+      contentLength: node.scrollHeight,
+      scrollLength: node.clientHeight,
+    });
+    lastScroll.current = scroll;
+    setFollowing(followingNow.current);
+    setLayout((previous) => (previous.scroll === scroll ? previous : { ...previous, scroll }));
   };
 
-  // The button goes away once the list follows again, so keyboard focus moves
-  // to the transcript first. Following starts before the scroll, so the view
-  // stays at the end when rows there measure taller than their estimates.
   const jumpToLatest = () => {
-    const list = listRef.current;
-    if (!list) return;
-    list.getScrollableNode().focus({ preventScroll: true });
+    scroller.current?.focus({ preventScroll: true });
     followingNow.current = true;
     setFollowing(true);
-    void list.scrollToEnd({ animated: false });
   };
 
   return (
     <div className="relative h-full min-h-0" data-testid="timeline" data-following={following}>
-      {/* The focus ring is inset, like ScrollArea's: outside the list it would
-          run under the header and the composer. */}
-      <LegendList<TimelineRow>
-        ref={listRef}
-        data={rows}
-        keyExtractor={keyByMessage}
-        getItemType={rowType}
-        renderItem={renderRow}
-        estimatedItemSize={90}
-        initialScrollAtEnd
-        maintainScrollAtEnd={following ? FOLLOW : false}
-        maintainScrollAtEndThreshold={1}
-        maintainVisibleContentPosition={KEEP_POSITION}
+      <div
+        ref={scroller}
         onScroll={onScroll}
-        onItemSizeChanged={onItemSizeChanged}
-        onReady={endOpeningScroll}
+        onKeyDown={(event) => {
+          if (
+            event.target !== event.currentTarget ||
+            event.nativeEvent.isComposing ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey
+          )
+            return;
+          // Native keyboard scrolling animates through unmeasured rows.
+          // Anchor corrections would interrupt it before the requested end.
+          if (event.key === "Home") {
+            event.preventDefault();
+            followingNow.current = false;
+            setFollowing(false);
+            setLayout((previous) => ({ ...previous, scroll: 0 }));
+          } else if (event.key === "End") {
+            event.preventDefault();
+            jumpToLatest();
+          }
+        }}
         role="region"
         aria-label="Transcript"
         tabIndex={0}
-        className="h-full min-h-0 overflow-x-hidden overscroll-y-contain px-4 outline-hidden [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      />
+        className="h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-8 outline-hidden [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        <div
+          className="relative mx-auto max-w-176 will-change-transform"
+          style={{ height: totalHeight }}
+        >
+          {visible.map(({ index, top: rowTop }) => (
+            <div
+              key={index}
+              data-virtual-row={index}
+              className="absolute inset-x-0"
+              style={{ top: rowTop }}
+            >
+              <Row index={index} />
+            </div>
+          ))}
+        </div>
+      </div>
       {following ? null : (
-        // The border sets the button off from the rows it floats over. The
-        // fill covers the button's transparent border, which the rows would
-        // show through.
         <div className="absolute inset-x-0 bottom-4 mx-auto w-fit rounded-control border border-border bg-secondary">
           <Button variant="secondary" size="sm" onClick={jumpToLatest}>
             <ArrowDown aria-hidden />

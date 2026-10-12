@@ -53,6 +53,20 @@ export function listedThreads(
   return { listed, more: threads.length - listed.length };
 }
 
+/**
+ * How many threads pi has a turn going in: working, or waiting for your
+ * answer part way through. The sidebar's footer counts them as running.
+ */
+export function runningCount(projects: readonly SidebarProject[]): number {
+  let count = 0;
+  for (const { threads } of projects) {
+    for (const { activity } of threads) {
+      if (activity === "working" || activity === "waiting") count += 1;
+    }
+  }
+  return count;
+}
+
 /** The threads of expanded projects, in the sidebar's order, for the shortcuts that move between them. */
 export function threadOrder(projects: readonly SidebarProject[]): string[] {
   return projects.flatMap((project) => (project.collapsed ? [] : project.threads.map((t) => t.id)));

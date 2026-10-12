@@ -265,6 +265,26 @@ describe("find-files", () => {
   });
 });
 
+describe("get-project-git", () => {
+  it("answers with the project folder's branch before any thread exists", async () => {
+    const project = repository("git-project", []);
+    execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/trunk"], { cwd: project });
+    const { id: projectId } = store.addProject(project, 1);
+    const answer = next((message) => isError(message) || message.type === "project-git");
+    workspace.handle({ v, type: "get-project-git", projectId });
+    expect(await answer).toEqual({ v, type: "project-git", projectId, git: true, branch: "trunk" });
+  });
+
+  it("says a plain folder isn't a Git checkout", async () => {
+    const project = path.join(dir, "plain");
+    mkdirSync(project);
+    const { id: projectId } = store.addProject(project, 1);
+    const answer = next((message) => isError(message) || message.type === "project-git");
+    workspace.handle({ v, type: "get-project-git", projectId });
+    expect(await answer).toEqual({ v, type: "project-git", projectId, git: false, branch: null });
+  });
+});
+
 describe("a project folder deleted outside Tondo", () => {
   it("still lets you remove the project, stopping its thread", async () => {
     const project = path.join(dir, "gone");

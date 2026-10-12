@@ -1,26 +1,26 @@
 import { BrowserWindow, nativeTheme, type BrowserWindowConstructorOptions } from "electron";
 import type { PaletteSetting } from "../shared/settings";
 
-// Matches the renderer's title bar: h-10 is 40px. Colors are --background and
+// Matches the renderer's title bar: h-11 is 44px. Colors are --background and
 // --foreground from index.css converted from OKLCH to sRGB. Change them together.
-const TITLE_BAR_HEIGHT = 40;
+const TITLE_BAR_HEIGHT = 44;
 const MACOS_TRAFFIC_LIGHT_RADIUS = 7;
 const THEME = {
   default: {
     light: { background: "#fbfaf6", symbol: "#29231e" },
-    dark: { background: "#1c1917", symbol: "#ebe7e1" },
+    dark: { background: "#11100f", symbol: "#edebe7" },
   },
   slate: {
     light: { background: "#f8fafc", symbol: "#1e242f" },
-    dark: { background: "#161a1f", symbol: "#e4e8ed" },
+    dark: { background: "#0e1116", symbol: "#e8ebf1" },
   },
   ocean: {
     light: { background: "#f6fbfc", symbol: "#1a262d" },
-    dark: { background: "#141a1e", symbol: "#e1eaec" },
+    dark: { background: "#0b1115", symbol: "#e4edf0" },
   },
   rose: {
     light: { background: "#fcf9fa", symbol: "#2b2124" },
-    dark: { background: "#1d181a", symbol: "#eee5e8" },
+    dark: { background: "#140f11", symbol: "#f1e8eb" },
   },
 } as const;
 

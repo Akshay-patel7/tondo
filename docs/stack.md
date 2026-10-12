@@ -1,6 +1,6 @@
 # Stack
 
-The frameworks and libraries Tondo is built on, and the evidence behind each choice. Everything here was checked on 2026-09-24, so versions and download counts are from that day. Measurements come from one Apple M5 Mac with 24 GB of RAM running macOS 26.6.2.
+The frameworks and libraries Tondo is built on, and the evidence behind each choice. Initial library selections were checked on 2026-09-24; dated updates below record later changes. Download counts are from that initial review. Measurements come from one Apple M5 Mac with 24 GB of RAM running macOS 26.6.2.
 
 ## Summary
 
@@ -9,7 +9,7 @@ The frameworks and libraries Tondo is built on, and the evidence behind each cho
 | Desktop shell | Electron | 44.4.5 (Chromium 152, Node 24.21) |
 | pi process host | Tondo's own RPC client in an Electron utility process, one `pi --mode rpc` per thread | Tested with pi 0.87.1 |
 | UI framework | React with React Compiler | react 19.3.0, babel-plugin-react-compiler 1.0.0 |
-| Transcript list | @legendapp/list, with @tanstack/react-virtual as the fallback | 3.4.0, 3.14.13 |
+| Transcript list | Bounded DOM row window with ResizeObserver | In-tree, updated 2026-10-12 |
 | Markdown | streamdown with @streamdown/code | 2.6.0, 1.1.1 |
 | Code highlighting | Shiki 3, through @streamdown/code | 4.4.3 (Tondo runs 3.23.0, see [Libraries](#libraries)) |
 | Diffs | @pierre/diffs with its worker pool | 1.4.3 (Tondo runs 1.5.1, see [Libraries](#libraries)) |
@@ -22,6 +22,14 @@ The frameworks and libraries Tondo is built on, and the evidence behind each cho
 | Language | TypeScript | 7.0.2 |
 | Package manager | pnpm | 12.6.0 |
 | Tests | Vitest, and Playwright for end-to-end tests | 5.0.1, 1.63.0 |
+
+## Transcript virtualization (2026-10-12)
+
+The v1.1 redesign groups an assistant turn into one row, preserving its work log and change summary. Its original list integration missed the unchanged 279.4 MiB idle-memory budget. The replacement mounts the viewport, 200 px of render-ahead and a neighboring row on either side. ResizeObserver measures actual heights; changes above the reading anchor adjust the scroll by the same amount. The existing 40 px follow rule remains. Home and End navigate the focused transcript without interruptible native scroll animation.
+
+Before the first viewport measurement, only the newest row mounts. Applying overscan to a zero-sized viewport had unnecessarily mounted estimated historical rows and retained their startup allocations. The content layer stays at the same 704 px maximum width as the messages, with the scrollbar on the full-width viewport. No code text or controls are replaced with hidden placeholders.
+
+On the same M5, 2x/120 Hz display and unchanged fixtures, `pnpm perf` passed all 18 checks. Single-thread idle medians were 272.9590 MiB at 1,000 tokens/s and 274.2402 MiB at 200 tokens/s. The run is recorded in `.dev/perf/2026-10-12T10-43-11/`. Tests cover streaming follow, history anchoring, both keyboard endpoints, link focus, turn summaries and tool controls.
 
 ## Desktop shell: Electron
 
@@ -99,7 +107,7 @@ React is still the pick, because the gaps that matter most don't show up in Tond
 - The framework's memory difference is a few MB. One pi process is 80 MB or more.
 - T3 Code, the performance bar for Tondo, runs React 19.2 with React Compiler 1.0 (from `apps/web/package.json` at commit e67abcf7).
 
-The libraries favor React, and they cover the hardest parts of the app. streamdown (4.4 million downloads a week), Legend List, Base UI and shadcn are React-only, and TipTap ships React and Vue bindings. Solid's closest markdown options are solid-markdown (14.7k downloads a week) and solid-streamdown (87 a week). Its main component library, Kobalte, is at 0.13, and Solid itself is partway to 2.0 (2.0.0-rc.9 is out). OpenCode's UI is Solid, which shows Solid works for an agent app, but more of it would have to be built by hand.
+The libraries favor React, and they cover the hardest parts of the app. streamdown (4.4 million downloads a week), Base UI and shadcn are React-only, and TipTap ships React and Vue bindings. Solid's closest markdown options are solid-markdown (14.7k downloads a week) and solid-streamdown (87 a week). Its main component library, Kobalte, is at 0.13, and Solid itself is partway to 2.0 (2.0.0-rc.9 is out). OpenCode's UI is Solid, which shows Solid works for an agent app, but more of it would have to be built by hand.
 
 Solid was the fallback if React couldn't keep streaming smooth. It would cut framework time by about 30% and framework memory in half, at the price of a hand-built markdown renderer and components. React met every budget with per-frame batching alone, so React is confirmed and there is no Solid build.
 
@@ -111,7 +119,7 @@ The others:
 
 ## Libraries
 
-- **@legendapp/list 3.4** for the transcript. T3 Code uses it, and it has props for chat (`maintainScrollAtEnd`, `maintainVisibleContentPosition`, `alignItemsAtEnd`, `onStartReached`; see the [chat example](https://legendapp.com/open-source/list/v3/react/examples/chat/)). Web support arrived in 3.0 (the changelog says "Feat: Web support", entry point `@legendapp/list/react`), but its README still describes it as React Native only. That mismatch is why @tanstack/react-virtual stays as the fallback. It has a [chat guide](https://tanstack.com/virtual/latest/docs/chat) that covers keeping the view anchored to the end. T3 Code patches three web problems in Legend List 3.3.5 (end spacing when the tail size is unknown, row reordering and scroll-adjust padding). 3.4.0 fixes all three, so Tondo uses it unpatched.
+- **Bounded DOM row window** for the transcript, implemented in `src/renderer/timeline/Timeline.tsx`. It replaces the original Legend List 3.4 integration; see the [v1.1 measurement](#transcript-virtualization-2026-10-12). The Stage 4 measurements below describe the earlier implementation.
 - **streamdown 2.6** for markdown. It replaces react-markdown, which T3 Code uses, and is built for streaming. It splits text into blocks and [memoizes](https://streamdown.ai/docs/memoization) each one, so only the growing block re-renders. It also completes unterminated syntax while text is still arriving. Code highlighting comes from the separate @streamdown/code package. Tondo patches version 1.1.1 to share one highlighter per theme pair and cap its cache at 128 results. Older results are recomputed when needed. The unpatched package keeps intermediate streaming results for the page's lifetime. Model output is untrusted, and streamdown 2.6.0 sanitizes it with rehype-sanitize and GitHub's schema. That drops `script`, `style` and `iframe` elements, `on*` attributes, and `javascript:` and `data:` URLs. Links open only after a confirmation dialog, which is on by default. Tondo's CSP (`img-src 'self' blob:`) blocks remote images; Stage 8 permits blob URLs for local raster previews.
 - **Shiki 3.23** for code, because @streamdown/code 1.1.1 depends on `shiki ^3.19.0`. Shiki 4.4.3 is the latest. @pierre/diffs is built on Shiki too and accepts 3 or 4 (`^3.0.0 || ^4.0.0` in 1.4.3 and 1.5.1), so code blocks and diffs can share one copy and highlight the same way. Shiki ships a JavaScript regex engine as well as the default Oniguruma WebAssembly engine. @streamdown/code uses the JavaScript one, so Tondo's CSP needs no `'wasm-unsafe-eval'`. In the built app, code highlighted with no WebAssembly requests and no CSP errors (checked 2026-09-25).
 - **@pierre/diffs 1.5** for diffs. T3 Code uses it. Its worker pool (`@pierre/diffs/worker`) runs syntax highlighting for diffs and files in web workers, off the UI thread. Tondo runs 1.5.1, published 2026-09-25, with a pool of 2 workers on Shiki's JavaScript regex engine, the pool's default. The page loads @pierre/diffs and starts the pool only when a tool card first shows a diff or a file, and the pool stops 30 s after the last one closes. 1.5.1 accepts `@shikijs/transformers` 3 or 4, and 4.4.3 brought a second copy of Shiki's core, so an override in `pnpm-workspace.yaml` pins it to 3.23.0. It builds each diff's rows as HTML with style attributes for token colors and puts its theme in a `<style>` element in the diff's shadow root. Tondo's CSP blocked both until Stage 6 allowed inline styles (`style-src 'self' 'unsafe-inline'`), and the workers need `worker-src 'self'`.

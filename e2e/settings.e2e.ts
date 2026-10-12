@@ -96,7 +96,7 @@ test("the theme follows the setting, stays after a relaunch, and goes back to th
     "true",
   );
 
-  await settings.getByRole("button", { name: "Back", exact: true }).click();
+  await back(page).click();
   await expect(settings).toBeHidden();
 });
 
@@ -230,21 +230,21 @@ test("the terminal takes the palette's colors whenever it changes", async () => 
   await waitForPi(page);
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
-  const warm = await terminalOnCard(page);
+  const warm = await terminalOnBackground(page);
 
   // The settings page takes the thread's place, so the terminal comes back in the new palette.
   const settings = await openSettings(page);
   await pickPalette(page, settings, profileDir, "ocean");
-  await settings.getByRole("button", { name: "Back", exact: true }).click();
+  await back(page).click();
   await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
-  const ocean = await terminalOnCard(page);
+  const ocean = await terminalOnBackground(page);
   expect(ocean).not.toBe(warm);
 
   // A palette that changes while the terminal is open, the way App.tsx applies one.
   await page.evaluate(() => {
     document.documentElement.dataset.palette = "rose";
   });
-  const rose = await terminalOnCard(page);
+  const rose = await terminalOnBackground(page);
   expect([warm, ocean]).not.toContain(rose);
 });
 
@@ -290,10 +290,12 @@ test("Command palette moves to Mod+P, and Reset gives it Mod+K back", async () =
   const { page, profileDir } = tondo;
   const settings = await openSettings(page);
   await section(settings, "Shortcuts").click();
-  const row = settings.getByRole("group", { name: "Command palette", exact: true });
-  const change = row.getByRole("button", { name: "Change", exact: true });
-  const recorder = row.getByRole("textbox", { name: "Shortcut for Command palette" });
+  const row = settings.getByRole("group", { name: "Search", exact: true });
+  // The key cap shows the shortcut, and pressing it records a new one.
+  const change = row.getByRole("button", { name: /^Change shortcut, / });
+  const recorder = row.getByRole("textbox", { name: "Shortcut for Search" });
   await expect(row.getByText(label("mod+k"), { exact: true })).toBeVisible();
+  await expect(change).toHaveAccessibleName(`Change shortcut, ${label("mod+k")}`);
 
   // Toggle sidebar has Mod+B, so the recorder refuses it and keeps listening,
   // and the keys don't reach the app's shortcuts.
@@ -315,6 +317,7 @@ test("Command palette moves to Mod+P, and Reset gives it Mod+K back", async () =
   await page.keyboard.press("ControlOrMeta+p");
   await expect(recorder).toBeHidden();
   await expect(row.getByText(label("mod+p"), { exact: true })).toBeVisible();
+  await expect(change).toHaveAccessibleName(`Change shortcut, ${label("mod+p")}`);
   await expect(change).toBeFocused();
   await expect.poll(() => saved(profileDir).shortcuts).toEqual({ palette: "mod+p" });
 
@@ -451,15 +454,23 @@ function settingsPage(page: Page): Locator {
   return page.getByRole("region", { name: "Settings", exact: true });
 }
 
-/** Opens the settings page with its shortcut, and waits until its title has focus. */
+/**
+ * Opens the settings page with its shortcut, and waits until its section's
+ * heading has focus. The page's title is in the header.
+ */
 async function openSettings(page: Page): Promise<Locator> {
   // Shortcuts do nothing until main has handed the page its port to the host,
   // which also enables the sidebar's buttons.
   await expect(page.getByRole("button", { name: "Add project", exact: true })).toBeEnabled();
   await page.keyboard.press("ControlOrMeta+Comma");
   const settings = settingsPage(page);
-  await expect(settings.getByRole("heading", { level: 1, name: "Settings" })).toBeFocused();
+  await expect(settings.getByRole("heading", { level: 2 })).toBeFocused();
   return settings;
+}
+
+/** The header's Back, which shows while the settings page is open. */
+function back(page: Page): Locator {
+  return page.locator("header").getByRole("button", { name: "Back", exact: true });
 }
 
 /** A button in the page's list of sections. */
@@ -603,7 +614,7 @@ async function expectCodeLegible(
   if (palette !== "default") {
     const settings = await openSettings(page);
     await pickPalette(page, settings, profileDir, palette);
-    await settings.getByRole("button", { name: "Back", exact: true }).click();
+    await back(page).click();
     await expect(settings).toBeHidden();
   }
   // The card stays open while the settings page has the thread's place.
@@ -679,15 +690,25 @@ async function colors(page: Page): Promise<Look> {
   return look as Look;
 }
 
-/** Text on the surfaces it sits on reaches 4.5:1, and control edges and the focus ring 3:1. */
-const CONTRASTS: readonly (readonly [keyof Look, keyof Look, number])[] = [
+/**
+ * Text on the surfaces it sits on reaches 4.5:1, and control edges and the
+ * focus ring 3:1. A translucent fill, such as the --accent hover wash, is
+ * measured as it paints: [fill, surface] puts it over each surface it washes.
+ */
+const CONTRASTS: readonly (readonly [
+  keyof Look,
+  keyof Look | readonly [keyof Look, keyof Look],
+  number,
+])[] = [
   ["foreground", "background", 4.5],
   ["foreground", "card", 4.5],
   ["foreground", "sidebar", 4.5],
   ["muted-foreground", "background", 4.5],
   ["muted-foreground", "card", 4.5],
   ["muted-foreground", "sidebar", 4.5],
-  ["accent-foreground", "accent", 4.5],
+  ["accent-foreground", ["accent", "background"], 4.5],
+  ["accent-foreground", ["accent", "card"], 4.5],
+  ["accent-foreground", ["accent", "sidebar"], 4.5],
   ["primary-foreground", "primary", 4.5],
   ["destructive-foreground", "destructive", 4.5],
   ["success-foreground", "success", 4.5],
@@ -702,9 +723,22 @@ const CONTRASTS: readonly (readonly [keyof Look, keyof Look, number])[] = [
 /** The pairs in CONTRASTS that `look` paints under their ratio. */
 function shortContrast(look: Look): string[] {
   return CONTRASTS.flatMap(([ink, paper, least]) => {
-    const ratio = contrast(look[ink], look[paper]);
-    return ratio < least ? [`${ink} on ${paper} at ${ratio.toFixed(2)}:1`] : [];
+    const [fill, surface] = typeof paper === "string" ? [paper, undefined] : paper;
+    const painted = surface === undefined ? look[fill] : over(look[fill], look[surface]);
+    const ratio = contrast(look[ink], painted);
+    const name = surface === undefined ? fill : `${fill} over ${surface}`;
+    return ratio < least ? [`${ink} on ${name} at ${ratio.toFixed(2)}:1`] : [];
   });
+}
+
+/** The opaque "r,g,b,a" color that `top`, which may be translucent, paints over `base`. */
+function over(top: string, base: string): string {
+  const [red, green, blue, alpha] = top.split(",").map(Number);
+  const opacity = alpha! / 255;
+  return [red!, green!, blue!]
+    .map((channel, i) => Math.round(channel * opacity + Number(base.split(",")[i]) * (1 - opacity)))
+    .concat(255)
+    .join(",");
 }
 
 /** WCAG 2's contrast ratio between two opaque "r,g,b,a" colors. */
@@ -731,10 +765,11 @@ async function minimumSize({ app, page }: Tondo): Promise<void> {
 }
 
 /**
- * Waits until the terminal's background is the page's --card, as xterm paints
- * its viewport with the theme's background, and returns that color.
+ * Waits until the terminal's background is the page's --background, which
+ * TerminalDrawer.tsx gives xterm's theme and xterm paints its viewport with,
+ * and returns that color.
  */
-async function terminalOnCard(page: Page): Promise<string> {
+async function terminalOnBackground(page: Page): Promise<string> {
   let background = "";
   await expect
     .poll(async () => {
@@ -752,14 +787,14 @@ async function terminalOnCard(page: Page): Promise<string> {
             return context.getImageData(0, 0, 1, 1).data.join(",");
           };
           const probe = document.createElement("span");
-          probe.style.color = "var(--card)";
+          probe.style.color = "var(--background)";
           document.body.append(probe);
-          const card = bytes(getComputedStyle(probe).color);
+          const backdrop = bytes(getComputedStyle(probe).color);
           probe.remove();
-          return { terminal: bytes(getComputedStyle(viewport).backgroundColor), card };
+          return { terminal: bytes(getComputedStyle(viewport).backgroundColor), backdrop };
         });
       background = found.terminal;
-      return found.terminal === found.card;
+      return found.terminal === found.backdrop;
     })
     .toBe(true);
   return background;
