@@ -107,6 +107,15 @@ beforeEach(() => {
   waiters = [];
   reveal = vi.fn<(file: string) => void>();
   setTheme = vi.fn<(theme: ThemeSetting, palette: PaletteSetting) => void>();
+  const commandPath = process.env.PATH;
+  if (!commandPath) throw new Error("Workspace tests require PATH to find Git.");
+  // Match the Git fixtures: retain the runner's Git, without reading user config.
+  const gitEnv = {
+    PATH: commandPath,
+    HOME: dir,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
   const supervisor = {
     settingsFile,
     settings: () => readSettings(settingsFile),
@@ -114,7 +123,7 @@ beforeEach(() => {
     updateSettings: (patch: SettingsPatch) => updateSettings(settingsFile, patch),
     checkPi: async () => {},
     discover: async () => ({ found: false }),
-    captureLoginEnv: async () => ({}),
+    captureLoginEnv: async () => gitEnv,
     needsTrustAnswer: async () => false,
     sessionFolder: async () => ({ dir: path.join(dir, "sessions"), shared: true }),
   };
