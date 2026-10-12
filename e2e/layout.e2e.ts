@@ -225,6 +225,74 @@ test("a long folder name gives way to the thread's title and the header's button
   await page.screenshot({ path: path.join(SHOTS, "long-folder-name-minimum-changes.png") });
 });
 
+for (const size of ["default", "minimum", "zoomed"] as const) {
+  test(`a long thread title leaves room for the branch and usable header controls at ${size} size`, async () => {
+    mkdirSync(SHOTS, { recursive: true });
+    const page = await launch(gitProject("project"));
+    await page.emulateMedia({ colorScheme: "dark" });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") errors.push(message.text());
+    });
+    await send(page, "First.");
+    const header = page.locator("header");
+    await expect(header.getByRole("heading")).toHaveText("First.");
+    await threads(page).getByTitle("First.", { exact: true }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
+    const title =
+      "In tondo the pi plugins area is looking a bit weird. Also can you add git pull support?";
+    const input = page.getByRole("textbox", { name: "Thread title" });
+    await input.fill(title);
+    await input.press("Enter");
+    await expect(header.getByRole("heading")).toHaveText(title);
+    await expect(threads(page).getByTitle(title, { exact: true })).toBeVisible();
+    const branch = header.locator("span").filter({ hasText: /^Branch main$/ });
+    await expect(branch).toBeVisible();
+
+    if (size !== "default") await minimumSize(tondo!);
+    if (size === "zoomed") await zoom(tondo!, 1.4);
+    await expect
+      .poll(
+        async () => {
+          const titleBox = await header.getByRole("heading").boundingBox();
+          const branchBox = await branch.boundingBox();
+          const terminalBox = await header
+            .getByRole("button", { name: "Terminal", exact: true })
+            .boundingBox();
+          return (
+            titleBox!.x + titleBox!.width <= branchBox!.x &&
+            branchBox!.x + branchBox!.width <= terminalBox!.x
+          );
+        },
+        { message: `the branch stays clear of Terminal at ${size} size` },
+      )
+      .toBe(true);
+    const fit = await headerFit(page);
+    expect(fit.offScreen).toEqual([]);
+    expect((await measure(page)).sideways).toBe(0);
+    expect(fit.titleWidth, "the long title truncates").toBeLessThan(fit.titleTextWidth);
+    // Electron's capture keeps the whole window at non-default zoom.
+    const shot = await tondo!.app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage())
+        .toPNG()
+        .toString("base64"),
+    );
+    writeFileSync(path.join(SHOTS, `long-thread-title-${size}.png`), Buffer.from(shot, "base64"));
+
+    // Check that the controls still work beside the long title.
+    await header.getByRole("button", { name: "Terminal", exact: true }).click();
+    const drawer = page.getByRole("region", { name: "Terminal", exact: true });
+    await expect(drawer.locator(".xterm-helper-textarea")).toBeFocused();
+    await drawer.getByRole("button", { name: "Close terminal" }).click();
+    await expect(drawer).not.toBeAttached();
+    await header.getByRole("button", { name: "Git actions", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Switch branch", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    expect(errors).toEqual([]);
+  });
+}
+
 test("Changes at the minimum size moves the sidebar aside, and the thread and its terminal keep their room", async () => {
   const page = await launch(gitProject("project"));
   const sidebar = threads(page);

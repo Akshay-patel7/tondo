@@ -136,28 +136,32 @@ function ThreadHeader({ project }: { project: string }) {
 
 /**
  * The thread's folder and its branch. The folder name gets only the room the
- * title leaves, so a long one gives way first; the branch stays whole.
+ * title leaves, so a long one gives way first. The branch is a separate
+ * header item that reserves its width before the title and folder shrink.
  */
 function Breadcrumb({ project }: { project: string }) {
   const branch = useGit((git) =>
     git.status?.root ? (git.status.branch ?? "Detached HEAD") : null,
   );
   return (
-    <span className="flex min-w-0 max-w-fit flex-1 items-center gap-1.5 text-xs whitespace-nowrap text-faint-foreground">
-      <span title={project} className="min-w-0 truncate">
+    <>
+      <span
+        title={project}
+        className="min-w-0 max-w-fit flex-1 truncate text-xs text-faint-foreground"
+      >
         {folderName(project)}
       </span>
       {branch === null ? null : (
-        <>
+        <span className="flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap text-faint-foreground">
           <span aria-hidden>/</span>
-          <span className="flex shrink-0 items-center gap-1 font-mono text-muted-foreground">
+          <span className="flex items-center gap-1 font-mono text-muted-foreground">
             <GitBranch aria-hidden className="size-3" />
             <span className="sr-only">Branch </span>
             {branch}
           </span>
-        </>
+        </span>
       )}
-    </span>
+    </>
   );
 }
 
