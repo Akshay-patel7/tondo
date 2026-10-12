@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -29,7 +29,7 @@ import {
   waitForPi,
   waitForFileCommand,
 } from "./pi";
-import { expectPicked, pickerOptions, pickOption } from "./ui";
+import { pickOption } from "./ui";
 
 let dir: string;
 let project: string;
@@ -94,8 +94,56 @@ async function start(responses = [bashCall("pwd | tee cwd-proof.txt"), reply("Pa
   await bringToFront(tondo);
   await addProject(tondo, project);
   await waitForPi(tondo.page);
-  await expectPicked(tondo.page, "Git branch", "main");
+  await expectBranch(tondo.page, "main");
   return tondo;
+}
+
+/** Expects the header's breadcrumb to name `name` as the checked-out branch. */
+async function expectBranch(page: Page, name: string): Promise<void> {
+  await expect(page.locator("header").getByText(`Branch ${name}`, { exact: true })).toBeVisible();
+}
+
+/** The status row's Git pill. */
+function gitPill(page: Page): Locator {
+  return page.getByLabel("Git status", { exact: true });
+}
+
+/** Opens the Git menu behind the header's Commit & push chevron. */
+async function gitMenu(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "Git actions", exact: true }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/** Closes the open Git menu without choosing. */
+async function closeGitMenu(page: Page, menu: Locator): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+}
+
+/** Chooses the Git action named `name` in the header's Git menu. */
+async function gitAction(page: Page, name: string): Promise<void> {
+  const menu = await gitMenu(page);
+  await menu.getByRole("menuitem", { name, exact: true }).click();
+  await expect(menu).toBeHidden();
+}
+
+/** Expects the Git menu's `name` item to be enabled or not, then closes the menu. */
+async function expectGitAction(page: Page, name: string, enabled: boolean): Promise<void> {
+  const menu = await gitMenu(page);
+  const item = menu.getByRole("menuitem", { name, exact: true });
+  if (enabled) await expect(item).toBeEnabled();
+  else await expect(item).toBeDisabled();
+  await closeGitMenu(page, menu);
+}
+
+/** Opens Switch branch and picks `name`, leaving its confirmation open. */
+async function pickBranch(page: Page, name: string): Promise<Locator> {
+  await gitAction(page, "Switch branch");
+  const dialog = page.getByRole("alertdialog");
+  await pickOption(dialog, "Git branch", name);
+  return dialog;
 }
 
 async function submit(name: string) {
@@ -127,12 +175,13 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await send(page, "Record local cwd");
   await expect(page.getByText("Path recorded.", { exact: true })).toBeVisible();
   await waitForIdle(page);
-  await page.getByRole("button", { name: "New worktree", exact: true }).click();
+  await gitAction(page, "New worktree");
   await page.getByLabel("Branch name", { exact: true }).fill("feature/worktree");
   await submit("Create worktree thread");
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
-  await expectPicked(page, "Git branch", "feature/worktree");
+  await expectBranch(page, "feature/worktree");
+  await expect(gitPill(page)).toContainText("Worktree");
   await expect(threadRows(page)).toHaveCount(1);
   const checkout = worktreePath();
   expect(existsSync(path.join(checkout, "cwd-proof.txt"))).toBe(false);
@@ -175,28 +224,33 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await expect(page.locator(".xterm-accessibility-tree")).toContainText(checkout);
   await page.getByRole("button", { name: "Close terminal", exact: true }).click();
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
-  await page.getByRole("button", { name: "Refresh Git" }).click();
-  await expect(page.getByRole("button", { name: "Commit", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "Commit", exact: true }).click();
+  await gitAction(page, "Refresh");
+  await expect(gitPill(page)).toContainText("2 changes");
+  await expectGitAction(page, "Commit", true);
+  await gitAction(page, "Commit");
   await page.getByLabel("Commit message").fill("feat: record worktree cwd");
   await submit("Stage all and commit");
   expect(git(checkout, "log", "-1", "--format=%s")).toBe("feat: record worktree cwd");
   expect(git(project, "log", "-1", "--format=%s")).toBe("initial");
   expect(git(checkout, "ls-remote", "--heads", "origin", "feature/worktree")).toBe("");
-  await page.getByRole("button", { name: "Push", exact: true }).click();
+  await gitAction(page, "Push");
   await submit("Push branch");
   expect(git(checkout, "ls-remote", "--heads", "origin", "feature/worktree")).toContain(
     git(checkout, "rev-parse", "HEAD"),
   );
-  await page.getByRole("button", { name: "Create PR", exact: true }).click();
+  await expect(gitPill(page)).toContainText("Up to date with origin/feature/worktree");
+  await gitAction(page, "Create PR");
   await page.getByLabel("Pull request title").fill("Test PR");
   await page.getByLabel("Pull request description").fill("Test body");
   await submit("Create pull request");
-  const link = page.getByRole("link", { name: "PR #7 · open", exact: true });
-  await expect(link).toBeVisible();
+  const menu = await gitMenu(page);
+  const link = menu.getByRole("menuitem", { name: "PR #7 · open", exact: true });
+  await expect(link).toHaveAttribute("href", "https://github.example.com/team/repo/pull/7");
+  await expect(menu.getByRole("menuitem", { name: "Create PR", exact: true })).toHaveCount(0);
   const opened = await captureOpenExternal(app.app);
   await link.click();
   expect(await opened()).toBe("https://github.example.com/team/repo/pull/7");
+  await expect(menu).toBeHidden();
   const calls = readFileSync(path.join(dir, "gh.jsonl"), "utf8")
     .trim()
     .split("\n")
@@ -221,7 +275,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await page.screenshot({ path: "test-results/git-worktree-pr.png" });
   await page.reload();
   await waitForPi(page);
-  await expectPicked(page, "Git branch", "feature/worktree");
+  await expectBranch(page, "feature/worktree");
   await expect(page.getByText("Path recorded.", { exact: true })).toBeVisible();
   await app.close();
   const restartDir = path.join(dir, "restart");
@@ -238,14 +292,11 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
     if (message.type() === "error") errors.push(message.text());
   });
   await waitForPi(page);
-  await expectPicked(page, "Git branch", "feature/worktree");
+  await expectBranch(page, "feature/worktree");
   await expect(page.getByText("Path recorded.", { exact: true })).toBeVisible();
   const checkpoints = git(checkout, "for-each-ref", "--format=%(refname)", "refs/tondo");
   writeFileSync(path.join(checkout, "ignored"), "keep me");
-  await page
-    .getByRole("toolbar", { name: "Git" })
-    .getByRole("button", { name: "Remove worktree", exact: true })
-    .click();
+  await gitAction(page, "Remove worktree");
   await page
     .getByRole("alertdialog")
     .getByRole("button", { name: "Remove worktree", exact: true })
@@ -257,10 +308,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("alertdialog")).toBeHidden();
   expect(existsSync(checkout)).toBe(true);
-  await page
-    .getByRole("toolbar", { name: "Git" })
-    .getByRole("button", { name: "Remove worktree", exact: true })
-    .click();
+  await gitAction(page, "Remove worktree");
   await page
     .getByRole("checkbox", { name: "Permanently delete uncommitted and ignored files too" })
     .check();
@@ -271,8 +319,44 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   expect(git(project, "branch", "--list", "feature/worktree")).toContain("feature/worktree");
   await threadRows(page).filter({ hasText: "Record local cwd" }).click();
   await waitForPi(page);
-  await expectPicked(page, "Git branch", "main");
+  await expectBranch(page, "main");
+  await expect(gitPill(page)).toContainText("Local");
   expect(errors).toEqual([]);
+});
+
+test("Commit & push commits, then pushes to the remote, and is disabled with a clean tree", async () => {
+  const { page } = await start([reply("Hello")]);
+  const commitAndPush = page.getByRole("button", { name: "Commit & push", exact: true });
+  await expect(commitAndPush).toBeDisabled();
+  const menu = await gitMenu(page);
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Commit",
+    "Push",
+    "Create PR",
+    "Switch branch",
+    "New branch",
+    "New worktree",
+    "Refresh",
+  ]);
+  await closeGitMenu(page, menu);
+  writeFileSync(path.join(project, "feature.txt"), "feature\n");
+  await gitAction(page, "Refresh");
+  await expect(gitPill(page)).toContainText("1 change");
+  await expect(commitAndPush).toBeEnabled();
+  await commitAndPush.click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Commit message").fill("feat: add feature");
+  await dialog.getByRole("button", { name: "Stage all and commit", exact: true }).click();
+  // The push asks next, once the commit's dialog has gone.
+  await expect(dialog.getByRole("heading", { name: "Push branch", exact: true })).toBeVisible();
+  await submit("Push branch");
+  expect(git(project, "log", "-1", "--format=%s")).toBe("feat: add feature");
+  expect(git(remote, "rev-parse", "refs/heads/main")).toBe(git(project, "rev-parse", "HEAD"));
+  await expect(gitPill(page)).toContainText("No changes");
+  await expect(gitPill(page)).toContainText("Up to date with origin/main");
+  // The clean tree disables Commit & push, so focus lands on the split button's chevron.
+  await expect(commitAndPush).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Git actions", exact: true })).toBeFocused();
 });
 
 test("branch changes are refused while a background local thread is mid-turn", async () => {
@@ -285,23 +369,20 @@ test("branch changes are refused while a background local thread is mid-turn", a
   await page.getByRole("button", { name: "New thread in project", exact: true }).click();
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
-  await expect.poll(() => pickerOptions(page, "Git branch")).toContain("other");
-  await pickOption(page, "Git branch", "other");
-  await page
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Switch branch", exact: true })
-    .click();
+  const dialog = await pickBranch(page, "other");
+  await dialog.getByRole("button", { name: "Switch branch", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("pi is starting or working");
   expect(git(project, "branch", "--show-current")).toBe("main");
   writeFileSync(release, "go");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expectPicked(page, "Git branch", "main");
+  await expect(dialog).toBeHidden();
+  await expectBranch(page, "main");
   await threadRows(page).filter({ hasText: "Wait for release" }).click();
   await expect(page.getByText("Released.", { exact: true })).toBeVisible();
   await waitForIdle(page);
-  await pickOption(page, "Git branch", "other");
+  await pickBranch(page, "other");
   await submit("Switch branch");
-  await expectPicked(page, "Git branch", "other");
+  await expectBranch(page, "other");
 });
 
 test("a terminal still protects its checkout after the pool stops its thread's pi", async () => {
@@ -320,38 +401,37 @@ test("a terminal still protects its checkout after the pool stops its thread's p
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await waitForPi(page);
   await expect.poll(() => piGroups(app)).not.toContain(first);
-  await expect.poll(() => pickerOptions(page, "Git branch")).toContain("other");
-  await pickOption(page, "Git branch", "other");
-  await page
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Switch branch", exact: true })
-    .click();
+  const dialog = await pickBranch(page, "other");
+  await dialog.getByRole("button", { name: "Switch branch", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Close terminals in this checkout");
   expect(git(project, "branch", "--show-current")).toBe("main");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
   await threadRows(page).filter({ hasText: "Keep this shell" }).click();
   await expect(page.getByRole("heading", { name: "Keep this shell", exact: true })).toBeVisible();
   await waitForPi(page);
   await page.getByRole("button", { name: "Close terminal", exact: true }).click();
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
-  await page.getByRole("button", { name: "New branch", exact: true }).click();
-  await page.getByLabel("Branch name", { exact: true }).fill("created-in-toolbar");
+  await gitAction(page, "New branch");
+  await page.getByLabel("Branch name", { exact: true }).fill("created-in-menu");
   await submit("Create branch");
-  await expectPicked(page, "Git branch", "created-in-toolbar");
+  await expectBranch(page, "created-in-menu");
 });
 
 test("gh login failures are shown and recover after explicit refresh", async () => {
   writeFileSync(path.join(dir, "logged-out"), "yes");
   const { page } = await start([reply("Hello")]);
+  const menu = await gitMenu(page);
   await expect(
-    page.getByText("Sign in with gh auth login --hostname github.example.com, then refresh.", {
+    menu.getByText("Sign in with gh auth login --hostname github.example.com, then refresh.", {
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create PR", exact: true })).toBeDisabled();
+  await expect(menu.getByRole("menuitem", { name: "Create PR", exact: true })).toBeDisabled();
+  await closeGitMenu(page, menu);
   rmSync(path.join(dir, "logged-out"));
-  await page.getByRole("button", { name: "Refresh Git" }).click();
-  await expect(page.getByRole("button", { name: "Create PR", exact: true })).toBeEnabled();
+  await gitAction(page, "Refresh");
+  await expectGitAction(page, "Create PR", true);
 });
 
 test("an unresolved merge is shown and Commit waits until its conflicts are resolved", async () => {
@@ -363,17 +443,19 @@ test("an unresolved merge is shown and Commit waits until its conflicts are reso
   git(project, "commit", "-am", "main");
   expect(() => git(project, "merge", "topic")).toThrow();
   const { page } = await start([reply("Hello")]);
-  const commit = page.getByRole("button", { name: "Commit", exact: true });
-  await expect(page.getByText("Merge in progress, 1 conflict", { exact: true })).toBeVisible();
-  await expect(commit).toBeDisabled();
+  await expect(
+    gitPill(page).getByText("Merge in progress, 1 conflict", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Commit & push", exact: true })).toBeDisabled();
+  await expectGitAction(page, "Commit", false);
   writeFileSync(path.join(project, "README.md"), "resolved\n");
   git(project, "add", "README.md");
-  await page.getByRole("button", { name: "Refresh Git" }).click();
-  await expect(page.getByText("Merge in progress", { exact: true })).toBeVisible();
-  await commit.click();
+  await gitAction(page, "Refresh");
+  await expect(gitPill(page).getByText("Merge in progress", { exact: true })).toBeVisible();
+  await gitAction(page, "Commit");
   await page.getByLabel("Commit message").fill("merge topic");
   await submit("Stage all and commit");
-  await expect(page.getByText("Merge in progress", { exact: true })).toBeHidden();
+  await expect(gitPill(page).getByText("Merge in progress", { exact: true })).toBeHidden();
   expect(git(project, "show", "HEAD:README.md")).toBe("resolved");
   expect(git(project, "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).toHaveLength(3);
 });
@@ -382,8 +464,7 @@ test("a blank commit message or branch name is refused in the dialog instead of 
   writeFileSync(path.join(project, "new.txt"), "new\n");
   const { page } = await start([reply("Hello")]);
   const dialog = page.getByRole("dialog");
-  const commit = page.getByRole("button", { name: "Commit", exact: true });
-  await commit.click();
+  await gitAction(page, "Commit");
   await dialog.getByLabel("Commit message").fill("   \n  ");
   await dialog.getByRole("button", { name: "Stage all and commit", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("Enter a commit message.");
@@ -391,32 +472,35 @@ test("a blank commit message or branch name is refused in the dialog instead of 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   expect(git(project, "log", "-1", "--format=%s")).toBe("initial");
-  await page.getByRole("button", { name: "New branch", exact: true }).click();
+  await gitAction(page, "New branch");
   await dialog.getByLabel("Branch name", { exact: true }).fill("   ");
   await dialog.getByRole("button", { name: "Create branch", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("Enter a branch name.");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
-  await expect(commit).toBeEnabled();
+  await expectGitAction(page, "Commit", true);
   expect(git(project, "branch", "--show-current")).toBe("main");
 });
 
 test("a worktree whose folder was deleted outside Tondo can be removed, and then its project", async () => {
   const { page } = await start();
-  await page.getByRole("button", { name: "New worktree", exact: true }).click();
+  await gitAction(page, "New worktree");
   await page.getByLabel("Branch name", { exact: true }).fill("feature/gone");
   await submit("Create worktree thread");
   await waitForPi(page);
-  await expectPicked(page, "Git branch", "feature/gone");
+  await expectBranch(page, "feature/gone");
   await expect(threadRows(page)).toHaveCount(0);
   await composer(page).fill("Keep this worktree draft");
   await expect(threadRows(page)).toHaveCount(1);
   const checkout = worktreePath();
   rmSync(checkout, { recursive: true, force: true });
 
-  await page.getByRole("button", { name: "Refresh Git", exact: true }).click();
-  await expect(page.getByText("This worktree's folder was deleted outside Tondo")).toBeVisible();
-  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await gitAction(page, "Refresh");
+  await expect(gitPill(page)).toContainText("Git unavailable");
+  const menu = await gitMenu(page);
+  await expect(menu).toContainText("This worktree's folder was deleted outside Tondo");
+  await menu.getByRole("menuitem", { name: "Remove worktree", exact: true }).click();
+  await expect(menu).toBeHidden();
   await submit("Remove worktree");
   await expect(threadRows(page)).toHaveCount(1);
   expect(git(project, "worktree", "list", "--porcelain")).not.toContain(checkout);

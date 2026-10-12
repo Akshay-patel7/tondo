@@ -2,7 +2,7 @@
 // settings files.
 import { CircleAlert, CircleCheck, FolderOpen, RefreshCw, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
-import type { PiDiscovery } from "../../shared/protocol";
+import type { PiDiscovery, SettingsFile } from "../../shared/protocol";
 import {
   choosePiPath,
   requestPiConfigFiles,
@@ -11,10 +11,12 @@ import {
   updateSettings,
   useHost,
 } from "../connection";
+import { folderName } from "../format";
 import { isMac } from "../platform";
 import { Button } from "../ui/button";
+import { CardGroup, CardGroupRow, CardGroupRowText, CardGroupRowTitle } from "../ui/card-group";
 import { Spinner } from "../ui/spinner";
-import { GroupHeading, Loading, SectionHeading, SettingsGroup } from "./rows";
+import { Loading, SubHeading } from "./rows";
 
 const REVEAL = isMac ? "Show in Finder" : "Show in folder";
 
@@ -22,6 +24,7 @@ export function PiSettings() {
   const env = useHost((host) => host.piEnv);
   const piPath = useHost((host) => host.settings?.piPath ?? null);
   const files = useHost((host) => host.piConfigFiles);
+  const project = useHost((host) => host.thread?.project);
   const chooseId = useId();
   // The discovery on screen when you clicked Check again. The host's answer replaces it.
   const [checkedFrom, setCheckedFrom] = useState<PiDiscovery | null | undefined>(undefined);
@@ -36,20 +39,19 @@ export function PiSettings() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-6">
-      <SectionHeading title="pi" description="The pi program Tondo runs for each thread." />
-      <SettingsGroup>
-        <div className="flex flex-col gap-3.5 px-4 py-3.5">
+    <>
+      <CardGroup>
+        <div className="flex flex-col gap-4 p-4">
           <Discovery env={env} />
-          <div className="flex flex-wrap gap-2">
-            <Button id={chooseId} variant="outline" size="sm" onClick={() => choosePiPath()}>
+          {/* Under the text, past the 20px icon column and its 12px gap. */}
+          <div className="flex flex-wrap gap-2 pl-8">
+            <Button id={chooseId} variant="neutral" onClick={() => choosePiPath()}>
               <FolderOpen aria-hidden />
               Choose pi…
             </Button>
             {piPath === null ? null : (
               <Button
                 variant="ghost"
-                size="sm"
                 onClick={() => {
                   updateSettings({ piPath: null });
                   // This button goes away once the host has saved the change.
@@ -61,7 +63,6 @@ export function PiSettings() {
             )}
             <Button
               variant="ghost"
-              size="sm"
               onClick={() => {
                 setCheckedFrom(env);
                 retryPi();
@@ -72,36 +73,36 @@ export function PiSettings() {
             </Button>
           </div>
         </div>
-      </SettingsGroup>
-      <div className="flex flex-col gap-2">
-        <GroupHeading
-          title="pi's settings files"
-          description="pi reads its own settings from these. A project's file wins over your global one."
-        />
-        {files === null ? (
-          <Loading>Looking for pi's settings files…</Loading>
-        ) : (
-          <SettingsGroup>
-            {files.map((file) => (
-              <ConfigFile key={file.path} {...file} />
-            ))}
-          </SettingsGroup>
-        )}
-      </div>
-    </div>
+      </CardGroup>
+      <SubHeading
+        title="pi's settings files"
+        description="pi reads its own settings from these. A project's file wins over your global one."
+      />
+      {files === null ? (
+        <Loading>Looking for pi's settings files…</Loading>
+      ) : (
+        <CardGroup>
+          {files.map((file) => (
+            <ConfigFile key={file.path} file={file} project={project} />
+          ))}
+        </CardGroup>
+      )}
+    </>
   );
 }
 
 /** The pi Tondo found, or why it can't run one. */
 function Discovery({ env }: { env: PiDiscovery | null }) {
-  if (env === null) return <Loading>Looking for pi…</Loading>;
+  if (env === null) return <p className="pl-8 text-muted-foreground">Looking for pi…</p>;
   if (env.state === "found") {
     return (
       <Status
         icon={<CircleCheck aria-hidden className="text-success" />}
         title={`pi ${env.version}`}
       >
-        <p>{env.source === "path" ? "Found on your PATH" : "Chosen in Settings"}</p>
+        <p className="text-faint-foreground">
+          {env.source === "path" ? "Found on your PATH" : "At the path in Settings"}
+        </p>
         <p className="font-mono break-all">{env.command}</p>
       </Status>
     );
@@ -149,39 +150,37 @@ function Status({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-start gap-2.5">
-      <span className="mt-0.5 flex shrink-0 [&_svg]:size-4">{icon}</span>
+    <div className="grid grid-cols-[20px_minmax(0,1fr)] gap-x-3">
+      <span className="mt-px flex [&_svg]:size-4 [&_svg]:shrink-0">{icon}</span>
       <div className="flex min-w-0 flex-col gap-1">
-        <p className="text-sm font-medium">{title}</p>
-        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">{children}</div>
+        <p className="font-medium">{title}</p>
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground">{children}</div>
       </div>
     </div>
   );
 }
 
-function ConfigFile({ scope, path, exists }: { scope: string; path: string; exists: boolean }) {
+function ConfigFile({ file, project }: { file: SettingsFile; project: string | undefined }) {
   const pathId = useId();
+  const { scope, path, exists } = file;
+  // The host names the project's file "Project"; the sidebar names the project by its folder.
+  const name =
+    scope === "Project" && project !== undefined ? `Project · ${folderName(project)}` : scope;
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
-      <div className="flex min-w-56 flex-1 flex-col gap-1">
-        <p className="text-sm font-medium">{scope}</p>
-        <p id={pathId} className="font-mono text-xs break-all text-muted-foreground">
+    <CardGroupRow size="sm">
+      <CardGroupRowText>
+        <CardGroupRowTitle>{name}</CardGroupRowTitle>
+        <p id={pathId} className="font-mono text-xs break-all text-faint-foreground">
           {path}
         </p>
-      </div>
+      </CardGroupRowText>
       {exists ? (
-        <Button
-          variant="outline"
-          size="xs"
-          aria-describedby={pathId}
-          onClick={() => revealFile(path)}
-        >
-          <FolderOpen aria-hidden />
+        <Button variant="neutral" aria-describedby={pathId} onClick={() => revealFile(path)}>
           {REVEAL}
         </Button>
       ) : (
-        <p className="text-xs text-muted-foreground">Doesn't exist yet</p>
+        <p className="text-xs text-faint-foreground">Doesn't exist yet</p>
       )}
-    </div>
+    </CardGroupRow>
   );
 }

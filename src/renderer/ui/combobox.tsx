@@ -1,9 +1,51 @@
 import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
+import type { VariantProps } from "class-variance-authority";
 import { CheckIcon, ChevronDownIcon, XIcon } from "lucide-react";
 import { cn } from "../lib/cn";
 import { Button } from "./button";
+import { defaultTriggerSize, selectTriggerVariants } from "./select";
 
 const Combobox = ComboboxPrimitive.Root;
+
+// className is a string: cn can't merge Base UI's state callback.
+type TriggerProps = Omit<ComboboxPrimitive.Trigger.Props, "className"> & {
+  className?: string;
+} & VariantProps<typeof selectTriggerVariants>;
+
+/**
+ * A button that opens the list, for a combobox used as a picker whose list
+ * filters itself. It takes the Select trigger's looks: `ghost-picker` for the
+ * composer's pickers, `outline-sm` for 24px outlined ones. Put a ComboboxValue
+ * inside it, and name it with aria-label.
+ */
+function ComboboxTrigger({ className, variant, size, children, ...props }: TriggerProps) {
+  return (
+    <ComboboxPrimitive.Trigger
+      data-slot="combobox-trigger"
+      className={cn(
+        selectTriggerVariants({ variant, size: size ?? defaultTriggerSize(variant) }),
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <ComboboxPrimitive.Icon className="flex">
+        <ChevronDownIcon aria-hidden />
+      </ComboboxPrimitive.Icon>
+    </ComboboxPrimitive.Trigger>
+  );
+}
+
+type ValueProps = ComboboxPrimitive.Value.Props & { className?: string };
+
+// Base UI's Value renders no element of its own, so the span is the one that truncates.
+function ComboboxValue({ className, ...props }: ValueProps) {
+  return (
+    <span data-slot="combobox-value" className={cn("min-w-0 flex-1 truncate text-left", className)}>
+      <ComboboxPrimitive.Value {...props} />
+    </span>
+  );
+}
 
 // className is a string: cn can't merge Base UI's state callback.
 type InputProps = Omit<ComboboxPrimitive.Input.Props, "className"> & {
@@ -29,7 +71,7 @@ function ComboboxInput({
     <ComboboxPrimitive.InputGroup
       data-slot="combobox-input-group"
       className={cn(
-        "flex h-8 w-full min-w-0 items-center gap-0.5 rounded-control border border-input bg-transparent text-sm transition-colors app-no-drag has-[button]:pr-1 has-[input:disabled]:opacity-50 has-[input:focus-visible]:focus-ring dark:bg-input/30",
+        "flex h-7 w-full min-w-0 items-center gap-0.5 rounded-control border border-input bg-subtle text-sm transition-colors app-no-drag has-[button]:pr-1 has-[input:disabled]:opacity-50 has-[input:focus-visible]:focus-ring",
         className,
       )}
     >
@@ -118,7 +160,7 @@ function ComboboxItem({ className, children, ...props }: ItemProps) {
     <ComboboxPrimitive.Item
       data-slot="combobox-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-2 rounded-[calc(var(--control-radius)-4px)] py-1.5 pr-8 pl-2 outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative flex w-full cursor-default items-center gap-2 rounded-[calc(var(--control-radius)-4px)] py-1.5 pr-8 pl-2 outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -144,7 +186,7 @@ function ComboboxGroupLabel({ className, ...props }: GroupLabelProps) {
   return (
     <ComboboxPrimitive.GroupLabel
       data-slot="combobox-group-label"
-      className={cn("px-2 py-1.5 text-xs font-medium text-muted-foreground", className)}
+      className={cn("px-2 py-1.5 text-2xs font-medium text-faint-foreground", className)}
       {...props}
     />
   );
@@ -186,6 +228,8 @@ function ComboboxSeparator({ className, ...props }: SeparatorProps) {
 export {
   Combobox,
   ComboboxInput,
+  ComboboxTrigger,
+  ComboboxValue,
   ComboboxContent,
   ComboboxList,
   ComboboxItem,

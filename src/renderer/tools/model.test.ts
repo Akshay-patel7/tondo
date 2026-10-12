@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { AssistantMessage, PiMessage, ToolResultMessage, ToolRun } from "../../shared/thread";
 import {
+  callMeta,
   callOutput,
   callStatus,
   editPatch,
+  formatDuration,
   lastLines,
   MAX_SUBJECT_CHARS,
   outputText,
@@ -11,8 +13,10 @@ import {
   readsFromStart,
   splitReadNote,
   summarizeCall,
-  timelineRows,
+  testVerdict,
   toolResults,
+  toolVerb,
+  workLogDuration,
   type ToolCall,
 } from "./model";
 
@@ -35,36 +39,26 @@ function assistant(...content: AssistantMessage["content"]): AssistantMessage {
   };
 }
 
-function result(id: string, text: string, isError = false): ToolResultMessage {
+function result(id: string, text: string, isError = false, timestamp = 0): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId: id,
     toolName: "bash",
     content: [{ type: "text", text }],
     isError,
-    timestamp: 0,
+    timestamp,
   };
 }
 
 const user: PiMessage = { role: "user", content: "Go.", timestamp: 0 };
 
-describe("timelineRows", () => {
-  test("a result shows in its call's card, not as a row", () => {
-    const messages: PiMessage[] = [
-      user,
-      assistant(call("bash", { command: "ls" }, "a"), call("read", { path: "x" }, "b")),
-      result("a", "x"),
-      result("b", "contents"),
-      assistant({ type: "text", text: "Done." }),
-    ];
+/** A faint figure, as callMeta gives for counts. */
+const faint = (text: string) => ({ kind: "text", text, tone: "faint" });
 
-    expect(timelineRows(messages)).toEqual([0, 1, 4]);
-  });
-
-  test("a result whose call isn't in the transcript keeps its row", () => {
-    expect(timelineRows([user, result("gone", "output")])).toEqual([0, 1]);
-  });
-});
+/** `output` as a finished call's result, for callMeta. */
+function done(text: string) {
+  return { status: "done" as const, output: { content: [{ type: "text" as const, text }] } };
+}
 
 describe("toolResults", () => {
   test("finds each result by its call's id, once per messages array", () => {
@@ -161,22 +155,27 @@ describe("summarizeCall", () => {
   test("names what each built-in tool works on", () => {
     expect(summarizeCall(call("bash", { command: "pnpm test" }))).toEqual({
       subject: "pnpm test",
+      within: null,
       detail: null,
     });
     expect(summarizeCall(call("read", { path: "a.ts", offset: 10, limit: 5 }))).toEqual({
       subject: "a.ts",
+      within: null,
       detail: "lines 10–14",
     });
     expect(summarizeCall(call("read", { path: "a.ts", offset: 10 })).detail).toBe("from line 10");
     expect(summarizeCall(call("write", { path: "b.ts", content: "x\ny\n" }))).toEqual({
       subject: "b.ts",
+      within: null,
       detail: "2 lines",
     });
     expect(summarizeCall(call("grep", { pattern: "TODO", path: "src" }))).toEqual({
       subject: "TODO",
-      detail: "in src",
+      within: "src",
+      detail: null,
     });
-    expect(summarizeCall(call("ls", {}))).toEqual({ subject: ".", detail: null });
+    expect(summarizeCall(call("find", { pattern: "*.ts", glob: "src/**" })).within).toBe("src/**");
+    expect(summarizeCall(call("ls", {}))).toEqual({ subject: ".", within: null, detail: null });
   });
 
   test("shows an extension tool's arguments as they are", () => {
@@ -191,8 +190,140 @@ describe("summarizeCall", () => {
   test("ignores arguments of the wrong type", () => {
     expect(summarizeCall(call("read", { path: 7, offset: "10" }))).toEqual({
       subject: "",
+      within: null,
       detail: null,
     });
+  });
+});
+
+describe("toolVerb", () => {
+  test("gives the built-in tools the design's verbs and an extension's tool its name", () => {
+    expect(
+      ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"].map(toolVerb),
+    ).toEqual(["Read", "Search", "Search", "List", "Edit", "Write", "Run", "Run"]);
+    expect(toolVerb("word_count")).toBe("word_count");
+  });
+});
+
+describe("callMeta", () => {
+  test("counts what a finished call read, found or listed", () => {
+    const read = call("read", { path: "a.ts" });
+    expect(callMeta({ call: read, patch: undefined, ...done("a\nb\nc\n") })).toEqual(
+      faint("3 lines"),
+    );
+    // read's note on how to read on isn't part of the file.
+    expect(
+      callMeta({
+        call: read,
+        patch: undefined,
+        ...done("a\n\n[120 more lines in file. Use offset=2 to continue.]"),
+      }),
+    ).toEqual(faint("1 line"));
+    const grep = call("grep", { pattern: "x" });
+    expect(
+      callMeta({
+        call: grep,
+        patch: undefined,
+        ...done("a.ts:1: x\na.ts-2- context\nb.ts:9: x\n\n[100 matches limit reached]"),
+      }),
+    ).toEqual(faint("2 matches"));
+    expect(callMeta({ call: grep, patch: undefined, ...done("No matches found") })).toEqual(
+      faint("0 matches"),
+    );
+    expect(
+      callMeta({ call: call("find", { pattern: "*.ts" }), patch: undefined, ...done("a.ts\n") }),
+    ).toEqual(faint("1 file"));
+    expect(
+      callMeta({
+        call: call("ls", {}),
+        patch: undefined,
+        ...done("a.ts\nsrc/\n\n[500 entries limit reached]"),
+      }),
+    ).toEqual(faint("2 entries"));
+  });
+
+  test("shows an edit's patch stats and a test runner's verdict", () => {
+    const patch = "--- a\n+++ a\n@@ -1 +1,2 @@\n-x\n+y\n+z\n";
+    expect(
+      callMeta({ call: call("edit", { path: "a" }), patch, ...done("Successfully replaced") }),
+    ).toEqual({ kind: "stats", additions: 2, deletions: 1 });
+    expect(
+      callMeta({
+        call: call("bash", { command: "pnpm test" }),
+        patch: undefined,
+        ...done(" Test Files  3 passed (3)\n      Tests  42 passed (42)\n"),
+      }),
+    ).toEqual({ kind: "text", text: "42 passed", tone: "success" });
+  });
+
+  test("falls back to what the arguments say until the call has finished", () => {
+    const read = call("read", { path: "a.ts", offset: 10, limit: 5 });
+    expect(callMeta({ call: read, status: "running", output: null, patch: undefined })).toEqual(
+      faint("lines 10–14"),
+    );
+    expect(
+      callMeta({
+        call: call("grep", { pattern: "x" }),
+        status: "running",
+        output: null,
+        patch: undefined,
+      }),
+    ).toBeNull();
+    expect(
+      callMeta({
+        call: call("write", { path: "b.ts", content: "x\ny\n" }),
+        patch: undefined,
+        ...done("Successfully wrote to b.ts"),
+      }),
+    ).toEqual(faint("2 lines"));
+    expect(
+      callMeta({ call: call("bash", { command: "ls" }), patch: undefined, ...done("a\nb\n") }),
+    ).toBeNull();
+  });
+});
+
+describe("testVerdict", () => {
+  test("reads the runners' totals, with failures first", () => {
+    expect(testVerdict("Tests:       3 passed, 3 total\n")?.text).toBe("3 passed");
+    expect(testVerdict("===== 42 passed in 1.2s =====")?.text).toBe("42 passed");
+    expect(testVerdict("  41 passing\n  1 failing\n")).toEqual({
+      kind: "text",
+      text: "1 failed",
+      tone: "failure",
+    });
+    expect(testVerdict("test result: ok. 42 passed; 0 failed")?.text).toBe("42 passed");
+    expect(testVerdict("29 total\n")).toBeNull();
+  });
+});
+
+describe("workLogDuration and formatDuration", () => {
+  const calls = [call("bash", {}, "a"), call("read", {}, "b")];
+
+  test("spans from the message's stamp to the last result's", () => {
+    const results = new Map([
+      ["a", result("a", "x", false, 1_500)],
+      ["b", result("b", "y", false, 4_200)],
+    ]);
+    expect(workLogDuration(1_000, calls, results)).toBe(3_200);
+  });
+
+  test("is null until every call has a result, or when the stamps don't add up", () => {
+    const one = new Map([["a", result("a", "x", false, 1_500)]]);
+    expect(workLogDuration(1_000, calls, one)).toBeNull();
+    const early = new Map([
+      ["a", result("a", "x", false, 900)],
+      ["b", result("b", "y", false, 4_200)],
+    ]);
+    expect(workLogDuration(1_000, calls, early)).toBeNull();
+    expect(workLogDuration(undefined, calls, early)).toBeNull();
+  });
+
+  test("formats whole seconds, minutes and hours", () => {
+    expect(formatDuration(160)).toBe("1s");
+    expect(formatDuration(8_000)).toBe("8s");
+    expect(formatDuration(72_000)).toBe("1m 12s");
+    expect(formatDuration(120_000)).toBe("2m");
+    expect(formatDuration(3_720_000)).toBe("1h 2m");
   });
 });
 

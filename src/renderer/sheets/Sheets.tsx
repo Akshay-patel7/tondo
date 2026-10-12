@@ -69,8 +69,8 @@ function Sheet({
 /** A heading and the rows under it. */
 function Rows({ heading, children }: { heading: string; children: ReactNode }) {
   return (
-    <section className="not-first:mt-5">
-      <h3 className="text-xs font-medium text-muted-foreground">{heading}</h3>
+    <section className="not-first:mt-6">
+      <h3 className="text-2xs font-medium text-faint-foreground">{heading}</h3>
       {/* 8rem holds the widest keys, "Enter or 1 to 9", so every section's text starts in line. */}
       <dl className="mt-2 grid grid-cols-[minmax(8rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
         {children}
@@ -96,7 +96,7 @@ function FilePath({ path }: { path: string }) {
     <span className="flex items-start gap-2">
       {/* A 20px line, like the label beside it, so their first lines share a baseline. */}
       <span className="min-w-0 flex-1 font-mono text-xs/5 break-all">{path}</span>
-      <Button variant="link" size="xs" className="-my-0.5" onClick={() => revealFile(path)}>
+      <Button variant="neutral" size="sm" className="-my-0.5" onClick={() => revealFile(path)}>
         {REVEAL}
       </Button>
     </span>
@@ -163,7 +163,7 @@ function TrustSheet({ project, trust }: { project: string; trust: TrustInfo }) {
         asked ? (
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="neutral"
               aria-pressed={trust.trusted === false}
               onClick={() => answerFromSheet(false)}
             >
@@ -176,7 +176,7 @@ function TrustSheet({ project, trust }: { project: string; trust: TrustInfo }) {
         ) : null
       }
     >
-      <p className="font-mono text-xs break-all text-muted-foreground">{project}</p>
+      <p className="font-mono text-xs break-all text-faint-foreground">{project}</p>
       <p className="mt-3">{trustText(trust)}</p>
       {asked ? (
         <p className="mt-2 text-muted-foreground">

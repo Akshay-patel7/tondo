@@ -1,10 +1,13 @@
 // One thread with the real pi, offline with the faux model: prompts, stopping,
-// the queue, the model picker, retries, project trust, and pi crashing.
+// the queue, the model picker, retries, project trust, pi crashing, and the
+// turn summary's way to the Changes panel.
 import { expect, test, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FauxScript } from "../scripts/fixtures/faux-ext";
+import { chordLabel } from "../src/shared/shortcuts";
 import { bringToFront, type Tondo } from "./launch";
 import {
   addProject,
@@ -17,6 +20,7 @@ import {
   recordStatuses,
   reply,
   send,
+  toolCalls,
   waitForFileCommand,
   waitForIdle,
   waitForPi,
@@ -140,11 +144,14 @@ test("thinking animates only until the answer starts and respects reduced motion
   await send(page, "Think then answer.");
   const thinking = page.locator("[data-streaming] summary span");
   await expect(thinking).toHaveCSS("animation-name", "pulse");
+  // The placeholder names the follow-up chord the way the platform writes it.
+  const queue = chordLabel(
+    { key: "enter", mod: false, shift: false, alt: true },
+    process.platform === "darwin",
+  );
   await expect(composer(page)).toHaveAttribute(
     "aria-placeholder",
-    process.platform === "darwin"
-      ? "Steer pi with Return, or queue a follow-up with Option+Return"
-      : "Steer pi with Enter, or queue a follow-up with Alt+Enter",
+    `Steer pi, or ${queue} to queue a follow-up`,
   );
   await page.screenshot({ path: test.info().outputPath("thinking-active.png") });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -291,6 +298,56 @@ test("a project that needs trust asks first, and Tondo remembers the answer", as
   await expect(question).not.toBeAttached();
 });
 
+test("a turn that changed files sums them up, and View diff opens the Changes panel on that turn", async () => {
+  // Checkpoints need a repository, so the panel can show each turn's diff.
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: project, encoding: "utf8", stdio: "pipe" });
+  writeFileSync(path.join(project, "notes.md"), "# Notes\n\nfirst\n");
+  writeFileSync(path.join(project, "other.md"), "# Other\n\nalpha\n");
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-qm", "fixture");
+  const page = await start({
+    responses: [
+      editCall("edit_notes", "notes.md", "first\n", "first\nsecond\n"),
+      reply("Edited notes."),
+      editCall("edit_other", "other.md", "alpha\n", "alpha\nbeta\n"),
+      reply("Edited other."),
+    ],
+  });
+  await send(page, "Add a line to notes.");
+  await expect(page.getByText("Edited notes.")).toBeVisible();
+  await waitForIdle(page);
+  await send(page, "Add a line to other.");
+  await expect(page.getByText("Edited other.")).toBeVisible();
+  await waitForIdle(page);
+
+  // Each turn that changed a file sums its changes up under its reply, once it's over.
+  const firstTurn = row(page, 1);
+  await expect(firstTurn).toContainText("1 file changed");
+  await expect(firstTurn).toContainText("+1 −0");
+  await expect(page.getByRole("button", { name: "View diff" })).toHaveCount(2);
+  await page.screenshot({
+    path: test.info().outputPath("turn-summary.png"),
+    animations: "disabled",
+  });
+
+  // The first turn's View diff opens the panel on the first checkpoint, not the latest.
+  await firstTurn.getByRole("button", { name: "View diff" }).click();
+  const panel = page.getByRole("complementary", { name: "Turn changes" });
+  await expect(panel).toBeVisible();
+  await expectPicked(page, "Checkpoint turn", "1");
+  await expect(panel.getByRole("button", { name: "Show diff for notes.md" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Show diff for other.md" })).toHaveCount(0);
+  await expect(panel.locator("diffs-container")).toContainText("second");
+
+  // The second turn's, in the row after its prompt, switches the panel to its checkpoint.
+  await row(page, 5).getByRole("button", { name: "View diff" }).click();
+  await expectPicked(page, "Checkpoint turn", "2");
+  await expect(panel.getByRole("button", { name: "Show diff for other.md" })).toBeVisible();
+  await expect(panel.locator("diffs-container")).toContainText("beta");
+});
+
 test("after pi crashes, a restart brings the thread back", async () => {
   const page = await start({ responses: [reply("Hello.")] });
   await send(page, "Hi.");
@@ -316,9 +373,14 @@ test("after pi crashes, a restart brings the thread back", async () => {
   await expect(row(page, 3)).toHaveText("Hello.");
 });
 
-/** The timeline's row at `index`, counting from the first message. */
+/** The timeline's row that starts at message `index`, counting from the first message. */
 function row(page: Page, index: number) {
   return page.locator(`[data-index="${index}"]`);
+}
+
+/** A reply that edits `file`, replacing `oldText` with `newText`. */
+function editCall(id: string, file: string, oldText: string, newText: string) {
+  return toolCalls({ id, name: "edit", arguments: { path: file, edits: [{ oldText, newText }] } });
 }
 
 /** The text of each row on the page, in the timeline's order, which the DOM's order needn't follow. */

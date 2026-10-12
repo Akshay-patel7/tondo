@@ -1,126 +1,66 @@
-import { CircleAlert, CircleCheck, FolderPlus, MessageSquarePlus, Plus } from "lucide-react";
-import type { PiProblem } from "../../shared/protocol";
-import { addProject, choosePiPath, newThread, revealFile, useHost } from "../connection";
-import { folderName } from "../format";
+import { CircleAlert, Plus } from "lucide-react";
+import { addProject, revealFile, useHost } from "../connection";
 import { isMac } from "../platform";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 
-/** What the window shows when no thread is open: a welcome until you add a project. */
+import { Home } from "./Home";
+
 export function NoThread() {
-  // The page can't ask the host for anything until main hands it a port.
+  const hasProjects = useHost((host) => host.projects.length > 0);
   const connected = useHost((host) => host.connection === "connected");
-  const project = useHost((host) => host.projects[0]);
-  // The welcome is one layer of its own, sized to it, rather than part of the
-  // window-wide tiles. Larger or more layers here leave the GPU process holding
-  // more raster memory when the first thread opens.
-  return (
+  return hasProjects ? (
+    <Home />
+  ) : (
     <main className="flex min-h-0 flex-1">
       <Empty>
-        <div className="flex w-full max-w-sm flex-col items-center gap-6 will-change-transform">
+        <div className="flex w-full max-w-sm flex-col items-center gap-4 will-change-transform">
           <EmptyHeader>
-            <EmptyMedia variant="icon">
-              {project ? <MessageSquarePlus /> : <FolderPlus />}
-            </EmptyMedia>
             <EmptyTitle>
-              <h1>{project ? "No thread open" : "Welcome to Tondo"}</h1>
+              <h1>Add a project</h1>
             </EmptyTitle>
-            <EmptyDescription>
-              {project
-                ? "Open a thread from the sidebar, or start a new one."
-                : "Add a project folder to work with pi there."}
-            </EmptyDescription>
+            <EmptyDescription>Choose a folder to start working with pi.</EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button
-              disabled={!connected}
-              onClick={project ? () => newThread(project.id) : addProject}
-            >
-              <Plus data-icon="inline-start" aria-hidden />
-              {project ? `New thread in ${folderName(project.path)}` : "Add project…"}
-            </Button>
-            {project ? null : <PiStatus connected={connected} />}
-          </EmptyContent>
+          <Button disabled={!connected} onClick={addProject}>
+            <Plus aria-hidden />
+            Add project…
+          </Button>
+          <SettingsAlerts />
         </div>
       </Empty>
     </main>
   );
 }
 
-function missing(problem: PiProblem): string {
-  switch (problem.kind) {
-    case "not-found":
-      return "pi isn't installed.";
-    case "too-old":
-      return `Found pi ${problem.version}, and Tondo needs ${problem.required} or newer.`;
-    case "invalid":
-      return "Tondo can't run the pi it found.";
-  }
-}
-
-/** Which pi Tondo would run, or why it has none, before any thread starts one. */
-function PiStatus({ connected }: { connected: boolean }) {
-  const pi = useHost((host) => host.piEnv);
+function SettingsAlerts() {
   const settingsError = useHost((host) => host.settingsError);
   const settingsFileError = useHost((host) => host.settingsFileError);
   const settingsFile = useHost((host) => host.settingsFilePath);
-  // The line keeps its height while the host looks for pi, so the welcome doesn't shift.
-  if (pi === null) return <div className="h-6" />;
-  // A settings.json Tondo can't read is the file's problem, whether or not pi is found.
-  const fileAlert = settingsFileError ? (
-    <Alert variant="destructive" role="alert">
-      <CircleAlert aria-hidden />
-      <AlertTitle>Tondo can't use its settings file</AlertTitle>
-      <AlertDescription className="break-words">
-        {settingsFileError}{" "}
-        {settingsFile === null ? null : (
-          <Button
-            variant="link"
-            size="xs"
-            className="-ml-2"
-            onClick={() => revealFile(settingsFile)}
-          >
-            {isMac ? "Show in Finder" : "Show in folder"}
-          </Button>
-        )}
-      </AlertDescription>
-    </Alert>
-  ) : null;
-  if (pi.state === "found")
-    return (
-      <>
-        <p className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
-          <CircleCheck aria-hidden className="size-3.5 text-success" />
-          Found pi {pi.version} {pi.source === "path" ? "on your PATH" : "at the path in Settings"}.
-        </p>
-        {fileAlert}
-      </>
-    );
+  if (settingsFileError === null && settingsError === null) return null;
   return (
-    <>
-      <div className="flex min-h-6 flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <CircleAlert aria-hidden className="size-3.5 text-warning" />
-        <span>{missing(pi.problem)}</span>
-        <Button variant="outline" size="xs" disabled={!connected} onClick={choosePiPath}>
-          Choose pi…
-        </Button>
-      </div>
-      {fileAlert}
-      {settingsError ? (
+    <div className="flex flex-col gap-2">
+      {settingsFileError === null ? null : (
+        <Alert variant="destructive" role="alert">
+          <CircleAlert aria-hidden />
+          <AlertTitle>Tondo can't use its settings file</AlertTitle>
+          <AlertDescription className="break-words">
+            {settingsFileError}{" "}
+            {settingsFile === null ? null : (
+              <Button variant="link" size="xs" onClick={() => revealFile(settingsFile)}>
+                {isMac ? "Show in Finder" : "Show in folder"}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+      {settingsError === null ? null : (
         <Alert variant="destructive" role="alert">
           <CircleAlert aria-hidden />
           <AlertTitle>Tondo didn't save that change</AlertTitle>
           <AlertDescription className="break-words">{settingsError}</AlertDescription>
         </Alert>
-      ) : null}
-    </>
+      )}
+    </div>
   );
 }

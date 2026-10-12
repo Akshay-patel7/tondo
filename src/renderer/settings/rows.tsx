@@ -1,66 +1,67 @@
-// What every settings section is made of: a heading, cards of rows, and rows
-// with a title, one sentence and a control, as in T3 Code's settings.
+// What every settings section is made of besides its heading, which
+// SettingsPage draws: cards of rows (ui/card-group), each row a title, one
+// sentence and a control, and the smaller headings and notes between cards.
 import type { ReactNode } from "react";
+import {
+  CardGroupRow,
+  CardGroupRowDescription,
+  CardGroupRowText,
+  CardGroupRowTitle,
+} from "../ui/card-group";
 
-/** A section's heading, and the sentence that says what it's for. */
-export function SectionHeading({ title, description }: { title: string; description?: string }) {
+/** One setting in a CardGroup: its title and a sentence on the left, its control on the right. */
+export function SettingsRow({
+  title,
+  titleId,
+  description,
+  descriptionId,
+  control,
+}: {
+  title: ReactNode;
+  /** For a control that takes its name from the title, such as a segmented control. */
+  titleId?: string;
+  description?: ReactNode;
+  /** For a control that the sentence describes. */
+  descriptionId?: string;
+  control?: ReactNode;
+}) {
   return (
-    <div className="flex flex-col gap-1">
-      <h2 className="text-base font-semibold">{title}</h2>
-      {description === undefined ? null : (
-        <p className="text-sm text-muted-foreground">{description}</p>
+    <CardGroupRow>
+      <CardGroupRowText className="min-w-55">
+        <CardGroupRowTitle id={titleId}>{title}</CardGroupRowTitle>
+        {description === undefined ? null : (
+          <CardGroupRowDescription id={descriptionId}>{description}</CardGroupRowDescription>
+        )}
+      </CardGroupRowText>
+      {control === undefined ? null : (
+        <div className="flex shrink-0 items-center gap-2">{control}</div>
       )}
-    </div>
+    </CardGroupRow>
   );
 }
 
 /** A smaller heading inside a section, over its own card. */
-export function GroupHeading({ title, description }: { title: string; description?: string }) {
+export function SubHeading({ title, description }: { title: string; description?: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <h3 className="text-sm font-medium">{title}</h3>
+      <h3 className="font-medium">{title}</h3>
       {description === undefined ? null : (
-        <p className="text-xs text-muted-foreground">{description}</p>
+        <p className="text-xs text-faint-foreground">{description}</p>
       )}
     </div>
   );
 }
 
-/** A card of rows with a line between each. */
-export function SettingsGroup({ children }: { children: ReactNode }) {
+/** A sentence under a section's card. */
+export function Footnote({ id, children }: { id?: string; children: ReactNode }) {
   return (
-    <div className="divide-y divide-border rounded-panel border border-border bg-card">
+    <p id={id} className="text-xs text-faint-foreground">
       {children}
-    </div>
+    </p>
   );
 }
 
-/** One setting: its title and a sentence on the left, its control on the right. */
-export function SettingsRow({
-  title,
-  description,
-  control,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  control?: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3.5">
-      <div className="flex min-w-56 flex-1 flex-col gap-1">
-        <div className="text-sm font-medium">{title}</div>
-        {description === undefined ? null : (
-          <p className="text-xs text-muted-foreground">{description}</p>
-        )}
-      </div>
-      {control === undefined ? null : (
-        <div className="flex shrink-0 items-center gap-2">{control}</div>
-      )}
-    </div>
-  );
-}
-
-/** What a section shows until the host has sent the settings. */
+/** What a section shows until the host has sent what it needs. */
 export function Loading({ children }: { children: string }) {
-  return <p className="text-sm text-muted-foreground">{children}</p>;
+  return <p className="text-muted-foreground">{children}</p>;
 }

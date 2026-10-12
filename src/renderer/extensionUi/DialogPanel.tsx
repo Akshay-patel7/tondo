@@ -39,20 +39,21 @@ function Dialog({ dialog, waiting }: { dialog: ExtensionDialog; waiting: number 
   const cancel = () => answer({ cancelled: true });
   const message = dialog.method === "confirm" ? dialog.message : "";
   return (
-    // The card gets its own raster layer, like the composer card it stands in for.
+    // The card gets its own raster layer, like the composer card it stands in
+    // for, and takes that card's look: --card on an --input edge, 16 px corners.
     <section
       role="dialog"
       aria-labelledby={titleId}
       aria-describedby={message ? messageId : undefined}
       data-dialog={dialog.method}
-      className="rounded-panel border border-border bg-card px-4 pt-3.5 pb-3 shadow-composer will-change-transform"
+      className="rounded-panel border border-input bg-card px-4 py-3 shadow-composer will-change-transform"
     >
       <div className="flex items-start gap-3">
         {/* The countdown is part of the title, so the dialog's name says the time left. */}
         <h2 id={titleId} className="min-w-0 flex-1 font-medium break-words whitespace-pre-line">
           {dialog.title}
           {secondsLeft === null ? null : (
-            <span className="font-normal text-muted-foreground tabular-nums">
+            <span className="font-normal text-faint-foreground tabular-nums">
               {" "}
               ({secondsLeft}s)
             </span>
@@ -65,10 +66,7 @@ function Dialog({ dialog, waiting }: { dialog: ExtensionDialog; waiting: number 
         ) : null}
       </div>
       {message ? (
-        <p
-          id={messageId}
-          className="mt-1 text-sm break-words whitespace-pre-line text-muted-foreground"
-        >
+        <p id={messageId} className="mt-1 break-words whitespace-pre-line text-muted-foreground">
           {message}
         </p>
       ) : null}
@@ -153,7 +151,7 @@ function Choices({
             aria-selected={index === highlighted}
             onPointerMove={() => setHighlighted(index)}
             onClick={() => onPick(option)}
-            className={`flex items-center gap-3 rounded-control px-2.5 py-1.5 text-sm ${
+            className={`flex min-h-7 items-center gap-3 rounded-control px-2.5 py-1 ${
               index === highlighted ? "bg-accent text-accent-foreground" : ""
             }`}
           >
@@ -167,7 +165,7 @@ function Choices({
           </div>
         ))}
       </div>
-      <div className="mt-2.5">
+      <div className="mt-3">
         <Hint>
           <Kbd>↑</Kbd> <Kbd>↓</Kbd> to move · <Kbd>Enter</Kbd> or a number to pick · <Kbd>Esc</Kbd>{" "}
           to cancel
@@ -242,7 +240,7 @@ function TextAnswer({
           className="mt-2"
         />
       )}
-      <div className="mt-2.5 flex items-center gap-2">
+      <div className="mt-3 flex items-center gap-2">
         <Hint>
           <Kbd>Enter</Kbd> to submit
           {multiline ? (
@@ -254,12 +252,10 @@ function TextAnswer({
           · <Kbd>Esc</Kbd> to cancel
         </Hint>
         <div className="ml-auto flex shrink-0 gap-2">
-          <Button variant="outline" size="sm" onClick={onCancel}>
+          <Button variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button size="sm" onClick={() => onSubmit(value)}>
-            Submit
-          </Button>
+          <Button onClick={() => onSubmit(value)}>Submit</Button>
         </div>
       </div>
     </>
@@ -267,7 +263,7 @@ function TextAnswer({
 }
 
 function Hint({ children }: { children: ReactNode }) {
-  return <p className="text-xs text-muted-foreground">{children}</p>;
+  return <p className="text-2xs text-faint-foreground">{children}</p>;
 }
 
 /**

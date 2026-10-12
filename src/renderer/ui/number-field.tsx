@@ -28,13 +28,15 @@ type NumberFieldGroupProps = Omit<NumberFieldPrimitive.Group.Props, "className">
   className?: string;
 };
 
-// The group draws the field, so the focus ring wraps the buttons with the input.
+// A stepper: a 30px minus, a 44px value between two dividers, a 30px plus,
+// inside one --input edge. The group draws the field, so the focus ring wraps
+// the buttons with the input.
 function NumberFieldGroup({ className, ...props }: NumberFieldGroupProps) {
   return (
     <NumberFieldPrimitive.Group
       data-slot="number-field-group"
       className={cn(
-        "relative flex h-8 w-full rounded-control border border-input bg-transparent text-sm transition-colors has-aria-invalid:border-destructive has-[input:disabled]:cursor-not-allowed has-[input:disabled]:bg-input/50 has-[input:disabled]:opacity-50 has-[input:focus-visible]:focus-ring dark:bg-input/30 dark:has-[input:disabled]:bg-input/80",
+        "relative flex h-7.5 w-fit items-stretch rounded-control border border-input bg-transparent text-sm has-aria-invalid:border-destructive has-[input:disabled]:cursor-not-allowed has-[input:disabled]:opacity-50 has-[input:focus-visible]:focus-ring",
         className,
       )}
       {...props}
@@ -51,7 +53,7 @@ function NumberFieldInput({ className, ...props }: NumberFieldInputProps) {
     <NumberFieldPrimitive.Input
       data-slot="number-field-input"
       className={cn(
-        "w-full min-w-0 flex-1 bg-transparent px-1 text-center tabular-nums outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
+        "w-11 min-w-0 border-x border-border bg-transparent px-1 text-center tabular-nums outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
         className,
       )}
       {...props}
@@ -64,7 +66,7 @@ function NumberFieldInput({ className, ...props }: NumberFieldInputProps) {
 // its end of the range. When a screen has more than one field, pass an
 // aria-label that names the field too.
 const stepperClasses =
-  "flex w-8 shrink-0 items-center justify-center text-muted-foreground transition-colors outline-none data-disabled:opacity-50 [&:not([data-disabled])]:hover:bg-accent [&:not([data-disabled])]:hover:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:size-3.5";
+  "flex w-7.5 shrink-0 items-center justify-center text-muted-foreground outline-none data-disabled:opacity-50 [&:not([data-disabled])]:hover:bg-accent [&:not([data-disabled])]:hover:text-foreground [&_svg]:pointer-events-none [&_svg]:size-3.5";
 
 type NumberFieldDecrementProps = Omit<
   NumberFieldPrimitive.Decrement.Props,

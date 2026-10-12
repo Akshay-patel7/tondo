@@ -1,6 +1,6 @@
-// What a tool card shows about a call, worked out from pi's messages. The
+// What a work log row shows about a call, worked out from pi's messages. The
 // built-in tools' arguments and results are the ones pi 0.87.1 documents and
-// sends. Anything else is a tool from an extension, and its card shows the
+// sends. Anything else is a tool from an extension, and its row shows the
 // arguments and result as they are.
 import type {
   AssistantMessage,
@@ -32,25 +32,6 @@ export function toolResults(
     resultIndexes.set(messages, index);
   }
   return index;
-}
-
-/**
- * The indexes of the messages the timeline shows as rows. A tool result
- * shows inside its call's card, so it gets no row of its own, unless its
- * call isn't in the transcript.
- */
-export function timelineRows(messages: readonly PiMessage[]): number[] {
-  const calls = new Set<string>();
-  const rows: number[] = [];
-  messages.forEach((message, index) => {
-    if (message.role === "assistant") {
-      for (const block of message.content) if (block.type === "toolCall") calls.add(block.id);
-    } else if (message.role === "toolResult" && calls.has(message.toolCallId)) {
-      return;
-    }
-    rows.push(index);
-  });
-  return rows;
 }
 
 /**
@@ -112,6 +93,155 @@ export function lastLines(text: string, count: number): string {
   return lines.slice(-count).join("\n");
 }
 
+/**
+ * The verb a work log row shows for a call. The built-in tools get the
+ * verbs the design names. An extension's tool shows its own name, which
+ * nothing else describes.
+ */
+export function toolVerb(name: string): string {
+  switch (name) {
+    case "read":
+      return "Read";
+    case "grep":
+    case "find":
+      return "Search";
+    case "ls":
+      return "List";
+    case "edit":
+      return "Edit";
+    case "write":
+      return "Write";
+    case "bash":
+    case "powershell":
+      return "Run";
+    default:
+      return name;
+  }
+}
+
+/**
+ * The figure at the end of a work log row: a count of what the call found or
+ * changed, or a test runner's verdict. Counts come from the call's real
+ * output, so a call that hasn't finished shows what its arguments say, if
+ * anything, as the card's header did before.
+ */
+export type CallMeta =
+  | { readonly kind: "text"; readonly text: string; readonly tone: "faint" | "success" | "failure" }
+  | { readonly kind: "stats"; readonly additions: number; readonly deletions: number };
+
+type TextMeta = Extract<CallMeta, { kind: "text" }>;
+
+function faint(text: string | null): TextMeta | null {
+  return text === null ? null : { kind: "text", text, tone: "faint" };
+}
+
+function counted(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** The lines of a listing, without pi's bracketed notices and its "nothing found" line. */
+function listedLines(text: string): number {
+  return text
+    .split("\n")
+    .filter((line) => line !== "" && !line.startsWith("[") && !line.startsWith("No ")).length;
+}
+
+/** How many matches grep printed: one "path:line: text" line each. Context lines use "-". */
+function grepMatches(text: string): number {
+  return text.split("\n").filter((line) => /^.+:\d+: /.test(line)).length;
+}
+
+/** How many lines of a command's output to look at for a test runner's verdict. */
+const VERDICT_LINES = 20;
+
+/**
+ * A test runner's verdict from the end of a command's output, such as
+ * vitest's "Tests  42 passed (42)", jest's "Tests: 42 passed, 42 total",
+ * pytest's "42 passed in 1.2s" or mocha's "42 passing". The last count wins,
+ * since runners print their file totals before their test totals. A failure
+ * count outranks a pass count.
+ */
+export function testVerdict(text: string): TextMeta | null {
+  const tail = lastLines(text, VERDICT_LINES);
+  const failed = [...tail.matchAll(/\b(\d+) (?:failed|failing)\b/g)].at(-1);
+  if (failed && Number(failed[1]) > 0) {
+    return { kind: "text", text: `${failed[1]} failed`, tone: "failure" };
+  }
+  const passed = [...tail.matchAll(/\b(\d+) (?:passed|passing)\b/g)].at(-1);
+  return passed ? { kind: "text", text: `${passed[1]} passed`, tone: "success" } : null;
+}
+
+export function callMeta({
+  call,
+  status,
+  output,
+  patch,
+}: {
+  call: ToolCall;
+  status: CallStatus;
+  output: ToolOutput | null;
+  /** The unified patch an edit reported, if it has. */
+  patch: string | undefined;
+}): CallMeta | null {
+  const { detail } = summarizeCall(call);
+  const finished = status === "done" && output !== null;
+  const text = finished ? outputText(output.content) : "";
+  switch (call.name) {
+    case "edit":
+      return patch === undefined ? null : { kind: "stats", ...patchStats(patch) };
+    case "read": {
+      if (!finished || hasImage(output)) return faint(detail);
+      const lines = lineCount(splitReadNote(text).body);
+      return faint(counted(lines, "line", "lines"));
+    }
+    case "grep":
+      return finished ? faint(counted(grepMatches(text), "match", "matches")) : null;
+    case "find":
+      return finished ? faint(counted(listedLines(text), "file", "files")) : null;
+    case "ls":
+      return finished ? faint(counted(listedLines(text), "entry", "entries")) : null;
+    case "bash":
+    case "powershell":
+      return finished ? testVerdict(text) : null;
+    default:
+      return faint(detail);
+  }
+}
+
+/**
+ * How long a work log's calls took, in milliseconds: from pi-ai stamping the
+ * message that made the first call, which it does as the model starts it, to
+ * pi stamping the last call's result. Null until every call has its result,
+ * or if the stamps don't make sense, as when a transcript was written by
+ * hand, so the header says only "Worked".
+ */
+export function workLogDuration(
+  startedAt: unknown,
+  calls: readonly ToolCall[],
+  results: ReadonlyMap<string, ToolResultMessage>,
+): number | null {
+  if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) return null;
+  let end = startedAt;
+  for (const call of calls) {
+    const stamp: unknown = results.get(call.id)?.timestamp;
+    if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp < startedAt) return null;
+    end = Math.max(end, stamp);
+  }
+  return end - startedAt;
+}
+
+/** `ms` as the header shows it: whole seconds, rounded up, in s, m and h. */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`;
+}
+
 /** Counts the lines a single-file unified patch adds and removes. */
 export function patchStats(patch: string): { additions: number; deletions: number } {
   let additions = 0;
@@ -139,11 +269,13 @@ export function splitReadNote(text: string): { body: string; note: string | null
   return { body: text.slice(0, match.index), note: match[1]! };
 }
 
-/** What a card's header says about a call after the tool's name. */
+/** What a work log row says about a call after its verb. */
 export interface CallSummary {
   /** The command, path or pattern. */
   readonly subject: string;
-  /** A short qualifier, such as the lines a read covers. */
+  /** Where a search looks, shown after the subject as "in <within>". */
+  readonly within: string | null;
+  /** A short qualifier, such as the lines a read covers, for a call without a better figure. */
   readonly detail: string | null;
 }
 
@@ -169,12 +301,13 @@ function readRange(offset: number | undefined, limit: number | undefined): strin
   return `lines ${first}–${first + Math.max(1, limit) - 1}`;
 }
 
-function lineCount(text: string): number {
+/** How many lines `text` has, not counting a final newline. */
+export function lineCount(text: string): number {
   if (text === "") return 0;
   return text.replace(/\n$/, "").split("\n").length;
 }
 
-/** A header shows one line, so a longer subject is cut, and a huge one can't stall layout. */
+/** A row shows one line, so a longer subject is cut, and a huge one can't stall layout. */
 export const MAX_SUBJECT_CHARS = 500;
 
 export function summarizeCall(call: ToolCall): CallSummary {
@@ -189,29 +322,35 @@ function summarizeArguments(call: ToolCall): CallSummary {
   switch (call.name) {
     case "bash":
     case "powershell":
-      return { subject: stringArg(args, "command") ?? "", detail: null };
+      return { subject: stringArg(args, "command") ?? "", within: null, detail: null };
     case "read":
       return {
         subject: path ?? "",
+        within: null,
         detail: readRange(numberArg(args, "offset"), numberArg(args, "limit")),
       };
     case "edit":
-      return { subject: path ?? "", detail: null };
+      return { subject: path ?? "", within: null, detail: null };
     case "write": {
       const content = stringArg(args, "content");
-      if (content === undefined) return { subject: path ?? "", detail: null };
-      const lines = lineCount(content);
-      return { subject: path ?? "", detail: `${lines} ${lines === 1 ? "line" : "lines"}` };
+      if (content === undefined) return { subject: path ?? "", within: null, detail: null };
+      return {
+        subject: path ?? "",
+        within: null,
+        detail: counted(lineCount(content), "line", "lines"),
+      };
     }
     case "grep":
-    case "find": {
-      const within = path ?? stringArg(args, "glob");
-      return { subject: stringArg(args, "pattern") ?? "", detail: within ? `in ${within}` : null };
-    }
+    case "find":
+      return {
+        subject: stringArg(args, "pattern") ?? "",
+        within: path ?? stringArg(args, "glob") ?? null,
+        detail: null,
+      };
     case "ls":
-      return { subject: path ?? ".", detail: null };
+      return { subject: path ?? ".", within: null, detail: null };
     default:
-      return { subject: compactJson(args), detail: null };
+      return { subject: compactJson(args), within: null, detail: null };
   }
 }
 
@@ -224,7 +363,7 @@ function compactJson(value: unknown): string {
   }
 }
 
-/** Arguments for a generic card's body, one field per line. */
+/** Arguments for an extension tool's expanded row, one field per line. */
 export function prettyJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? "";

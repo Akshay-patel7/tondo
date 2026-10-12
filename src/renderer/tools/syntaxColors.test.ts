@@ -15,14 +15,15 @@ function contrast(a: string, b: string): number {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-// pierre's backgrounds for a line, as Chromium works out its color-mix()es:
-// the theme's background, added and removed lines, and changed words on each.
-const DIFF_LIGHT_BACKGROUNDS = ["#ffffff", "#e7f4ec", "#ffe8e4", "#c8e8d9", "#f9ccca"];
-const DIFF_DARK_BACKGROUNDS = ["#0a0a0a", "#182d22", "#381917", "#154b35", "#601d1f"];
+// A diff line's backgrounds as the page paints them, in sRGB: --sidebar, then
+// --addition and --deletion at 11% over it (the tokens' line tints), then
+// changed words at 8% more in light and 20% more in dark (code.tsx).
+const DIFF_LIGHT_BACKGROUNDS = ["#f7f4ef", "#dfe7dc", "#f2deda", "#cfdecf", "#efd0cc"];
+const DIFF_DARK_BACKGROUNDS = ["#0d0c0b", "#162017", "#261715", "#26412b", "#4f2925"];
 
 // --background in index.css, in sRGB.
 const PAGE_LIGHT = "#fbfaf6";
-const PAGE_DARK = "#1c1917";
+const PAGE_DARK = "#11100f";
 
 function failures(colors: Readonly<Record<string, string>>, backgrounds: string[]): string[] {
   return Object.values(colors).flatMap((color) =>

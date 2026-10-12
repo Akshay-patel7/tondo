@@ -131,7 +131,7 @@ async function measureDiff({ fileLines, colored }: Scenario, cpuSlowdown = 1): P
     await expect(card).toHaveAttribute("data-status", "done", { timeout: 60_000 });
     await expect(page.getByText("Done.")).toBeVisible();
     await expect(card.getByRole("button").first()).toHaveText(
-      `edit steps.ts +${fileLines} −${fileLines}`,
+      `Edit steps.ts +${fileLines} −${fileLines}`,
     );
 
     const memoryBefore = await measureMemory(tondo);

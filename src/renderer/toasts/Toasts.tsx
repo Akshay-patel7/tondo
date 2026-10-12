@@ -45,7 +45,8 @@ function ToastView({ toast }: { toast: Toast }) {
 
   return (
     // An Alert has no shadow of its own, and a toast floats over the thread.
-    <div className="pointer-events-auto rounded-panel shadow-composer">
+    // The wrapper takes the Alert's radius, so the shadow follows its corners.
+    <div className="pointer-events-auto rounded-card shadow-composer">
       <Alert
         variant={VARIANTS[level]}
         role={level === "error" ? "alert" : "status"}
@@ -59,9 +60,16 @@ function ToastView({ toast }: { toast: Toast }) {
         <AlertTitle className="break-words whitespace-pre-wrap">{message}</AlertTitle>
         {thread === undefined && reveal === undefined ? null : (
           <AlertDescription>
-            {thread === undefined ? null : <p className="truncate">{thread}</p>}
+            {thread === undefined ? null : (
+              <div className="truncate text-xs text-faint-foreground">{thread}</div>
+            )}
             {reveal === undefined ? null : (
-              <Button variant="link" size="xs" className="-ml-2" onClick={() => revealFile(reveal)}>
+              <Button
+                variant="neutral"
+                size="sm"
+                className="mt-2"
+                onClick={() => revealFile(reveal)}
+              >
                 {isMac ? "Show in Finder" : "Show in folder"}
               </Button>
             )}
@@ -69,8 +77,8 @@ function ToastView({ toast }: { toast: Toast }) {
         )}
         <AlertAction>
           <Button
-            variant="ghost"
-            size="icon-xs"
+            variant="faint-ghost"
+            size="icon-sm"
             aria-label="Dismiss"
             onClick={() => dismissToast(id)}
           >

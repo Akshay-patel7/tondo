@@ -34,6 +34,8 @@ interface Props {
   readonly placeholder: string;
   readonly menuId?: string | undefined;
   readonly activeOption?: string | undefined;
+  /** `lg` is the Home screen's taller editor, 96px. The default is 72px. */
+  readonly size?: "default" | "lg";
   readonly onChange: (text: string) => void;
   readonly onSelection: (snapshot: EditorSnapshot) => void;
   /** True when the composer handled the key. */
@@ -72,6 +74,7 @@ export function PromptEditor({
   placeholder,
   menuId,
   activeOption,
+  size = "default",
   onChange,
   onSelection,
   onKeyDown,
@@ -90,8 +93,7 @@ export function PromptEditor({
         "data-placeholder": placeholder,
         ...(menuId ? { "aria-controls": menuId } : {}),
         ...(activeOption ? { "aria-activedescendant": activeOption } : {}),
-        class:
-          "composer-editor min-h-24 max-h-60 w-full overflow-y-auto bg-transparent px-4 pt-3 pb-1 outline-none",
+        class: `composer-editor ${size === "lg" ? "min-h-24" : "min-h-18"} max-h-60 w-full overflow-y-auto bg-transparent px-4 pt-3 pb-1 text-message outline-none`,
       },
       handleKeyDown: (view, event) => {
         // 229 also covers an IME's final Enter on browsers that already

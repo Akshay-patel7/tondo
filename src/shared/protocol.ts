@@ -338,6 +338,8 @@ export type ClientMessage = Versioned<
   | { type: "get-pi-config-files"; threadId: string | null }
   /** Answered with pi-accounts: the sign-ins in pi's auth.json. */
   | { type: "get-pi-accounts" }
+  /** Answered with project-git: whether the project folder is a Git checkout, and its branch. */
+  | { type: "get-project-git"; projectId: number }
 >;
 
 /** What the host sends the page. */
@@ -409,6 +411,11 @@ export type HostMessage = Versioned<
   | { type: "pi-config-files"; files: readonly SettingsFile[] }
   /** `error` says why Tondo couldn't read pi's auth.json. It never quotes the file. */
   | { type: "pi-accounts"; accounts: readonly PiAccount[]; error: string | null }
+  /**
+   * The project folder's checkout, for the home page before a thread exists.
+   * `branch` is null for a detached HEAD or a folder that isn't a Git checkout.
+   */
+  | { type: "project-git"; projectId: number; git: boolean; branch: string | null }
 >;
 
 /**
@@ -534,7 +541,8 @@ export function parseClientMessage(data: unknown): ParseResult {
     case "add-project":
       return exactly(message, { v, type });
     case "remove-project":
-    case "new-thread": {
+    case "new-thread":
+    case "get-project-git": {
       const bad = badProjectId(type, projectId);
       if (bad) return invalid(bad);
       return exactly(message, { v, type, projectId: projectId as number });

@@ -8,7 +8,7 @@ import { Button } from "./button";
 // A panel floats 8px in from the window's edges and starts below the 40px title
 // bar, where Windows and Linux draw the window buttons over the page.
 const sheetVariants = cva(
-  "app-no-drag fixed z-50 flex flex-col gap-4 overflow-y-auto rounded-panel border border-border bg-popover p-5 text-sm text-popover-foreground shadow-composer outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0",
+  "app-no-drag fixed z-50 flex flex-col gap-4 overflow-y-auto rounded-card border border-border bg-popover p-5 text-sm text-popover-foreground shadow-composer outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0",
   {
     variants: {
       side: {
@@ -90,7 +90,7 @@ function SheetPopup({
             data-slot="sheet-close"
             aria-label="Close"
             className="absolute top-4 right-4"
-            render={<Button variant="ghost" size="icon-sm" />}
+            render={<Button variant="ghost" size="icon" />}
           >
             <X aria-hidden />
           </SheetPrimitive.Close>
@@ -128,7 +128,7 @@ function SheetTitle({ className, ...props }: SheetTitleProps) {
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn("text-base leading-snug font-medium", className)}
+      className={cn("text-title font-semibold", className)}
       {...props}
     />
   );

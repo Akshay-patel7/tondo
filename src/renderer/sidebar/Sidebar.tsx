@@ -3,9 +3,10 @@
 // (apps/web/src/components/Sidebar.tsx). T3's rows each take a Tab stop;
 // here the rows share one, and the arrow keys, Home and End move between them.
 import {
-  ChevronRight,
   CircleAlert,
   Ellipsis,
+  Folder,
+  GitBranch,
   PanelLeft,
   Pen,
   PencilLine,
@@ -23,9 +24,13 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
   type RefObject,
 } from "react";
 import type { SidebarProject, SidebarThread, ThreadActivity } from "../../shared/protocol";
+import type { ShortcutCommand } from "../../shared/settings";
+import { checkShortcuts, chordLabel } from "../../shared/shortcuts";
+import { newThreadHere } from "../commands";
 import {
   addProject,
   deleteThread,
@@ -40,8 +45,7 @@ import {
 import { folderName, formatAge } from "../format";
 import { togglePalette } from "../palette/store";
 import { isMac } from "../platform";
-import { openSettings } from "../settings/store";
-import { ShellButton } from "../shell/Header";
+import { openSettings, useSettingsPage } from "../settings/store";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,9 +65,11 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
+import { Kbd } from "../ui/kbd";
+import { StatusDot, StatusRing, TondoMark } from "../ui/status";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { toggleSidebarShown } from "./layout";
-import { listedThreads, MORE_SIZE, PAGE_SIZE } from "./model";
+import { listedThreads, MORE_SIZE, PAGE_SIZE, runningCount } from "./model";
 import { endRename, startRename, useFocusedRow, useRenaming } from "./store";
 
 // The list, each row with its own buttons, and the button in each row that
@@ -80,6 +86,17 @@ function useMinute(): number {
     return () => clearInterval(timer);
   }, []);
   return now;
+}
+
+/**
+ * How `command`'s shortcut reads beside a button, or null if you turned it
+ * off. It's derived from the settings the page holds, so a shortcut you
+ * change in the settings reads right away.
+ */
+function useShortcutHint(command: ShortcutCommand): string | null {
+  const shortcuts = useHost((host) => host.settings?.shortcuts);
+  const chord = checkShortcuts(shortcuts ?? {}).usable[command];
+  return chord === null ? null : chordLabel(chord, isMac);
 }
 
 /**
@@ -174,11 +191,95 @@ interface Removal {
   readonly header: RefObject<HTMLButtonElement | null>;
 }
 
+/**
+ * An icon button in the sidebar's chrome: Hide sidebar in the top row, the
+ * Projects row's +, and Settings in the footer. It has no text, so `label`
+ * names it, and its tooltip shows the label with the command's shortcut.
+ */
+function ChromeButton({
+  label,
+  command,
+  size = "icon",
+  side,
+  pressed,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  command: ShortcutCommand;
+  size?: "icon" | "icon-sm";
+  side: "top" | "bottom";
+  /** Whether the button shows what it opens, as Settings does while the page is open. */
+  pressed?: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const keys = useShortcutHint(command);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="faint-ghost"
+            size={size}
+            aria-label={label}
+            aria-pressed={pressed}
+            disabled={disabled}
+            onClick={() => onClick()}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side={side}>
+        {label}
+        {keys === null ? null : <Kbd>{keys}</Kbd>}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * The footer's account of pi: the one Tondo found and how many threads it's
+ * busy in, or that there's no pi to run. Nothing until the host has looked.
+ */
+function PiState() {
+  const pi = useHost((host) => host.piEnv);
+  const running = useHost((host) => runningCount(host.projects));
+  if (pi === null) return null;
+  if (pi.state === "missing") {
+    return (
+      <span className="flex items-center gap-2">
+        <StatusDot tone="warning" />
+        <span>pi not found</span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <StatusDot tone="success" />
+      <span className="truncate">pi {pi.version}</span>
+      <span className="shrink-0 text-faint-foreground">
+        {running === 0 ? "· idle" : `· ${running} running`}
+      </span>
+    </span>
+  );
+}
+
 export function Sidebar() {
   const projects = useHost((host) => host.projects);
   const openId = useHost((host) => host.thread?.id);
+  const openWorktree = useHost((host) => host.thread?.worktree === true);
+  // Home: projects, but no thread on screen. The page there is a new thread,
+  // so the New thread button shows pressed.
+  const home = useHost((host) => host.thread === null) && projects.length > 0;
+  const settingsOpen = useSettingsPage((page) => page.open);
   // The page can't ask the host for anything until main hands it a port.
   const connected = useHost((host) => host.connection === "connected");
+  const newThreadKeys = useShortcutHint("new-thread");
+  const searchKeys = useShortcutHint("palette");
   const now = useMinute();
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -195,11 +296,11 @@ export function Sidebar() {
   return (
     // The sidebar and its parts get compositing layers of their own, to save
     // GPU memory. The sidebar's layer and its border's each paint one solid
-    // color, and a solid layer needs no raster tiles. The controls and the
-    // list get layers sized to what they show, so a change there redraws a
-    // small tile, not one the height of the window. Painted into the page's
-    // layer instead, the sidebar would turn each full-width tile row beside
-    // it from one solid color into a raster tile, about 15 MiB at 2x.
+    // color, and a solid layer needs no raster tiles. The controls, the list
+    // and the footer get layers sized to what they show, so a change there
+    // redraws a small tile, not one the height of the window. Painted into
+    // the page's layer instead, the sidebar would turn each full-width tile
+    // row beside it from one solid color into a raster tile, about 15 MiB at 2x.
     <nav
       aria-label="Threads"
       className="relative flex w-64 shrink-0 flex-col border-r border-transparent bg-sidebar will-change-transform"
@@ -209,63 +310,106 @@ export function Sidebar() {
         className="absolute inset-y-0 -right-px w-px bg-border will-change-transform"
       />
       <div className="shrink-0 will-change-transform">
+        {/* The window's drag region. On macOS the traffic lights sit at its left. */}
         <div
-          className={`app-drag flex h-10 items-center justify-end gap-0.5 px-2 ${isMac ? "pl-20" : ""}`}
+          className={`app-drag flex h-11 items-center justify-end pr-2 ${isMac ? "pl-16" : "pl-2"}`}
         >
-          <ShellButton
-            label="Search"
-            command="palette"
-            disabled={!connected}
-            onClick={togglePalette}
-          >
-            <Search aria-hidden />
-          </ShellButton>
-          <ShellButton
-            label="Settings"
-            command="settings"
-            disabled={!connected}
-            onClick={() => openSettings()}
-          >
-            <Settings aria-hidden />
-          </ShellButton>
-          <ShellButton
+          <ChromeButton
             label="Hide sidebar"
             command="toggle-sidebar"
+            side="bottom"
             disabled={!connected}
             onClick={toggleSidebarShown}
           >
             <PanelLeft aria-hidden />
-          </ShellButton>
+          </ChromeButton>
         </div>
-        <div className="flex items-center justify-between py-1 pr-2 pl-4">
-          <h2 className="text-xs font-medium text-muted-foreground">Projects</h2>
-          <ShellButton
+        <div className="flex items-center gap-2 px-4 pt-1 pb-3">
+          <TondoMark />
+          <span className="text-message leading-4.5 font-semibold tracking-[-0.01em]">Tondo</span>
+        </div>
+        <div className="flex flex-col gap-1 px-2 pb-3">
+          {/* Without a project there's nothing to start a thread in: Welcome adds one. */}
+          <Button
+            variant="raised"
+            size="lg"
+            className="w-full justify-start"
+            aria-pressed={home}
+            disabled={!connected || projects.length === 0}
+            onClick={newThreadHere}
+          >
+            <SquarePen aria-hidden />
+            New thread
+            {newThreadKeys === null ? null : (
+              <Kbd variant="hint" className="ml-auto">
+                {newThreadKeys}
+              </Kbd>
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="lg"
+            className="w-full justify-start"
+            disabled={!connected}
+            onClick={togglePalette}
+          >
+            <Search aria-hidden />
+            Search
+            {searchKeys === null ? null : (
+              <Kbd variant="hint" className="ml-auto">
+                {searchKeys}
+              </Kbd>
+            )}
+          </Button>
+        </div>
+        {/* 24px, so with the list's top padding the first row sits 28px below the label's top. */}
+        <div className="flex h-6 items-center justify-between pr-2 pl-4">
+          <h2 className="text-2xs font-medium text-faint-foreground">Projects</h2>
+          <ChromeButton
             label="Add project"
             command="add-project"
+            size="icon-sm"
+            side="bottom"
             disabled={!connected}
             onClick={addProject}
           >
             <Plus aria-hidden />
-          </ShellButton>
+          </ChromeButton>
         </div>
       </div>
       {/* The top padding and scroll padding keep a focused row's ring in view. */}
       <div className="min-h-0 flex-1 scroll-py-1 overflow-y-auto px-2 pt-1 pb-3">
         <div data-sidebar-list="" className="will-change-transform" onKeyDown={moveFocus}>
           {projects.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>
+            <p className="px-2 py-1 text-xs text-faint-foreground">No projects yet.</p>
           ) : null}
           {projects.map((project, index) => (
             <ProjectGroup
               key={project.id}
               project={project}
               openId={openId}
+              openWorktree={openWorktree}
               now={now}
               tabFallback={index === 0 && !openListed}
               onRemove={askToRemove}
               onDelete={(asked) => useHost.setState({ deletion: asked, confirmingDeletion: true })}
             />
           ))}
+        </div>
+      </div>
+      <div className="flex h-11 shrink-0 items-center gap-2 border-t border-border pr-2 pl-4 text-xs text-muted-foreground will-change-transform">
+        <PiState />
+        <div className="ml-auto">
+          <ChromeButton
+            label="Settings"
+            command="settings"
+            side="top"
+            pressed={settingsOpen}
+            disabled={!connected}
+            onClick={() => openSettings()}
+          >
+            <Settings aria-hidden />
+          </ChromeButton>
         </div>
       </div>
       {removal === null ? null : (
@@ -285,6 +429,7 @@ export function Sidebar() {
 function ProjectGroup({
   project,
   openId,
+  openWorktree,
   now,
   tabFallback,
   onRemove,
@@ -292,6 +437,8 @@ function ProjectGroup({
 }: {
   project: SidebarProject;
   openId: string | undefined;
+  /** Whether the open thread runs in a checkout of its own. */
+  openWorktree: boolean;
   now: number;
   /** Whether the header is the Tab stop until you focus a row. */
   tabFallback: boolean;
@@ -338,9 +485,10 @@ function ProjectGroup({
           data-sidebar-item=""
           onFocus={() => focusRow(headerKey)}
           render={
-            <div className="group flex items-center rounded-control pr-1 hover:bg-accent/60 data-popup-open:bg-accent/60 has-data-popup-open:bg-accent/60" />
+            <div className="group relative flex h-7 items-center rounded-control pr-1 hover:bg-accent data-popup-open:bg-accent has-data-popup-open:bg-accent" />
           }
         >
+          {/* No chevron: aria-expanded says whether the threads show, and a click flips it. */}
           <button
             ref={header}
             type="button"
@@ -350,16 +498,19 @@ function ProjectGroup({
             title={project.path}
             onClick={() => setCollapsed(project.id, !project.collapsed)}
             onKeyDown={openContextMenu}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-control px-2 py-1 text-left text-sm font-medium outline-none focus-visible:focus-ring"
+            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-control px-2 text-left text-sm font-medium outline-none focus-visible:focus-ring"
           >
-            <ChevronRight
-              aria-hidden
-              className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
-                project.collapsed ? "" : "rotate-90"
-              }`}
-            />
+            <Folder aria-hidden className="size-4 shrink-0 text-faint-foreground" />
             <span className="truncate">{name}</span>
           </button>
+          {/* It sits over the buttons' space while they're faded out, and
+              goes when they show. It's outside the header, which the folder
+              name alone names. */}
+          {project.threads.length === 0 ? (
+            <span className="absolute right-2 text-2xs text-faint-foreground group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
+              No threads
+            </span>
+          ) : null}
           {/* The project's buttons fade out rather than hide: a hidden button
               can't take focus, so Escape in its menu would leave focus on the
               page. They show on hover and while focus is in the row. */}
@@ -397,24 +548,22 @@ function ProjectGroup({
         <ContextMenuContent aria-label={`${name} actions`}>{items}</ContextMenuContent>
       </ContextMenu>
       {project.collapsed ? null : (
-        <ul ref={threadList} className="mt-0.5 flex flex-col gap-px">
+        <ul ref={threadList} className="mt-0.5 flex flex-col gap-0.5">
           {listed.map((thread) => (
             <ThreadRow
               key={thread.id}
               thread={thread}
               open={thread.id === openId}
+              worktree={thread.id === openId && openWorktree}
               now={now}
               onDelete={onDelete}
             />
           ))}
-          {listed.length === 0 ? (
-            <li className="py-1 pr-2 pl-7 text-xs text-muted-foreground">No threads yet</li>
-          ) : null}
           {more > 0 ? (
             <li data-sidebar-item="" onFocus={() => focusRow(moreKey)}>
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 data-sidebar-row=""
                 tabIndex={moreTabIndex}
                 onClick={(event) => {
@@ -533,32 +682,34 @@ function DeleteThread({
   );
 }
 
-const ACTIVITY: Record<Exclude<ThreadActivity, "idle">, { label: string; look: string }> = {
-  starting: { label: "Starting pi", look: "size-1.5 rounded-full bg-muted-foreground/50" },
-  working: { label: "Working", look: "size-1.5 rounded-full bg-primary" },
-  // A ring, so a thread that waits for you doesn't look like one that works.
-  waiting: {
-    label: "Waiting for your answer",
-    look: "size-2 rounded-full border-[1.5px] border-warning",
+// What the row's 8px status slot shows for each activity.
+const ACTIVITY: Record<Exclude<ThreadActivity, "idle">, { label: string; glyph: ReactNode }> = {
+  // pi is on its way: a dot at half strength, until the working one takes over.
+  starting: {
+    label: "Starting pi",
+    glyph: <span className="size-1.5 rounded-full bg-muted-foreground/50" />,
   },
+  working: { label: "Working", glyph: <StatusDot tone="primary" /> },
+  // A ring, so a thread that waits for you doesn't look like one that works.
+  waiting: { label: "Waiting for your answer", glyph: <StatusRing /> },
   // A glyph, not a dot: the error red and the working terracotta are too close
   // to tell apart by color alone.
-  error: { label: "pi stopped with an error", look: "flex text-destructive" },
+  error: {
+    label: "pi stopped with an error",
+    glyph: <CircleAlert aria-hidden className="size-3 text-destructive" />,
+  },
 };
+
+const UNREAD = { label: "Unread", glyph: <StatusDot tone="foreground" /> };
 
 /** What a thread's pi is doing, or that it finished while you were away. It doesn't pulse. */
 function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: boolean }) {
-  const dot =
-    activity !== "idle"
-      ? ACTIVITY[activity]
-      : unread
-        ? { label: "Unread", look: "size-1.5 rounded-full bg-foreground" }
-        : null;
+  const state = activity !== "idle" ? ACTIVITY[activity] : unread ? UNREAD : null;
   return (
     <span className="flex size-2 shrink-0 items-center justify-center">
-      {dot ? (
-        <span role="img" aria-label={dot.label} title={dot.label} className={dot.look}>
-          {activity === "error" ? <CircleAlert aria-hidden className="size-3" /> : null}
+      {state ? (
+        <span role="img" aria-label={state.label} title={state.label} className="flex">
+          {state.glyph}
         </span>
       ) : null}
     </span>
@@ -568,11 +719,14 @@ function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: b
 function ThreadRow({
   thread,
   open,
+  worktree,
   now,
   onDelete,
 }: {
   thread: SidebarThread;
   open: boolean;
+  /** Whether the thread runs in a checkout of its own, which the host says only of the open thread. */
+  worktree: boolean;
   now: number;
   onDelete: (thread: SidebarThread) => void;
 }) {
@@ -633,10 +787,10 @@ function ThreadRow({
               title={thread.title}
               onClick={() => openThread(thread.id)}
               onKeyDown={openContextMenu}
-              className={`flex w-full items-center gap-2 rounded-control py-1 pr-2 pl-2.5 text-left text-sm outline-none focus-visible:focus-ring ${
+              className={`flex h-7 w-full items-center gap-2 rounded-control pr-2 pl-3 text-left text-sm outline-none focus-visible:focus-ring ${
                 open
-                  ? "bg-accent text-accent-foreground"
-                  : "group-has-data-popup-open:bg-accent/60 group-data-popup-open:bg-accent/60 hover:bg-accent/60"
+                  ? "bg-selected text-foreground"
+                  : "text-muted-foreground group-has-data-popup-open:bg-accent group-has-data-popup-open:text-foreground group-data-popup-open:bg-accent group-data-popup-open:text-foreground hover:bg-accent hover:text-foreground"
               }`}
             >
               <ActivityDot activity={thread.activity} unread={thread.unread} />
@@ -646,9 +800,9 @@ function ThreadRow({
                   role="img"
                   aria-label="Unsent draft"
                   title="Unsent draft"
-                  className="text-muted-foreground"
+                  className="flex shrink-0 text-faint-foreground"
                 >
-                  <Pen aria-hidden className="size-3.5" />
+                  <Pen aria-hidden className="size-3" />
                 </span>
               ) : null}
               {thread.pinned ? (
@@ -656,20 +810,38 @@ function ThreadRow({
                   role="img"
                   aria-label="Pinned"
                   title="Pinned"
-                  className="text-muted-foreground"
+                  className="flex shrink-0 text-faint-foreground"
                 >
-                  <Pin aria-hidden className="size-3.5" />
+                  <Pin aria-hidden className="size-3" />
                 </span>
               ) : null}
-              <span className="w-7 shrink-0 text-right text-xs text-muted-foreground tabular-nums group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
-                {formatAge(thread.updatedAt, now)}
-              </span>
+              {worktree ? (
+                <span
+                  role="img"
+                  aria-label="Worktree"
+                  title="Worktree"
+                  className="flex shrink-0 text-faint-foreground"
+                >
+                  <GitBranch aria-hidden className="size-3" />
+                </span>
+              ) : null}
+              {/* The age gives way to the actions button while that shows. It's
+                  at least as wide as the button, so the markers stay clear of it. */}
+              {thread.activity === "waiting" ? (
+                <span className="min-w-7 shrink-0 text-right text-2xs font-medium text-warning-text group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
+                  Needs input
+                </span>
+              ) : (
+                <span className="min-w-7 shrink-0 text-right text-2xs text-faint-foreground tabular-nums group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
+                  {formatAge(thread.updatedAt, now)}
+                </span>
+              )}
             </button>
             {/* It fades out rather than hides, like the project's buttons, so
                 Shift+Tab reaches it as Tab does. Its menu renders outside the
                 row, so it stays shown while the menu is open, and closing the
                 menu can focus it again. */}
-            <div className="absolute inset-y-0 right-0 flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 group-data-popup-open:opacity-100 has-data-popup-open:opacity-100">
+            <div className="absolute inset-y-0 right-0 flex items-center pr-0.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 group-data-popup-open:opacity-100 has-data-popup-open:opacity-100">
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={<Button variant="ghost" size="icon-sm" />}
@@ -700,6 +872,7 @@ function RenameInput({ thread }: { thread: SidebarThread }) {
     const trimmed = name.trim();
     if (save && trimmed !== "" && trimmed !== thread.title) renameThread(thread.id, trimmed);
   };
+  // The default size is the row's height, 28px, so the rows below don't move.
   return (
     <Input
       aria-label="Thread title"
@@ -717,8 +890,6 @@ function RenameInput({ thread }: { thread: SidebarThread }) {
         }
       }}
       onBlur={() => finish(true)}
-      // The row's height, so the rows below don't move.
-      size="sm"
     />
   );
 }

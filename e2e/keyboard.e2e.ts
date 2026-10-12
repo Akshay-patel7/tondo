@@ -170,32 +170,34 @@ test("keyboard alone reaches every part of a thread", async () => {
     await expectFocused(page, changes);
   });
 
-  await test.step("the git toolbar is one stop that the arrow keys move through", async () => {
-    const toolbar = page.getByRole("toolbar", { name: "Git" });
-    const branch = toolbar.getByRole("combobox", { name: "Git branch" });
-    const newBranch = toolbar.getByRole("button", { name: "New branch", exact: true });
-    const newWorktree = toolbar.getByRole("button", { name: "New worktree", exact: true });
-    const refresh = toolbar.getByRole("button", { name: "Refresh Git", exact: true });
-    expect(await reach(page, branch, "Tab"), "Tab reaches the git toolbar").toBe(true);
+  await test.step("the git menu opens from the keyboard and the arrow keys move through it", async () => {
+    const chevron = page.getByRole("button", { name: "Git actions", exact: true });
+    expect(await reach(page, chevron, "Tab"), "Tab reaches the git menu").toBe(true);
     await expectFocusRing(page);
-    await shot(page, "07-git-toolbar");
-    await page.keyboard.press("ArrowRight");
-    await expectFocused(page, newBranch);
-    await page.keyboard.press("ArrowRight");
-    await expectFocused(page, newWorktree);
-    await page.keyboard.press("ArrowLeft");
-    await expectFocused(page, newBranch);
+    await shot(page, "07-git-actions");
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    const newBranch = menu.getByRole("menuitem", { name: "New branch", exact: true });
+    const newWorktree = menu.getByRole("menuitem", { name: "New worktree", exact: true });
+    const refresh = menu.getByRole("menuitem", { name: "Refresh", exact: true });
+    // The popup is visible before its opening focus transfer finishes.
+    await expectFocused(
+      page,
+      menu.locator('[role="menuitem"]:not([aria-disabled="true"])').first(),
+    );
     await page.keyboard.press("End");
     await expectFocused(page, refresh);
-    await shot(page, "08-git-toolbar-end");
-    await page.keyboard.press("Home");
-    await expectFocused(page, branch);
-    await page.keyboard.press("Tab");
-    expect(
-      await toolbar.evaluate((element) => element.contains(document.activeElement)),
-      `the git toolbar is one Tab stop, but Tab moved to ${await focusedElement(page)}`,
-    ).toBe(false);
-    await expectFocusRing(page);
+    await shot(page, "08-git-menu-end");
+    await page.keyboard.press("ArrowUp");
+    await expectFocused(page, newWorktree);
+    await page.keyboard.press("ArrowUp");
+    await expectFocused(page, newBranch);
+    await page.keyboard.press("ArrowDown");
+    await expectFocused(page, newWorktree);
+    await page.keyboard.press("Escape");
+    await expect(menu).not.toBeAttached();
+    await expectFocused(page, chevron);
   });
 
   await test.step("the sidebar list moves by arrows and opens menus", async () => {
@@ -250,7 +252,7 @@ test("keyboard alone reaches every part of a thread", async () => {
   await test.step("Settings opens by shortcut, the arrows pick Dark, and Escape goes back", async () => {
     await page.keyboard.press("ControlOrMeta+Comma");
     const settings = page.getByRole("region", { name: "Settings", exact: true });
-    await expectFocused(page, settings.getByRole("heading", { level: 1, name: "Settings" }));
+    await expectFocused(page, settings.getByRole("heading", { level: 2 }));
     await shot(page, "12-settings");
     const theme = settings.getByRole("group", { name: "Theme", exact: true });
     const pressed = theme.locator('[aria-pressed="true"]');
@@ -358,7 +360,7 @@ test("every control has an accessible name", async () => {
 
   await page.keyboard.press("ControlOrMeta+Comma");
   const settings = page.getByRole("region", { name: "Settings", exact: true });
-  await expect(settings.getByRole("heading", { level: 1, name: "Settings" })).toBeFocused();
+  await expect(settings.getByRole("heading", { level: 2 })).toBeFocused();
   for (const name of ["Appearance", "pi", "Threads", "Shortcuts"]) {
     const button = settings
       .getByRole("navigation", { name: "Settings sections" })
@@ -372,7 +374,7 @@ test("every control has an accessible name", async () => {
     // oxlint-disable-next-line eslint/no-await-in-loop -- as above.
     await audit(`the Settings page, ${name}`);
   }
-  await settings.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator("header").getByRole("button", { name: "Back", exact: true }).click();
   await expect(settings).not.toBeAttached();
 
   await page.getByRole("button", { name: "Changes", exact: true }).click();
@@ -390,29 +392,29 @@ test("every control has an accessible name", async () => {
   await drawer.getByRole("button", { name: "Close terminal" }).click();
   await expect(drawer).not.toBeAttached();
 
-  const toolbar = page.getByRole("toolbar", { name: "Git" });
-  await toolbar.getByRole("button", { name: "New branch", exact: true }).click();
+  await gitAction(page, "New branch");
   const createBranch = page.getByRole("dialog", { name: "Create branch" });
   await expect(createBranch).toBeVisible();
   await audit("the Create branch dialog");
   await page.keyboard.press("Escape");
   await expect(createBranch).not.toBeAttached();
 
-  await pickOption(toolbar, "Git branch", "feature");
+  await gitAction(page, "Switch branch");
   const switchBranch = page.getByRole("alertdialog", { name: "Switch branch" });
   await expect(switchBranch).toBeVisible();
+  await pickOption(switchBranch, "Git branch", "feature");
   await expect(page.getByRole("dialog", { name: "Switch branch" })).toHaveCount(0);
   await audit("the Switch branch alert dialog");
   await switchBranch.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(switchBranch).not.toBeAttached();
 
-  await toolbar.getByRole("button", { name: "New worktree", exact: true }).click();
+  await gitAction(page, "New worktree");
   const createWorktree = page.getByRole("dialog", { name: "Create worktree thread" });
   await createWorktree.getByRole("textbox", { name: "Branch name" }).fill("kb-worktree");
   await createWorktree.getByRole("button", { name: "Create worktree thread", exact: true }).click();
   await expect(createWorktree).not.toBeAttached();
   await waitForPi(page);
-  await page.getByRole("button", { name: "Remove worktree", exact: true }).click();
+  await gitAction(page, "Remove worktree");
   const removeWorktree = page.getByRole("alertdialog", {
     name: "Remove worktree",
   });
@@ -422,6 +424,14 @@ test("every control has an accessible name", async () => {
   await removeWorktree.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(removeWorktree).not.toBeAttached();
 });
+
+/** Chooses the Git action named `name` in the menu behind the header's Commit & push chevron. */
+async function gitAction(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: "Git actions", exact: true }).click();
+  const menu = page.getByRole("menu");
+  await menu.getByRole("menuitem", { name, exact: true }).click();
+  await expect(menu).toBeHidden();
+}
 
 /**
  * Presses `key` until `target` has focus, at most `presses` times. It returns
@@ -534,15 +544,6 @@ function scrollEnd(scroller: Locator) {
   }));
 }
 
-/** The focused element's tag and accessible name, for a failure message. */
-function focusedElement(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const active = document.activeElement;
-    if (!active || active === document.body) return "the page";
-    return `<${active.tagName.toLowerCase()}> "${active.getAttribute("aria-label") ?? active.textContent?.trim().slice(0, 40) ?? ""}"`;
-  });
-}
-
 /** Saves the window as test-results/keyboard/<name>.png. */
 async function shot(page: Page, name: string): Promise<void> {
   // Finish transitions first, or a toggle's 150 ms color change shows its old state.
@@ -613,7 +614,7 @@ test("closing Settings gives focus back to the composer that opened it", async (
   await addProject(tondo!, project);
   await waitForPi(page);
   const settings = page.getByRole("region", { name: "Settings", exact: true });
-  const title = settings.getByRole("heading", { level: 1, name: "Settings" });
+  const title = settings.getByRole("heading", { level: 2 });
 
   await composer(page).focus();
   await page.keyboard.press("ControlOrMeta+Comma");
@@ -624,7 +625,7 @@ test("closing Settings gives focus back to the composer that opened it", async (
 
   await page.keyboard.press("ControlOrMeta+Comma");
   await expectFocused(page, title);
-  await settings.getByRole("button", { name: "Back", exact: true }).click();
+  await page.locator("header").getByRole("button", { name: "Back", exact: true }).click();
   await expect(settings).not.toBeAttached();
   await expectComposerFocused(page);
 });
@@ -637,9 +638,10 @@ test("Shift+Tab reaches the open thread's actions on the way back, as Tab does o
   const row = threads(page).locator(THREAD_ROW).first();
   await expect(row).toBeVisible();
   const actions = threads(page).getByRole("button", { name: "Thread actions" });
-  const changes = page.getByRole("button", { name: "Changes", exact: true });
+  // The sidebar's footer follows the list, so its Settings button is the next stop out.
+  const next = threads(page).getByRole("button", { name: "Settings", exact: true });
 
-  await changes.focus();
+  await next.focus();
   await page.keyboard.press("Shift+Tab");
   await expectFocused(page, actions);
   // Focus in the row shows the button, which fades out at rest.
@@ -651,7 +653,7 @@ test("Shift+Tab reaches the open thread's actions on the way back, as Tab does o
   await page.keyboard.press("Tab");
   await expectFocused(page, actions);
   await page.keyboard.press("Tab");
-  await expectFocused(page, changes);
+  await expectFocused(page, next);
 });
 
 test("each picker's open list has the picker's name", async () => {
@@ -662,8 +664,14 @@ test("each picker's open list has the picker's name", async () => {
   await expect(page.getByRole("complementary", { name: "Turn changes" })).toBeVisible();
   await expectListNamed(page, "Model");
   await expectListNamed(page, "Thinking level");
-  await expectListNamed(page, "Git branch");
   await expectListNamed(page, "Checkpoint turn");
+  // The branch picker lives in the Switch branch dialog.
+  await gitAction(page, "Switch branch");
+  const switchBranch = page.getByRole("alertdialog", { name: "Switch branch" });
+  await expect(switchBranch).toBeVisible();
+  await expectListNamed(page, "Git branch");
+  await switchBranch.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(switchBranch).not.toBeAttached();
 });
 
 /** Opens the picker named `picker`, expects its list to take the same name, and closes it. */
@@ -679,7 +687,7 @@ async function expectListNamed(page: Page, picker: string): Promise<void> {
 async function openShortcuts(page: Page): Promise<Locator> {
   await page.keyboard.press("ControlOrMeta+Comma");
   const settings = page.getByRole("region", { name: "Settings", exact: true });
-  await expect(settings.getByRole("heading", { level: 1, name: "Settings" })).toBeFocused();
+  await expect(settings.getByRole("heading", { level: 2 })).toBeFocused();
   await settings
     .getByRole("navigation", { name: "Settings sections" })
     .getByRole("button", { name: "Shortcuts", exact: true })
@@ -707,7 +715,7 @@ test("a shortcut without mod in settings.json is off and flagged, and its key ty
 
   const settings = await openShortcuts(page);
   await expect(
-    settings.getByRole("group", { name: "Command palette", exact: true }).getByRole("alert"),
+    settings.getByRole("group", { name: "Search", exact: true }).getByRole("alert"),
   ).toHaveText("Command palette's shortcut k needs mod, which is Cmd or Ctrl.");
 });
 
@@ -721,14 +729,14 @@ test("two commands on one chord in settings.json are flagged, and a change to a 
   const clash = "New thread and Command palette both use mod+n.";
   const flag = (name: string) =>
     settings.getByRole("group", { name, exact: true }).getByRole("alert");
-  await expect(flag("Command palette")).toHaveText(clash);
+  await expect(flag("Search")).toHaveText(clash);
   await expect(flag("New thread")).toHaveText(clash);
 
   const row = settings.getByRole("group", { name: "Settings", exact: true });
-  await row.getByRole("button", { name: "Change", exact: true }).click();
+  await row.getByRole("button", { name: /^Change shortcut, / }).click();
   await expect(row.getByRole("textbox", { name: "Shortcut for Settings" })).toBeFocused();
   await page.keyboard.press("ControlOrMeta+j");
-  await expect(row.getByRole("button", { name: "Change", exact: true })).toBeFocused();
+  await expect(row.getByRole("button", { name: /^Change shortcut, / })).toBeFocused();
   await expect(row.getByRole("alert")).toHaveCount(0);
   await expect
     .poll(

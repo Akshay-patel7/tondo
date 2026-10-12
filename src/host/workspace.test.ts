@@ -107,6 +107,15 @@ beforeEach(() => {
   waiters = [];
   reveal = vi.fn<(file: string) => void>();
   setTheme = vi.fn<(theme: ThemeSetting, palette: PaletteSetting) => void>();
+  const commandPath = process.env.PATH;
+  if (!commandPath) throw new Error("Workspace tests require PATH to find Git.");
+  // Match the Git fixtures: retain the runner's Git, without reading user config.
+  const gitEnv = {
+    PATH: commandPath,
+    HOME: dir,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
   const supervisor = {
     settingsFile,
     settings: () => readSettings(settingsFile),
@@ -114,7 +123,7 @@ beforeEach(() => {
     updateSettings: (patch: SettingsPatch) => updateSettings(settingsFile, patch),
     checkPi: async () => {},
     discover: async () => ({ found: false }),
-    captureLoginEnv: async () => ({}),
+    captureLoginEnv: async () => gitEnv,
     needsTrustAnswer: async () => false,
     sessionFolder: async () => ({ dir: path.join(dir, "sessions"), shared: true }),
   };
@@ -262,6 +271,41 @@ describe("find-files", () => {
       query: "only",
       paths: ["src/worktree-only.ts"],
     });
+  });
+});
+
+describe("get-project-git", () => {
+  it("ignores a removed project's late request and answers the remaining project", async () => {
+    const { id: removedId } = store.addProject(dir, 1);
+    const project = path.join(dir, "remaining");
+    mkdirSync(project);
+    const { id: projectId } = store.addProject(project, 2);
+    store.removeProject(removedId);
+    const answer = next(
+      (message) => message.type === "project-git" && message.projectId === projectId,
+    );
+    workspace.handle({ v, type: "get-project-git", projectId: removedId });
+    workspace.handle({ v, type: "get-project-git", projectId });
+    expect(await answer).toEqual({ v, type: "project-git", projectId, git: false, branch: null });
+    expect(sent.filter(isError)).toEqual([]);
+  });
+
+  it("answers with the project folder's branch before any thread exists", async () => {
+    const project = repository("git-project", []);
+    execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/trunk"], { cwd: project });
+    const { id: projectId } = store.addProject(project, 1);
+    const answer = next((message) => isError(message) || message.type === "project-git");
+    workspace.handle({ v, type: "get-project-git", projectId });
+    expect(await answer).toEqual({ v, type: "project-git", projectId, git: true, branch: "trunk" });
+  });
+
+  it("says a plain folder isn't a Git checkout", async () => {
+    const project = path.join(dir, "plain");
+    mkdirSync(project);
+    const { id: projectId } = store.addProject(project, 1);
+    const answer = next((message) => isError(message) || message.type === "project-git");
+    workspace.handle({ v, type: "get-project-git", projectId });
+    expect(await answer).toEqual({ v, type: "project-git", projectId, git: false, branch: null });
   });
 });
 

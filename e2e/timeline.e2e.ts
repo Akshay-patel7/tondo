@@ -33,6 +33,36 @@ test("the transcript opens at the bottom", async () => {
   await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "true");
 });
 
+test("a small animated scroll is not pulled back inside the follow band", async () => {
+  const { page } = tondo;
+  const transcript = page.getByRole("region", { name: "Transcript" });
+  await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
+  const gap = await transcript.evaluate(async (list) => {
+    const ended = new Promise<void>((resolve) => {
+      list.addEventListener("scrollend", () => resolve(), { once: true });
+    });
+    list.scrollBy({ top: -20, behavior: "smooth" });
+    await ended;
+    return list.scrollHeight - list.scrollTop - list.clientHeight;
+  });
+  expect(gap).toBeGreaterThanOrEqual(19);
+  expect(gap).toBeLessThanOrEqual(21);
+  await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "true");
+});
+
+test("keyboard navigation reaches both ends of the virtualized history", async () => {
+  const { page } = tondo;
+  const transcript = page.getByRole("region", { name: "Transcript" });
+  await transcript.focus();
+  await transcript.press("Home");
+  await expect(page.locator('[data-index="0"]')).toBeInViewport();
+  await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "false");
+  await transcript.press("End");
+  await expect(page.locator(`[data-index="${LAST_TRANSCRIPT_ROW}"]`)).toBeInViewport();
+  await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
+  await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "true");
+});
+
 test("a link in a reply asks before it opens, in a dialog that takes focus", async () => {
   const { app, page } = tondo;
   const opened = await captureOpenExternal(app);
@@ -70,7 +100,7 @@ test("the timeline stays at the bottom while pi streams", async () => {
   test.setTimeout(STREAM_TIMEOUT + 30_000);
   const { page } = tondo;
 
-  // Legend List scrolls to the end in the frame after a row grows or arrives,
+  // The timeline scrolls to the end after a growing row is measured,
   // so a frame can end a few hundred pixels short of the end. How long the view
   // trails depends on the machine, so `pnpm perf` holds that to its budget.
   // This test checks what holds on any machine, after each frame paints while

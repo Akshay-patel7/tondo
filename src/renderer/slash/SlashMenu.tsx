@@ -4,7 +4,6 @@
 // moves the highlight, so the menu follows the ARIA listbox pattern with
 // aria-activedescendant.
 import { useLayoutEffect } from "react";
-import { Badge } from "../ui/badge";
 import type { SlashItem } from "./menu";
 
 const SOURCES: Record<SlashItem["source"], string> = {
@@ -46,7 +45,7 @@ export function SlashMenu({
       className="max-h-64 overflow-y-auto border-b border-border p-1.5"
     >
       {items.length === 0 ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground">No matching command.</p>
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">No matching command.</p>
       ) : null}
       {items.map((item, index) => {
         const unavailable = item.unavailable !== undefined;
@@ -60,7 +59,7 @@ export function SlashMenu({
             data-source={item.source}
             onPointerMove={() => onHighlight(index)}
             onClick={() => onPick(item)}
-            className="flex items-center gap-3 rounded-control px-2.5 py-1 text-sm aria-disabled:opacity-60 aria-selected:bg-accent aria-selected:text-accent-foreground"
+            className="flex h-7 items-center gap-3 rounded-control px-2 text-sm aria-disabled:opacity-60 aria-selected:bg-selected aria-selected:text-foreground"
           >
             <span className="max-w-[45%] shrink-0 truncate">
               <span className="font-medium">/{item.name}</span>
@@ -74,9 +73,9 @@ export function SlashMenu({
             >
               {item.unavailable ?? item.description}
             </span>
-            <Badge variant={unavailable ? "outline" : "secondary"}>
+            <span className="shrink-0 text-xs text-faint-foreground">
               {unavailable ? "Not in Tondo yet" : SOURCES[item.source]}
-            </Badge>
+            </span>
           </div>
         );
       })}

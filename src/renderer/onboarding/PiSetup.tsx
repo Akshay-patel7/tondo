@@ -14,10 +14,8 @@ import { isMac } from "../platform";
 import { openSettings } from "../settings/store";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import { INSTALL_PI } from "./pi";
 import { SetupCard } from "./SetupCard";
-
-/** The command that installs pi, or updates it to the latest version. */
-const INSTALL_PI = "npm install -g @earendil-works/pi-coding-agent";
 
 const TITLES: Readonly<Record<PiProblem["kind"], string>> = {
   "not-found": "pi isn't installed",
@@ -66,7 +64,7 @@ export function PiSetup({ problem }: { problem: PiProblem }) {
             <Settings data-icon="inline-start" aria-hidden />
             Open settings
           </Button>
-          <Button variant="outline" disabled={!connected} onClick={choosePiPath}>
+          <Button variant="neutral" disabled={!connected} onClick={choosePiPath}>
             <FolderOpen data-icon="inline-start" aria-hidden />
             Choose pi…
           </Button>
@@ -80,7 +78,7 @@ export function PiSetup({ problem }: { problem: PiProblem }) {
       <p className="break-words text-muted-foreground">{whatTondoTried(problem)}</p>
       <div>
         <p>{NEXT_STEPS[problem.kind]}</p>
-        <code className="mt-2 block rounded-control border border-border bg-muted px-3 py-2 font-mono text-xs select-all">
+        <code className="mt-2 block rounded-control bg-terminal-tail px-3 py-2 font-mono text-xs leading-4.5 break-words select-all">
           {INSTALL_PI}
         </code>
       </div>

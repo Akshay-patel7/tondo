@@ -12,8 +12,9 @@ const NEARLY_FULL = 90;
 
 /**
  * How much of the model's context window the conversation fills, from pi's
- * get_session_stats. It takes keyboard focus so the token counts in its
- * tooltip reach the keyboard too, and screen readers hear them as its description.
+ * get_session_stats: a 16px ring and the percentage. It takes keyboard focus
+ * so the token counts in its tooltip reach the keyboard too, and screen
+ * readers hear them as its description.
  */
 export function ContextMeter({ context }: { context: NonNullable<PiSession["context"]> }) {
   const { tokens, contextWindow, percent } = context;
@@ -37,18 +38,18 @@ export function ContextMeter({ context }: { context: NonNullable<PiSession["cont
             tabIndex={0}
             aria-label={label}
             aria-description={detail}
-            className="flex size-7 items-center justify-center rounded-full focus-visible:focus-ring"
+            className="flex h-7 items-center gap-1 rounded-chip text-2xs text-faint-foreground tabular-nums focus-visible:focus-ring"
           />
         }
       >
-        <svg viewBox="0 0 24 24" className="size-5 -rotate-90" aria-hidden="true">
+        <svg viewBox="0 0 24 24" className="size-4 -rotate-90" aria-hidden="true">
           <circle
             cx="12"
             cy="12"
             r={RADIUS}
             fill="none"
             strokeWidth="3"
-            className="stroke-muted-foreground/25"
+            className="stroke-foreground/10"
           />
           <circle
             cx="12"
@@ -59,9 +60,10 @@ export function ContextMeter({ context }: { context: NonNullable<PiSession["cont
             strokeLinecap="round"
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={CIRCUMFERENCE * (1 - filled / 100)}
-            className={filled > NEARLY_FULL ? "stroke-destructive" : "stroke-muted-foreground/70"}
+            className={filled > NEARLY_FULL ? "stroke-destructive" : "stroke-muted-foreground"}
           />
         </svg>
+        {percent === null ? null : formatPercent(percent)}
       </TooltipTrigger>
       <TooltipContent>
         <span className="flex flex-col">

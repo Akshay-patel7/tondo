@@ -494,6 +494,18 @@ export class Workspace {
           this.send({ v, type: "pi-accounts", accounts, error });
         });
         break;
+      case "get-project-git":
+        this.run(async () => {
+          const { projectId } = message;
+          // Home can queue a read before the removal's sidebar update arrives.
+          // Discard it during removal and after the project has been forgotten.
+          const project = this.store.projects().find((candidate) => candidate.id === projectId);
+          if (!project || this.removingProjects.has(projectId)) return;
+          const status = await this.git.status(project.path, false);
+          const git = status.root !== null;
+          this.send({ v, type: "project-git", projectId, git, branch: status.branch });
+        });
+        break;
     }
   }
 

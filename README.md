@@ -70,13 +70,13 @@ Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/set
 
 Tondo saves these in `settings.json` in its app data folder.
 
-Everything works from the keyboard. Tab moves between the sidebar, the transcript, the composer and the panels. In the sidebar and the Git toolbar, the arrow keys, Home and End move, and Shift+F10 opens a row's menu. Escape closes a panel and puts focus back where it was. Every control has a name for screen readers.
+Everything works from the keyboard. Tab moves between the sidebar, the transcript, the composer and the panels. In the sidebar and the Git menu, the arrow keys, Home and End move, and Shift+F10 opens a row's menu. Escape closes a panel and puts focus back where it was. Every control has a name for screen readers.
 
 ## Git actions
 
-Local threads share the project's checkout. **New worktree** creates a branch and a new thread in `<userData>/worktrees/<thread-id>`. It starts from a committed base, without copying uncommitted files. pi, its terminal, file completion and turn checkpoints all use that checkout. Existing threads do not move between local and worktree modes.
+The header's **Commit & push** button commits and then pushes; its chevron opens the menu with every other Git action, and the pill under the composer shows the checkout, its changes and how far it is ahead or behind. Local threads share the project's checkout. **New worktree** creates a branch and a new thread in `<userData>/worktrees/<thread-id>`. It starts from a committed base, without copying uncommitted files. pi, its terminal, file completion and turn checkpoints all use that checkout. Existing threads do not move between local and worktree modes.
 
-Each write needs an explicit action. **Commit** stages all changed and nonignored untracked files in the checkout, then runs Git with your hooks and signing configuration. **Push** never force-pushes. **Create PR** requires the branch to be pushed first and uses the GitHub host from the remote URL. Missing or logged-out `gh` is reported in the toolbar. PR links open in your browser. Ahead/behind counts use local tracking refs; Tondo does not fetch, pull or merge automatically.
+Each write needs an explicit action. **Commit** stages all changed and nonignored untracked files in the checkout, then runs Git with your hooks and signing configuration. **Push** never force-pushes. **Create PR** requires the branch to be pushed first and uses the GitHub host from the remote URL. Missing or logged-out `gh` is reported in the Git menu. PR links open in your browser. Ahead/behind counts use local tracking refs; Tondo does not fetch, pull or merge automatically.
 
 Branch changes are blocked while pi is starting or working in the same checkout, or while one of its Tondo terminals remains open. Git actions run one at a time. Sending during an action restores the prompt to the draft with an error, so you can retry afterward. External terminals and editors are not locked by Tondo.
 

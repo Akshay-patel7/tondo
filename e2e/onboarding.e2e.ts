@@ -1,7 +1,7 @@
 // Onboarding with the real pi, offline: a pi Tondo can't find or can't use, pi
 // with no model you have credentials for, the header's sign-in, which shows
 // only while no provider is set up, a project that needs trust, and the
-// welcome on first launch.
+// welcome's checklist on first launch.
 import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import {
@@ -17,7 +17,14 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { bringToFront, launchTondo, type Tondo } from "./launch";
-import { addProject, launchWithPi, PI_CLI, PI_START_TIMEOUT_MS, waitForPi } from "./pi";
+import {
+  addProject,
+  answerFolderDialog,
+  launchWithPi,
+  PI_CLI,
+  PI_START_TIMEOUT_MS,
+  waitForPi,
+} from "./pi";
 import { piGroup, piGroups } from "./processes";
 
 test.describe.configure({ timeout: 60_000 });
@@ -229,13 +236,17 @@ for (const size of ["default", "minimum"] as const) {
       );
       await page.waitForFunction(() => window.innerWidth === 840 && window.innerHeight === 620);
     }
-    // A Git checkout, as most projects are, shows the whole Git toolbar.
+    // A Git checkout, as most projects are, shows every Git control: the
+    // header's Git actions and the Git pill under the composer.
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
     await addProject(tondo, project);
 
     const prompt = page.getByRole("region", { name: "Sign in to a provider" });
     await expect(prompt).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
-    await expect(page.getByRole("toolbar", { name: "Git" })).toBeVisible();
+    // Both read the same Git status, so the header's control shows the pill is in too.
+    await expect(
+      page.locator("header").getByRole("button", { name: "Git actions", exact: true }),
+    ).toBeVisible();
     // With nothing set up, the header offers sign-in too.
     await expect(headerSignIn(page)).toBeVisible();
     await prompt.getByRole("button", { name: "Open sign-in terminal" }).click();
@@ -302,14 +313,17 @@ test("with nothing set up, the header offers sign-in too, and it opens the sign-
 });
 
 // pi lists Anthropic's models offline for either kind of saved sign-in.
+// `saved` is how the welcome and Settings > Accounts name the kind.
 const SAVED_SIGN_INS = [
   {
     kind: "an API key",
+    saved: "API key",
     screenshot: "header-saved-api-key.png",
     auth: { anthropic: { type: "api_key", key: "synthetic-offline-test-key" } },
   },
   {
     kind: "an account",
+    saved: "Claude Pro/Max subscription",
     screenshot: "header-saved-account.png",
     auth: {
       anthropic: {
@@ -392,21 +406,51 @@ test("a project that needs trust asks first, and Tondo keeps the answer", async 
   expect(readSettings(tondo).projectTrust).toEqual({ [project]: true });
 });
 
-test("the welcome says whether Tondo found pi, and the pi you choose fixes it", async () => {
+test("first launch offers a project folder without an onboarding checklist", async () => {
+  tondo = await launchWithPi({ workDir, script: { responses: [] } });
+  const { app, page } = tondo;
+  const empty = page.getByRole("main");
+  await expect(empty.getByRole("heading", { name: "Add a project" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Getting started" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^New thread/ })).toBeDisabled();
+  await answerFolderDialog(app, project);
+  await empty.getByRole("button", { name: "Add project…" }).click();
+  await waitForPi(page);
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+});
+
+test("before adding a project, Settings can repair a missing pi", async () => {
   const pi = installPi(path.join(workDir, "bin"));
   tondo = await launchTondo({ settings: { piPath: "/nonexistent/pi" } });
   const { app, page } = tondo;
-
-  await expect(page.getByRole("heading", { name: "Welcome to Tondo" })).toBeVisible();
-  const welcome = page.getByRole("main");
-  await expect(welcome).toContainText("pi isn't installed.");
-  await expect(welcome.getByRole("button", { name: "Add project…" })).toBeEnabled();
-
+  await expect(page.getByRole("navigation", { name: "Threads" })).toContainText("pi not found");
+  await expect(page.getByRole("main").getByRole("button", { name: "Add project…" })).toBeEnabled();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("region", { name: "Settings", exact: true });
+  await settings
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "pi", exact: true })
+    .click();
   await answerFileDialog(app, pi);
-  await welcome.getByRole("button", { name: "Choose pi…" }).click();
-  await expect(welcome).toContainText(`Found pi ${PI_VERSION} at the path in Settings.`);
-  await expect(welcome.getByRole("button", { name: "Choose pi…" })).toHaveCount(0);
+  await settings.getByRole("button", { name: "Choose pi…" }).click();
+  await expect(settings).toContainText("pi " + PI_VERSION);
   expect(readSettings(tondo).piPath).toBe(pi);
+});
+
+test("Check again in Settings rereads the pi path before any project exists", async () => {
+  const pi = installPi(path.join(workDir, "bin"));
+  tondo = await launchTondo({ settings: { piPath: "/nonexistent/pi" } });
+  const { page, profileDir } = tondo;
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("region", { name: "Settings", exact: true });
+  await settings
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "pi", exact: true })
+    .click();
+  await expect(settings.getByRole("button", { name: "Check again" })).toBeEnabled();
+  writeFileSync(path.join(profileDir, "settings.json"), JSON.stringify({ piPath: pi }));
+  await settings.getByRole("button", { name: "Check again" }).click();
+  await expect(settings).toContainText("pi " + PI_VERSION);
 });
 
 test("pi's stderr in the pi stopped banner reads as plain text, without terminal colors", async () => {

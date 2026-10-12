@@ -5,9 +5,10 @@
 // Shiki looks colors up.
 
 /**
- * For pierre-light, the diffs' light theme. A diff line's backgrounds are
- * white, the added and removed lines' tints, and the changed words' highlights
- * on those tints.
+ * For pierre-light, the diffs' light theme. Code sits on --sidebar (code.tsx),
+ * so a diff line's backgrounds are that surface, the added and removed lines'
+ * 11% tints of --addition and --deletion, and the changed words' 8% more of
+ * each on those tints.
  */
 export const DIFF_LIGHT: Readonly<Record<string, string>> = {
   "#737373": "#5c5c5c", // comments
@@ -27,7 +28,7 @@ export const DIFF_LIGHT: Readonly<Record<string, string>> = {
   "#16a994": "#05685b", // escapes
 };
 
-/** For pierre-dark, against the same backgrounds in its colors. */
+/** For pierre-dark, against the dark surface, tints and 20% word highlights. */
 export const DIFF_DARK: Readonly<Record<string, string>> = {
   "#737373": "#b0b0b0", // comments
   "#636363": "#b0b0b0", // punctuation, operators

@@ -3,13 +3,20 @@
 // pi-claude-subscription-connector shows, and sign-in in the thread's sign-in
 // terminal: Claude's opens pi's Anthropic menu, and the other leaves pi's own
 // /login to pick any provider.
-import { CircleAlert, CircleCheck, CircleDashed, LogIn } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleDashed } from "lucide-react";
 import { useEffect, useId, type ReactNode } from "react";
 import type { OpenThread, PiAccount } from "../../shared/protocol";
 import { openTerminal, requestPiAccounts, useHost } from "../connection";
 import { useExtensionUi } from "../extensionUi/store";
 import { Button } from "../ui/button";
-import { Loading, SectionHeading, SettingsGroup } from "./rows";
+import {
+  CardGroup,
+  CardGroupRow,
+  CardGroupRowDescription,
+  CardGroupRowText,
+  CardGroupRowTitle,
+} from "../ui/card-group";
+import { Footnote, Loading } from "./rows";
 import { closeSettings } from "./store";
 
 /** The status pi-claude-subscription-connector shows Claude's usage in, while a thread uses Claude over OAuth. */
@@ -33,28 +40,18 @@ export function AccountsSettings() {
     requestPiAccounts();
   }, []);
 
+  if (answer === null) return <Loading>Looking for pi's sign-ins…</Loading>;
+  if (answer.error === null) return <Accounts accounts={answer.accounts} />;
   return (
-    <div className="flex flex-col gap-4">
-      <SectionHeading
-        title="Accounts"
-        description="The providers pi is signed in to. Tondo never reads their tokens or keys."
-      />
-      {answer === null ? (
-        <Loading>Looking for pi's sign-ins…</Loading>
-      ) : answer.error === null ? (
-        <Accounts accounts={answer.accounts} />
-      ) : (
-        <SettingsGroup>
-          <div className="flex items-start gap-2.5 px-4 py-3.5">
-            <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-destructive" />
-            <div className="flex min-w-0 flex-col gap-1">
-              <p className="text-sm font-medium">Tondo can't list pi's sign-ins</p>
-              <p className="text-xs text-muted-foreground">{answer.error}</p>
-            </div>
-          </div>
-        </SettingsGroup>
-      )}
-    </div>
+    <CardGroup>
+      <CardGroupRow className="grid grid-cols-[16px_minmax(0,1fr)_auto]">
+        <CircleAlert aria-hidden className="mt-px size-4 self-start text-destructive" />
+        <CardGroupRowText>
+          <CardGroupRowTitle>Tondo can't list pi's sign-ins</CardGroupRowTitle>
+          <p className="text-xs text-muted-foreground">{answer.error}</p>
+        </CardGroupRowText>
+      </CardGroupRow>
+    </CardGroup>
   );
 }
 
@@ -64,7 +61,7 @@ function Accounts({ accounts }: { accounts: readonly PiAccount[] }) {
   const others = accounts.filter((account) => account.provider !== "anthropic");
   return (
     <>
-      <SettingsGroup>
+      <CardGroup>
         <AnthropicAccount
           account={accounts.find((account) => account.provider === "anthropic")}
           blocked={blocked}
@@ -83,21 +80,15 @@ function Accounts({ accounts }: { accounts: readonly PiAccount[] }) {
           status="Run /login in the sign-in terminal to pick one."
           signedIn={false}
           control={
-            <SignInButton variant="outline" blocked={blocked} reasonId={reasonId}>
+            <SignInButton variant="neutral" blocked={blocked} reasonId={reasonId}>
               Sign in to a provider
             </SignInButton>
           }
         />
-      </SettingsGroup>
+      </CardGroup>
       {/* Both sign-ins run in the thread's terminal, so one reason covers them. */}
-      {blocked === null ? null : (
-        <p id={reasonId} className="text-xs text-muted-foreground">
-          {blocked}
-        </p>
-      )}
-      {others.length === 0 ? (
-        <p className="text-xs text-muted-foreground">pi has no other saved sign-ins.</p>
-      ) : null}
+      {blocked === null ? null : <Footnote id={reasonId}>{blocked}</Footnote>}
+      {others.length === 0 ? <Footnote>pi has no other saved sign-ins.</Footnote> : null}
     </>
   );
 }
@@ -122,7 +113,7 @@ function AnthropicAccount({
       control={
         <SignInButton
           provider="anthropic"
-          variant={account === undefined ? "default" : "outline"}
+          variant={account === undefined ? "default" : "neutral"}
           blocked={blocked}
           reasonId={reasonId}
         >
@@ -131,9 +122,11 @@ function AnthropicAccount({
       }
     >
       {usage === undefined ? null : (
-        <dl className="flex flex-wrap gap-x-1.5">
-          <dt className="font-medium text-foreground">Usage</dt>
-          <dd>{usage}</dd>
+        <dl className="flex flex-wrap gap-x-1 text-xs text-muted-foreground">
+          <dt>Usage</dt>
+          <dd>
+            <span aria-hidden>·</span> {usage}
+          </dd>
         </dl>
       )}
     </AccountRow>
@@ -152,7 +145,7 @@ function SignInButton({
   children,
 }: {
   provider?: string;
-  variant: "default" | "outline";
+  variant: "default" | "neutral";
   blocked: string | null;
   reasonId: string;
   children: ReactNode;
@@ -160,7 +153,6 @@ function SignInButton({
   return (
     <Button
       variant={variant}
-      size="sm"
       disabled={blocked !== null}
       aria-describedby={blocked === null ? undefined : reasonId}
       onClick={() => {
@@ -168,7 +160,6 @@ function SignInButton({
         openTerminal("login", provider);
       }}
     >
-      <LogIn aria-hidden />
       {children}
     </Button>
   );
@@ -189,29 +180,25 @@ function AccountRow({
 }) {
   const nameId = useId();
   return (
-    <div
+    // A 16px status icon, the text and the action. With the row's 16px gap, the
+    // text starts 48px in, as in the handoff's 20px column and 12px gap.
+    <CardGroupRow
       role="group"
       aria-labelledby={nameId}
-      className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3.5"
+      className="grid grid-cols-[16px_minmax(0,1fr)_auto]"
     >
-      <div className="flex min-w-56 flex-1 items-start gap-2.5">
-        {signedIn ? (
-          <CircleCheck aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
-        ) : (
-          <CircleDashed aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        )}
-        <div className="flex min-w-0 flex-col gap-1">
-          <p id={nameId} className="text-sm font-medium">
-            {name}
-          </p>
-          <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-            <p>{status}</p>
-            {children}
-          </div>
-        </div>
-      </div>
+      {signedIn ? (
+        <CircleCheck aria-hidden className="mt-px size-4 self-start text-success" />
+      ) : (
+        <CircleDashed aria-hidden className="mt-px size-4 self-start text-faint-foreground" />
+      )}
+      <CardGroupRowText>
+        <CardGroupRowTitle id={nameId}>{name}</CardGroupRowTitle>
+        <CardGroupRowDescription>{status}</CardGroupRowDescription>
+        {children}
+      </CardGroupRowText>
       {control}
-    </div>
+    </CardGroupRow>
   );
 }
 

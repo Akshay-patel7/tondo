@@ -10,25 +10,28 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { create } from "zustand";
 import type { CheckpointFile, CheckpointTurn } from "../../shared/checkpoints";
 import { listCheckpoints, readCheckpoint, useCheckpoints, useHost } from "../connection";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
-import { Input } from "../ui/input";
+import { FilterInput } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
+import { useDiffPanel, useDiffTurn } from "./store";
 
-export const useDiffPanel = create<boolean>(() => false);
-export function toggleDiffPanel(): void {
-  useDiffPanel.setState(!useDiffPanel.getState(), true);
-}
+export { toggleDiffPanel, useDiffPanel } from "./store";
 
 const DiffView = lazy(() => import("../tools/code").then((code) => ({ default: code.DiffView })));
 
 const LATEST = "latest";
+
+// A chosen turn belongs to its thread. Another thread starts on its latest
+// turn, whether the panel is open at the time or not.
+useHost.subscribe((host, previous) => {
+  if (host.thread?.id !== previous.thread?.id) useDiffTurn.setState(null, true);
+});
 
 const STATUS_NAMES: Record<string, string> = {
   A: "Added",
@@ -40,10 +43,10 @@ const STATUS_NAMES: Record<string, string> = {
   U: "Unmerged",
 };
 
-// Modified, the usual case, stays muted. Warning text would fall below 4.5:1 on the light card.
 const STATUS_COLORS: Record<string, string> = {
-  A: "text-success",
-  D: "text-destructive",
+  A: "text-addition",
+  D: "text-deletion",
+  M: "text-warning-text",
   R: "text-info",
 };
 
@@ -51,14 +54,17 @@ export function DiffPanel() {
   const threadId = useHost((host) => host.thread?.id);
   const connection = useHost((host) => host.connection);
   const turns = useCheckpoints((state) => state.turns);
-  const shared = useCheckpoints((state) => state.shared);
-  const [chosen, setChosen] = useState<number | null>(null);
+  const chosen = useDiffTurn();
   const opener = useRef<Element | null>(null);
   const turn = chosen === null ? turns.at(-1) : turns.find((item) => item.turn === chosen);
+  const latest = turns.at(-1);
   const turnItems = [
     { value: LATEST, label: "Latest turn" },
     ...turns.map((item) => ({ value: String(item.turn), label: `Turn ${item.turn}` })),
   ];
+  // "Turn 2 of 3" on the trigger; the list's "Latest turn" follows new turns as they finish.
+  const shownTurn = turn ? `Turn ${turn.turn} of ${latest?.turn ?? turn.turn}` : null;
+  const shown = shownTurn ?? (chosen === null ? "Latest turn" : `Turn ${chosen}`);
 
   // Closing gives focus back to whatever had it when the panel opened, such as the Changes button.
   useLayoutEffect(() => {
@@ -93,46 +99,40 @@ export function DiffPanel() {
     // thread beside it keeps about 320 px (sidebar/layout.ts).
     <aside
       aria-label="Turn changes"
-      className="flex w-[min(420px,45vw)] min-w-0 shrink-0 flex-col border-l border-border bg-card"
+      className="flex w-[min(432px,45vw)] min-w-0 shrink-0 flex-col border-l border-border bg-sidebar"
       onKeyDown={onKeyDown}
     >
-      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border ps-4 pe-2">
-        <h2 className="text-sm font-medium">Turn changes</h2>
-        <Button variant="ghost" size="xs" aria-label="Close changes" onClick={close}>
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border ps-4 pe-2">
+        <h2 className="text-sm font-medium">Changes</h2>
+        <Select
+          items={turnItems}
+          value={chosen === null ? LATEST : String(chosen)}
+          onValueChange={(value) =>
+            useDiffTurn.setState(value === null || value === LATEST ? null : Number(value), true)
+          }
+        >
+          <SelectTrigger variant="outline-sm" aria-label="Checkpoint turn">
+            <SelectValue>{() => shown}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {turnItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          variant="faint-ghost"
+          size="icon"
+          aria-label="Close changes"
+          className="ms-auto"
+          onClick={close}
+        >
           <X aria-hidden />
-          Close
         </Button>
       </div>
-      <div className="flex shrink-0 flex-col gap-2 border-b border-border p-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">Turn</span>
-          <Select
-            items={turnItems}
-            value={chosen === null ? LATEST : String(chosen)}
-            onValueChange={(value) =>
-              setChosen(value === null || value === LATEST ? null : Number(value))
-            }
-          >
-            <SelectTrigger aria-label="Checkpoint turn" className="min-w-0 flex-1">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {turnItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Each turn includes steering and follow-ups until pi becomes idle.{" "}
-          {shared
-            ? "Other open threads share this folder. Their edits can appear here."
-            : "Checkpoints cover the whole checkout, including edits made outside this thread."}
-        </p>
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
+      <div className="flex min-h-0 flex-1 flex-col">
         <TurnDiff turn={turn} />
       </div>
     </aside>
@@ -144,44 +144,63 @@ function TurnDiff({ turn }: { turn: CheckpointTurn | undefined }) {
   const diff = useCheckpoints((state) => state.diff);
   const unavailable = useCheckpoints((state) => state.unavailable);
   const preparing = useHost((host) => host.thread?.preparing ?? false);
-  if (!turn && preparing) return <Working>Preparing turn checkpoint…</Working>;
+  if (!turn && preparing)
+    return (
+      <Message>
+        <Working>Preparing turn checkpoint…</Working>
+      </Message>
+    );
   if (!turn)
     return (
-      <Notice
-        title={unavailable ? "Turn changes unavailable" : "No turn checkpoints yet"}
-        description={unavailable ?? "Send a prompt to record file changes."}
-      />
+      <Message>
+        <Notice
+          title={unavailable ? "Turn changes unavailable" : "No turn checkpoints yet"}
+          description={unavailable ?? "Send a prompt to record file changes."}
+        />
+      </Message>
     );
   if (turn.state === "running")
     return (
-      <p role="status" className="text-sm text-muted-foreground">
-        {`Turn ${turn.turn} is running.`}
-      </p>
+      <Message>
+        <p role="status" className="text-sm text-muted-foreground">
+          {`Turn ${turn.turn} is running.`}
+        </p>
+      </Message>
     );
-  if (turn.state === "capturing") return <Working>{`Capturing turn ${turn.turn}…`}</Working>;
+  if (turn.state === "capturing")
+    return (
+      <Message>
+        <Working>{`Capturing turn ${turn.turn}…`}</Working>
+      </Message>
+    );
   if (turn.state === "unavailable")
-    return <Notice title={`No checkpoint for turn ${turn.turn}`} description={turn.reason} />;
-  if (resultTurn !== turn.turn || diff === null) return <Working>Loading changes…</Working>;
+    return (
+      <Message>
+        <Notice title={`No checkpoint for turn ${turn.turn}`} description={turn.reason} />
+      </Message>
+    );
+  if (resultTurn !== turn.turn || diff === null)
+    return (
+      <Message>
+        <Working>Loading changes…</Working>
+      </Message>
+    );
   if (diff.error !== null)
     return (
-      <Alert variant="destructive" role="alert">
-        <CircleAlert aria-hidden />
-        <AlertTitle>Couldn't read this turn's changes</AlertTitle>
-        <AlertDescription>{diff.error}</AlertDescription>
-      </Alert>
+      <Message>
+        <Alert variant="destructive" role="alert">
+          <CircleAlert aria-hidden />
+          <AlertTitle>Couldn't read this turn's changes</AlertTitle>
+          <AlertDescription>{diff.error}</AlertDescription>
+        </Alert>
+      </Message>
     );
   // A ready turn's reason names changes the checkpoint couldn't hold, such as inside submodules.
-  if (!turn.reason) return <Files key={turn.turn} files={diff.files} />;
-  return (
-    <div className="flex flex-col gap-3">
-      <Alert variant="info">
-        <Info aria-hidden />
-        <AlertTitle>Some changes aren't shown</AlertTitle>
-        <AlertDescription>{turn.reason}</AlertDescription>
-      </Alert>
-      <Files key={turn.turn} files={diff.files} />
-    </div>
-  );
+  return <Files key={turn.turn} files={diff.files} note={turn.reason} />;
+}
+
+function Message({ children }: { children: ReactNode }) {
+  return <div className="flex flex-col gap-3 p-3">{children}</div>;
 }
 
 function Working({ children }: { children: ReactNode }) {
@@ -207,58 +226,114 @@ function Notice({ title, description }: { title: string; description: string | n
   );
 }
 
-function Files({ files }: { files: readonly CheckpointFile[] }) {
+function Partial({ note }: { note: string }) {
+  return (
+    <Alert variant="info">
+      <Info aria-hidden />
+      <AlertTitle>Some changes aren't shown</AlertTitle>
+      <AlertDescription>{note}</AlertDescription>
+    </Alert>
+  );
+}
+
+function Files({ files, note }: { files: readonly CheckpointFile[]; note: string | null }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const file = files.find((item) => item.path === selected) ?? files[0];
-  if (!file) return <Notice title="No file changes in this turn" description={null} />;
+  if (!file)
+    return (
+      <Message>
+        {note ? <Partial note={note} /> : null}
+        <Notice title="No file changes in this turn" description={null} />
+      </Message>
+    );
   const matching = files.filter((item) => item.path.toLowerCase().includes(filter.toLowerCase()));
   const listed = matching.slice(0, 200);
   return (
-    <div className="flex flex-col gap-3">
-      <h3 className="text-xs font-medium">Changed files ({files.length})</h3>
-      <Input
-        aria-label="Filter changed files"
-        placeholder="Filter files…"
-        value={filter}
-        onChange={(event) => setFilter(event.target.value)}
-      />
-      <nav aria-label="Changed files">
-        <ScrollArea className="max-h-52">
+    <>
+      {note ? (
+        <div className="px-2 pt-3">
+          <Partial note={note} />
+        </div>
+      ) : null}
+      <div className="shrink-0 px-2 pt-3 pb-1">
+        <FilterInput
+          aria-label="Filter changed files"
+          placeholder="Filter files"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+      </div>
+      <nav aria-label="Changed files" className="shrink-0 border-b border-border">
+        <ScrollArea className="max-h-64">
           {/* The padding keeps focus rings inside the scrolling box, which would clip them. */}
-          <div className="p-1">
+          <div className="px-2 pt-1 pb-2">
             <FileTree files={listed} prefix="" selected={file.path} onSelect={setSelected} />
           </div>
         </ScrollArea>
       </nav>
       {matching.length > listed.length ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="shrink-0 px-4 py-2 text-xs text-muted-foreground">
           Showing 200 of {matching.length} matches. Filter by path to find a file.
         </p>
       ) : null}
-      <h3 className="font-mono text-xs break-all">
-        {file.previousPath ? `${file.previousPath} → ` : ""}
-        {file.path}
-      </h3>
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-4 font-mono text-xs text-muted-foreground">
+        <span className="truncate" title={file.path}>
+          {file.previousPath ? `${file.previousPath} → ` : ""}
+          {file.path}
+        </span>
+        <Stats patch={file.patch} className="ms-auto text-2xs" />
+      </div>
       <FilePatch file={file} />
-    </div>
+    </>
   );
 }
 
 function FilePatch({ file }: { file: CheckpointFile }) {
   // The host lists a file with an empty patch when its diff doesn't fit the turn's cap.
-  if (!file.patch)
-    return (
-      <p className="text-sm text-muted-foreground">This file's diff is too large to preview.</p>
-    );
-  if (file.binary)
-    return <p className="text-sm text-muted-foreground">Binary file changed. No text preview.</p>;
-  if (!/^@@ /m.test(file.patch))
-    return <p className="text-sm text-muted-foreground">File metadata changed. No text changes.</p>;
+  if (!file.patch) return <Note>This file's diff is too large to preview.</Note>;
+  if (file.binary) return <Note>Binary file changed. No text preview.</Note>;
+  if (!/^@@ /m.test(file.patch)) return <Note>File metadata changed. No text changes.</Note>;
   return (
-    <Suspense fallback={<Working>Loading diff…</Working>}>
-      <DiffView patch={file.patch} />
+    <Suspense
+      fallback={
+        <Message>
+          <Working>Loading diff…</Working>
+        </Message>
+      }
+    >
+      <DiffView patch={file.patch} fill />
     </Suspense>
+  );
+}
+
+function Note({ children }: { children: ReactNode }) {
+  return <p className="p-3 text-sm text-muted-foreground">{children}</p>;
+}
+
+/** The lines a unified patch adds and removes. Nothing for a binary file or a patch left out. */
+function countLines(patch: string): { added: number; removed: number } | null {
+  if (!patch) return null;
+  let added = 0;
+  let removed = 0;
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (!inHunk) continue;
+    else if (line.startsWith("+")) added++;
+    else if (line.startsWith("-")) removed++;
+  }
+  return { added, removed };
+}
+
+function Stats({ patch, className }: { patch: string; className?: string }) {
+  const counts = countLines(patch);
+  if (!counts) return null;
+  return (
+    <span className={`flex gap-2 ${className ?? ""}`}>
+      <span className="min-w-7 text-right text-addition">+{counts.added}</span>
+      <span className="min-w-7 text-right text-deletion">−{counts.removed}</span>
+    </span>
   );
 }
 
@@ -284,21 +359,21 @@ function FileTree({
   ];
   const leaves = files.filter((file) => !file.path.slice(prefix.length).includes("/"));
   return (
-    <ul className="flex flex-col gap-0.5 text-xs">
+    <ul className="flex flex-col gap-0.5 font-mono text-xs">
       {folders.map((folder) => {
         const childPrefix = `${prefix}${folder}/`;
         return (
           <li key={childPrefix}>
             <details open>
-              <summary className="flex cursor-pointer list-none items-center gap-1 rounded-control px-1 py-1 font-mono text-muted-foreground outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
+              <summary className="flex h-7 cursor-pointer list-none items-center gap-1 rounded-control px-2 text-faint-foreground outline-none select-none hover:bg-accent hover:text-foreground focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
                 {/* Only this folder's own state turns its chevron, not an open folder around it. */}
                 <ChevronRight
                   aria-hidden
-                  className="size-3.5 shrink-0 transition-transform [[open]>summary>&]:rotate-90"
+                  className="size-3 shrink-0 transition-transform [[open]>summary>&]:rotate-90"
                 />
                 {folder}/
               </summary>
-              <div className="pl-3">
+              <div className="ps-3">
                 <FileTree
                   files={files.filter((file) => file.path.startsWith(childPrefix))}
                   prefix={childPrefix}
@@ -345,21 +420,18 @@ function FileRow({
       aria-describedby={status ? statusId : undefined}
       aria-pressed={selected}
       onClick={() => onSelect(file.path)}
-      className="flex w-full items-center gap-2 rounded-control px-2 py-1 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:focus-ring aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+      className="grid h-7 w-full grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-x-2 rounded-control px-2 text-left outline-none hover:bg-accent focus-visible:focus-ring aria-pressed:bg-selected"
     >
-      <span
-        className={`w-3 shrink-0 font-mono ${STATUS_COLORS[file.status] ?? "text-muted-foreground"}`}
-      >
-        {file.status}
-      </span>
+      <span className={STATUS_COLORS[file.status] ?? "text-muted-foreground"}>{file.status}</span>
       {status ? (
         <span id={statusId} hidden>
           {status}
         </span>
       ) : null}
-      <span className="truncate font-mono" title={file.path}>
+      <span className="truncate" title={file.path}>
         {name}
       </span>
+      <Stats patch={file.patch} />
     </button>
   );
 }

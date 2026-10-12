@@ -12,7 +12,7 @@ import { cn } from "../lib/cn";
 // The mixes run in oklab: in oklch, mixing with a near-gray such as --card pulls
 // the hue toward the gray's meaningless one, which turns info olive.
 const alertVariants = cva(
-  "group/alert relative grid w-full grid-cols-[minmax(0,1fr)] content-start items-center gap-x-3 rounded-panel border px-4 py-3 text-left text-sm text-card-foreground has-data-[slot=alert-action]:grid-cols-[minmax(0,1fr)_auto] has-data-[slot=alert-description]:items-start has-[>svg]:grid-cols-[auto_minmax(0,1fr)] has-[>svg]:has-data-[slot=alert-action]:grid-cols-[auto_minmax(0,1fr)_auto] [&>svg]:row-span-2 [&>svg]:shrink-0 [&>svg:not([class*='size-'])]:size-4 has-data-[slot=alert-description]:[&>svg]:translate-y-0.5",
+  "group/alert relative grid w-full grid-cols-[minmax(0,1fr)] content-start items-center gap-x-3 rounded-card border px-4 py-3 text-left text-sm text-card-foreground has-data-[slot=alert-action]:grid-cols-[minmax(0,1fr)_auto] has-data-[slot=alert-description]:items-start has-[>svg]:grid-cols-[auto_minmax(0,1fr)] has-[>svg]:has-data-[slot=alert-action]:grid-cols-[auto_minmax(0,1fr)_auto] [&>svg]:row-span-2 [&>svg]:shrink-0 [&>svg:not([class*='size-'])]:size-4 has-data-[slot=alert-description]:[&>svg]:translate-y-0.5",
   {
     variants: {
       variant: {

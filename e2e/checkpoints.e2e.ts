@@ -27,7 +27,7 @@ import {
   waitForPi,
 } from "./pi";
 import { piGroups, processesIn } from "./processes";
-import { pickerOptions, pickOption } from "./ui";
+import { expectPicked, pickerOptions, pickOption } from "./ui";
 
 test.describe.configure({ timeout: 60_000 });
 let workDir: string;
@@ -124,6 +124,24 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   await expect(code).toContainText("export const answer = 41;");
   await expect(code).not.toContainText("export const answer = 43;");
   expect(readFileSync(path.join(project, ".git/index"))).toEqual(index);
+  // The chosen turn lives in the diffs store: it survives closing and reopening
+  // the panel, and a turn summary's View diff opens the panel on its own turn.
+  await panel.getByRole("button", { name: "Close changes" }).click();
+  await expect(panel).toHaveCount(0);
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await expectPicked(panel, "Checkpoint turn", "1");
+  await expect(panel.getByRole("combobox", { name: "Checkpoint turn" })).toContainText(
+    "Turn 1 of 2",
+  );
+  await pickOption(panel, "Checkpoint turn", "Latest turn");
+  await expect(code).toContainText("export const answer = 43;");
+  await panel.getByRole("button", { name: "Close changes" }).click();
+  await expect(panel).toHaveCount(0);
+  await page.getByRole("button", { name: "View diff" }).first().click();
+  await expectPicked(panel, "Checkpoint turn", "1");
+  await panel.getByRole("button", { name: "Show diff for src/answer.ts" }).click();
+  await expect(code).toContainText("export const answer = 41;");
+  await expect(code).not.toContainText("export const answer = 43;");
 
   const previousHost = await hostPid(tondo.app);
   process.kill(previousHost, "SIGKILL");
@@ -359,7 +377,7 @@ test("an oversized file and a nested repository's edits are explained, not hidde
   const panel = page.getByRole("complementary", { name: "Turn changes" });
   await send(page, "Write the files.");
   await expect(page.getByText("Wrote the files.", { exact: true })).toBeVisible();
-  await expect(panel).toContainText("Changed files (2)");
+  await expect(panel.getByRole("button", { name: /^Show diff for / })).toHaveCount(2);
   await expect(panel).toContainText(
     "Uncommitted changes inside nested repositories and submodules aren't shown: nested.",
   );

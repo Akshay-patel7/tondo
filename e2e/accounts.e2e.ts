@@ -159,7 +159,8 @@ async function openAccounts(page: Page) {
   await expect(page.getByRole("button", { name: "Add project", exact: true })).toBeEnabled();
   await page.keyboard.press("ControlOrMeta+Comma");
   const settings = page.getByRole("region", { name: "Settings", exact: true });
-  await expect(settings.getByRole("heading", { level: 1, name: "Settings" })).toBeFocused();
+  // The page's title is in the header, so focus starts on the section's heading.
+  await expect(settings.getByRole("heading", { level: 2 })).toBeFocused();
   await settings
     .getByRole("navigation", { name: "Settings sections" })
     .getByRole("button", { name: "Accounts", exact: true })
