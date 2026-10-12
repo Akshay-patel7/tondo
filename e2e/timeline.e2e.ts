@@ -33,6 +33,23 @@ test("the transcript opens at the bottom", async () => {
   await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "true");
 });
 
+test("a small animated scroll is not pulled back inside the follow band", async () => {
+  const { page } = tondo;
+  const transcript = page.getByRole("region", { name: "Transcript" });
+  await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
+  const gap = await transcript.evaluate(async (list) => {
+    const ended = new Promise<void>((resolve) => {
+      list.addEventListener("scrollend", () => resolve(), { once: true });
+    });
+    list.scrollBy({ top: -20, behavior: "smooth" });
+    await ended;
+    return list.scrollHeight - list.scrollTop - list.clientHeight;
+  });
+  expect(gap).toBeGreaterThanOrEqual(19);
+  expect(gap).toBeLessThanOrEqual(21);
+  await expect(page.getByTestId("timeline")).toHaveAttribute("data-following", "true");
+});
+
 test("keyboard navigation reaches both ends of the virtualized history", async () => {
   const { page } = tondo;
   const transcript = page.getByRole("region", { name: "Transcript" });

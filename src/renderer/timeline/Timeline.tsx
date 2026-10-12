@@ -114,6 +114,8 @@ export function Timeline() {
     return () => observer.disconnect();
   });
 
+  // Scroll updates inside the follow band must not cancel native animations.
+  // Reposition only when the target changes, not on every scroll-state render.
   useLayoutEffect(() => {
     const node = scroller.current;
     if (!node) return;
@@ -123,7 +125,7 @@ export function Timeline() {
       programmedScroll.current = node.scrollTop;
     }
     lastScroll.current = node.scrollTop;
-  });
+  }, [following, top]);
 
   const onScroll = () => {
     const node = scroller.current;
@@ -145,7 +147,10 @@ export function Timeline() {
   };
 
   const jumpToLatest = () => {
-    scroller.current?.focus({ preventScroll: true });
+    const node = scroller.current;
+    node?.focus({ preventScroll: true });
+    // Stop an in-flight native PageUp before React commits the follow state.
+    node?.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     followingNow.current = true;
     setFollowing(true);
   };
