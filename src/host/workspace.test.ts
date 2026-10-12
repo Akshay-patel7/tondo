@@ -275,6 +275,21 @@ describe("find-files", () => {
 });
 
 describe("get-project-git", () => {
+  it("ignores a removed project's late request and answers the remaining project", async () => {
+    const { id: removedId } = store.addProject(dir, 1);
+    const project = path.join(dir, "remaining");
+    mkdirSync(project);
+    const { id: projectId } = store.addProject(project, 2);
+    store.removeProject(removedId);
+    const answer = next(
+      (message) => message.type === "project-git" && message.projectId === projectId,
+    );
+    workspace.handle({ v, type: "get-project-git", projectId: removedId });
+    workspace.handle({ v, type: "get-project-git", projectId });
+    expect(await answer).toEqual({ v, type: "project-git", projectId, git: false, branch: null });
+    expect(sent.filter(isError)).toEqual([]);
+  });
+
   it("answers with the project folder's branch before any thread exists", async () => {
     const project = repository("git-project", []);
     execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/trunk"], { cwd: project });

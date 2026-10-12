@@ -497,10 +497,11 @@ export class Workspace {
       case "get-project-git":
         this.run(async () => {
           const { projectId } = message;
-          // Removing a project closes its thread first, so home can ask about the
-          // project on its way out. The project list that follows answers that.
-          if (this.removingProjects.has(projectId)) return;
-          const status = await this.git.status(this.project(projectId).path, false);
+          // Home can queue a read before the removal's sidebar update arrives.
+          // Discard it during removal and after the project has been forgotten.
+          const project = this.store.projects().find((candidate) => candidate.id === projectId);
+          if (!project || this.removingProjects.has(projectId)) return;
+          const status = await this.git.status(project.path, false);
           const git = status.root !== null;
           this.send({ v, type: "project-git", projectId, git, branch: status.branch });
         });
