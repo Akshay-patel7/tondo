@@ -115,7 +115,8 @@ function start(): void {
     supervisor,
     poolOverride: config.pool ?? {},
     send,
-    chooseFolder: () => tellMain({ type: "choose-project" }),
+    chooseFolder: (purpose) =>
+      tellMain({ type: purpose === "project" ? "choose-project" : "choose-worktree-directory" }),
     choosePi: () => tellMain({ type: "choose-pi" }),
     setTheme: (theme, palette) => tellMain({ type: "theme", theme, palette }),
     attention: (attention) => tellMain({ type: "attention", ...attention }),
@@ -137,6 +138,9 @@ function start(): void {
       }
       case "project-chosen":
         workspace.projectChosen(message.folder);
+        break;
+      case "worktree-directory-chosen":
+        workspace.worktreeDirectoryChosen(message.folder);
         break;
       case "pi-chosen":
         workspace.piChosen(message.file);

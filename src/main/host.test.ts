@@ -220,6 +220,18 @@ describe("startHost", () => {
     await expect(answered).resolves.toEqual({ type: "project-chosen", folder: "/project" });
   });
 
+  it.each(["/custom", null])(
+    "answers the worktree folder dialog without adding a project: %s",
+    async (folder) => {
+      options.chooseFolder = vi.fn().mockResolvedValue(folder);
+      startHost(options);
+      latest().ready();
+      const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+      latest().emit("message", { type: "choose-worktree-directory" });
+      await expect(answered).resolves.toEqual({ type: "worktree-directory-chosen", folder });
+    },
+  );
+
   it("answers with no folder when the dialog fails", async () => {
     options.chooseFolder = vi.fn().mockRejectedValue(new Error("No window"));
     startHost(options);

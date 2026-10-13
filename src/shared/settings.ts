@@ -73,6 +73,8 @@ export function isPanelWidth(key: keyof PanelWidths, value: unknown): value is n
 export interface AppSettings {
   /** The pi command to run, or null to find pi on PATH. */
   readonly piPath: string | null;
+  /** Parent folder for new managed worktrees, or null to use <userData>/worktrees. */
+  readonly worktreeDirectory: string | null;
   readonly theme: ThemeSetting;
   readonly palette: PaletteSetting;
   /** Whether thinking sections start expanded. Each section can still be toggled. */
@@ -86,6 +88,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   piPath: null,
+  worktreeDirectory: null,
   theme: "system",
   // The warm palette Tondo had before there were others.
   palette: "default",
@@ -106,6 +109,8 @@ export interface SettingsPatch {
   readonly shortcuts?: Partial<Record<ShortcutCommand, string | null | "default">>;
   /** null goes back to finding pi on PATH. */
   readonly piPath?: string | null;
+  /** null restores the default. Existing worktrees stay where they are. */
+  readonly worktreeDirectory?: string | null;
 }
 
 export function isThemeSetting(value: unknown): value is ThemeSetting {

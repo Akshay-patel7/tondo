@@ -111,6 +111,9 @@ describe("parseClientMessage", () => {
       { v, type: "set-settings", patch: { piPath: "/opt/pi/bin/pi" } },
       { v, type: "set-settings", patch: { piPath: null } },
       { v, type: "choose-pi-path" },
+      { v, type: "choose-worktree-directory" },
+      { v, type: "set-settings", patch: { worktreeDirectory: "/work/trees" } },
+      { v, type: "set-settings", patch: { worktreeDirectory: null } },
       { v, type: "retry-pi" },
       { v, type: "get-pi-config-files", threadId: null },
       { v, type: "get-pi-config-files", threadId },
@@ -428,6 +431,19 @@ describe("parseClientMessage", () => {
     [{ patch: { shortcuts: { quit: "mod+q" } } }, "set-settings: shortcuts has an unknown command"],
     [{ patch: { shortcuts: { palette: "mod+" } } }, "set-settings: shortcuts.palette must be"],
     [{ patch: { shortcuts: { palette: 5 } } }, "set-settings: shortcuts.palette must be"],
+    [
+      { patch: { worktreeDirectory: "" } },
+      "set-settings: worktreeDirectory must be a path or null",
+    ],
+    [{ patch: { worktreeDirectory: 5 } }, "set-settings: worktreeDirectory must be a path or null"],
+    [
+      { patch: { worktreeDirectory: "/path\0bad" } },
+      "set-settings: worktreeDirectory must be a path or null",
+    ],
+    [
+      { patch: { worktreeDirectory: "x".repeat(4097) } },
+      "set-settings: worktreeDirectory must be a path or null",
+    ],
     [{ patch: { piPath: "" } }, "set-settings: piPath must be a path or null"],
     [{ patch: { piPath: 5 } }, "set-settings: piPath must be a path or null"],
     [{ patch: {}, extra: 1 }, 'set-settings: unexpected field "extra"'],
@@ -444,8 +460,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 18, which adds saved panel widths", () => {
-    expect(PROTOCOL_VERSION).toBe(18);
+  it("speaks version 19, which adds the worktree directory setting", () => {
+    expect(PROTOCOL_VERSION).toBe(19);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {

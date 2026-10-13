@@ -34,6 +34,7 @@ describe("readSettings", () => {
   it("holds the defaults when the file doesn't exist", () => {
     expect(readSettings(file)).toEqual({
       piPath: null,
+      worktreeDirectory: null,
       theme: "system",
       palette: "default",
       expandThinking: false,
@@ -60,6 +61,7 @@ describe("readSettings", () => {
     );
     expect(readSettings(file)).toEqual({
       piPath: "/opt/pi/bin/pi",
+      worktreeDirectory: null,
       theme: "dark",
       palette: "ocean",
       expandThinking: true,
@@ -179,6 +181,7 @@ describe("readSettingsLeniently", () => {
     expect(readSettingsLeniently(file)).toEqual({
       settings: {
         piPath: "/opt/pi/bin/pi",
+        worktreeDirectory: null,
         theme: "system",
         palette: "default",
         expandThinking: false,
@@ -217,6 +220,35 @@ describe("newShortcutProblems", () => {
 });
 
 describe("updateSettings", () => {
+  it("saves and resets the worktree directory without losing unrelated keys", () => {
+    writeFileSync(file, JSON.stringify({ theme: "dark", later: true }));
+    expect(readSettings(file).worktreeDirectory).toBeNull();
+    const folder = path.join(dir, "custom");
+    expect(updateSettings(file, { worktreeDirectory: folder }).worktreeDirectory).toBe(folder);
+    expect(readSettings(file).worktreeDirectory).toBe(folder);
+    expect(updateSettings(file, { worktreeDirectory: null }).worktreeDirectory).toBeNull();
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ theme: "dark", later: true });
+  });
+
+  it.each(["relative", "", 1, null, "/path\0bad"])(
+    "defaults invalid saved worktree directories and preserves other settings: %j",
+    (worktreeDirectory) => {
+      writeFileSync(file, JSON.stringify({ worktreeDirectory, theme: "dark" }));
+      expect(() => readSettings(file)).toThrow("worktreeDirectory");
+      expect(readSettingsLeniently(file)).toMatchObject({
+        settings: { ...DEFAULTS, theme: "dark" },
+        problem: expect.stringContaining("worktreeDirectory"),
+      });
+    },
+  );
+
+  it("rejects a relative directory without changing the file", () => {
+    const content = JSON.stringify({ theme: "dark", later: true });
+    writeFileSync(file, content);
+    expect(() => updateSettings(file, { worktreeDirectory: "relative" })).toThrow("absolute path");
+    expect(readFileSync(file, "utf8")).toBe(content);
+  });
+
   it("saves either panel width independently and preserves unrelated settings and future keys", () => {
     writeFileSync(file, JSON.stringify({ theme: "dark", later: true, panelWidths: { extra: 7 } }));
     expect(readSettings(file).panelWidths).toEqual({ sidebar: 256, changes: 432 });

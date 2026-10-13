@@ -124,16 +124,23 @@ export function startHost(options: HostOptions): Host {
         options.copy(message.text);
       } else if (message.type === "reveal") {
         options.reveal(message.path);
-      } else if (message.type === "choose-project") {
+      } else if (
+        message.type === "choose-project" ||
+        message.type === "choose-worktree-directory"
+      ) {
         void chooseFolder()
           .catch((error: unknown) => {
             console.error("Tondo couldn't show the folder dialog:", error);
             return null;
           })
           .then((folder) => {
-            // A host that died meanwhile has lost its project anyway.
+            // Ignore dialog results belonging to a host that died meanwhile.
             if (child !== current) return;
-            current.postMessage({ type: "project-chosen", folder } satisfies MainToHostMessage);
+            current.postMessage({
+              type:
+                message.type === "choose-project" ? "project-chosen" : "worktree-directory-chosen",
+              folder,
+            } satisfies MainToHostMessage);
           });
       } else if (message.type === "choose-pi") {
         void choosePiFile()

@@ -1,5 +1,5 @@
-// The Threads section: how many pi processes keep running, and how soon a
-// hidden idle thread's pi stops.
+// The Threads section: pi process limits and the location for new worktrees.
+import { FolderOpen } from "lucide-react";
 import { useId, useState } from "react";
 import {
   isPoolValue,
@@ -7,7 +7,8 @@ import {
   type AppSettings,
   type PoolSettings,
 } from "../../shared/settings";
-import { updateSettings, useHost } from "../connection";
+import { chooseWorktreeDirectory, updateSettings, useHost } from "../connection";
+import { Button } from "../ui/button";
 import { CardGroup } from "../ui/card-group";
 import {
   NumberField,
@@ -16,7 +17,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { Footnote, Loading, SettingsRow } from "./rows";
+import { Footnote, Loading, SettingsRow, SubHeading } from "./rows";
 
 export function ThreadSettings() {
   const settings = useHost((host) => host.settings);
@@ -44,7 +45,56 @@ export function ThreadSettings() {
         />
       </CardGroup>
       <Footnote>The thread on screen and threads where pi is busy never stop.</Footnote>
+      <SubHeading
+        title="Worktrees"
+        description="Choose where Tondo creates new worktree folders. Existing worktrees stay where they are."
+      />
+      <WorktreeLocation directory={settings.worktreeDirectory} />
     </>
+  );
+}
+
+function WorktreeLocation({ directory }: { directory: string | null }) {
+  const chooseId = useId();
+  const descriptionId = useId();
+  return (
+    <CardGroup>
+      <SettingsRow
+        title="Worktree location"
+        descriptionId={descriptionId}
+        description={
+          directory === null ? (
+            "Default: worktrees in Tondo's app data folder."
+          ) : (
+            <span className="font-mono break-all">{directory}</span>
+          )
+        }
+        control={
+          <>
+            <Button
+              id={chooseId}
+              variant="neutral"
+              aria-describedby={descriptionId}
+              onClick={() => chooseWorktreeDirectory()}
+            >
+              <FolderOpen aria-hidden />
+              Choose folder…
+            </Button>
+            {directory === null ? null : (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  updateSettings({ worktreeDirectory: null });
+                  document.getElementById(chooseId)?.focus();
+                }}
+              >
+                Use default
+              </Button>
+            )}
+          </>
+        }
+      />
+    </CardGroup>
   );
 }
 

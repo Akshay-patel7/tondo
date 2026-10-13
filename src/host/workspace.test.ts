@@ -228,6 +228,21 @@ describe("settings messages", () => {
     expect(readFileSync(settingsFile, "utf8")).toBe("{}\n");
   });
 
+  it("saves the chosen worktree directory, sends it on reconnect and leaves cancellation alone", async () => {
+    const folder = path.join(dir, "custom");
+    const changed = next((message) => message.type === "settings");
+    workspace.worktreeDirectoryChosen(folder);
+    expect(await changed).toMatchObject({ settings: { worktreeDirectory: folder }, error: null });
+    workspace.worktreeDirectoryChosen(null);
+    expect(JSON.parse(readFileSync(settingsFile, "utf8")).worktreeDirectory).toBe(folder);
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({ settings: { worktreeDirectory: folder } });
+    const reset = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch: { worktreeDirectory: null } });
+    expect(await reset).toMatchObject({ settings: { worktreeDirectory: null } });
+  });
+
   it("sends saved panel widths to the page and on reconnect", async () => {
     const changed = next((message) => message.type === "settings");
     workspace.handle({
@@ -299,7 +314,13 @@ describe("find-files", () => {
     const worktree = repository("worktree", ["src/worktree-only.ts"]);
     const { id: projectId } = store.addProject(project, 1);
     addThread(projectId, "thread-a");
-    store.addWorktree({ path: worktree, repository: project, branch: "b", threadId: "thread-a" });
+    store.addWorktree({
+      root: null,
+      path: worktree,
+      repository: project,
+      branch: "b",
+      threadId: "thread-a",
+    });
     const matches = next((message) => isError(message) || message.type === "file-matches");
     workspace.handle({ v, type: "find-files", threadId: "thread-a", id: 7, query: "only" });
     expect(await matches).toEqual({
@@ -589,7 +610,13 @@ async function managedSession() {
   git("worktree", "add", "-b", "kept-branch", checkout);
   const { id: projectId } = store.addProject(project, 1);
   const file = session(id, projectId, checkout);
-  store.addWorktree({ path: checkout, repository: project, branch: "kept-branch", threadId: id });
+  store.addWorktree({
+    root: null,
+    path: checkout,
+    repository: project,
+    branch: "kept-branch",
+    threadId: id,
+  });
   const thread = await openThread(id);
   return { id, project, checkout, file, thread, git };
 }
@@ -1000,6 +1027,7 @@ describe("delete-thread", () => {
     mkdirSync(checkout);
     writeFileSync(path.join(checkout, "untracked"), "keep");
     store.addWorktree({
+      root: null,
       path: checkout,
       repository: dir,
       branch: "keep-branch",
@@ -1021,6 +1049,7 @@ describe("delete-thread", () => {
     const { id: projectId } = store.addProject(missingRepository, 1);
     const file = session("missing-managed", projectId, missingRepository);
     store.addWorktree({
+      root: null,
       path: path.join(dir, "gone-checkout"),
       repository: missingRepository,
       branch: "kept",

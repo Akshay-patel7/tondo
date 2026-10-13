@@ -67,8 +67,8 @@ export interface WorkspaceOptions {
   readonly poolOverride: Partial<PoolLimits>;
   /** Sends a message to the page, if one is connected. */
   readonly send: (message: HostMessage) => void;
-  /** Asks main to show the folder dialog. Main answers through projectChosen. */
-  readonly chooseFolder: () => void;
+  /** Asks main to show the folder dialog for a project or the worktree setting. */
+  readonly chooseFolder: (purpose: "project" | "worktree") => void;
   /** Asks main to show the file dialog for pi. Main answers through piChosen. */
   readonly choosePi: () => void;
   /** Tells main the theme the settings ask for. */
@@ -88,7 +88,7 @@ export class Workspace {
   private readonly poolOverride: Partial<PoolLimits>;
   private limits: PoolLimits;
   private readonly send: (message: HostMessage) => void;
-  private readonly chooseFolder: () => void;
+  private readonly chooseFolder: WorkspaceOptions["chooseFolder"];
   private readonly choosePi: () => void;
   private readonly setTheme: (theme: ThemeSetting, palette: PaletteSetting) => void;
   /** The theme main last heard, which an outside edit to settings.json doesn't change. */
@@ -97,6 +97,7 @@ export class Workspace {
   /** The problem with settings.json Tondo last told you about as it started a pi. */
   private settingsProblem: string | null = null;
   private choosingPi = false;
+  private choosingWorktreeDirectory = false;
   private readonly attention: (attention: Attention) => void;
   private readonly copy: (text: string) => void;
   private readonly reveal: (file: string) => void;
@@ -203,6 +204,12 @@ export class Workspace {
   piChosen(file: string | null): void {
     this.choosingPi = false;
     if (file !== null) this.run(() => this.setSettings({ piPath: file }));
+  }
+
+  /** The folder picked for new worktrees, or null if the dialog was cancelled. */
+  worktreeDirectoryChosen(folder: string | null): void {
+    this.choosingWorktreeDirectory = false;
+    if (folder !== null) this.run(() => this.setSettings({ worktreeDirectory: folder }));
   }
 
   disconnected(): void {
@@ -327,7 +334,7 @@ export class Workspace {
       case "add-project":
         if (!this.choosing) {
           this.choosing = true;
-          this.chooseFolder();
+          this.chooseFolder("project");
         }
         break;
       case "remove-project":
@@ -522,6 +529,12 @@ export class Workspace {
       case "set-settings":
         this.run(() => this.setSettings(message.patch));
         break;
+      case "choose-worktree-directory":
+        if (!this.choosingWorktreeDirectory) {
+          this.choosingWorktreeDirectory = true;
+          this.chooseFolder("worktree");
+        }
+        break;
       case "choose-pi-path":
         if (!this.choosingPi) {
           this.choosingPi = true;
@@ -618,12 +631,30 @@ export class Workspace {
     const { settings, problem } = this.supervisor.readableSettings();
     // The page may offer to show a broken file in Finder.
     if (problem !== null) this.offered.add(this.supervisor.settingsFile);
-    const { piPath, theme, palette, expandThinking, pool, panelWidths, shortcuts } = settings;
+    const {
+      piPath,
+      worktreeDirectory,
+      theme,
+      palette,
+      expandThinking,
+      pool,
+      panelWidths,
+      shortcuts,
+    } = settings;
     this.send({
       v,
       type: "settings",
       // The page applies the same saved palette that main receives for its window.
-      settings: { piPath, theme, palette, expandThinking, pool, panelWidths, shortcuts },
+      settings: {
+        piPath,
+        worktreeDirectory,
+        theme,
+        palette,
+        expandThinking,
+        pool,
+        panelWidths,
+        shortcuts,
+      },
       error,
       fileProblem:
         problem === null ? null : { path: this.supervisor.settingsFile, message: problem },
@@ -1117,7 +1148,13 @@ export class Workspace {
       }
       if (action.kind === "new-worktree") {
         const newId = randomUUID();
-        await this.worktrees.create(status.root, newId, action.branch, action.base);
+        await this.worktrees.create(
+          status.root,
+          newId,
+          action.branch,
+          action.base,
+          this.supervisor.settings().worktreeDirectory,
+        );
         this.store.addThread(
           {
             id: newId,

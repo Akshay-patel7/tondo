@@ -32,7 +32,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -335,6 +335,8 @@ export type ClientMessage = Versioned<
   | { type: "set-settings"; patch: SettingsPatch }
   /** Show a file dialog to choose the pi to run. */
   | { type: "choose-pi-path" }
+  /** Show a folder dialog for the parent directory of new worktrees. */
+  | { type: "choose-worktree-directory" }
   /** Look for pi again, and start again every thread whose pi Tondo couldn't find. */
   | { type: "retry-pi" }
   /** Answered with pi-config-files: pi's global files, and the thread's project's if it names one. */
@@ -436,6 +438,7 @@ export type MainToHostMessage =
   | { type: "stop-terminals" }
   /** The folder you picked in the dialog `choose-project` asked for, or null if you cancelled. */
   | { type: "project-chosen"; folder: string | null }
+  | { type: "worktree-directory-chosen"; folder: string | null }
   /** The file you picked in the dialog `choose-pi` asked for, or null if you cancelled. */
   | { type: "pi-chosen"; file: string | null }
   /** You clicked the notification about a thread. */
@@ -472,6 +475,8 @@ export type HostToMainMessage =
   | { type: "terminals-stopped" }
   /** Show the folder dialog and answer with project-chosen. */
   | { type: "choose-project" }
+  /** Show the folder dialog and answer with worktree-directory-chosen. */
+  | { type: "choose-worktree-directory" }
   /** Show the file dialog for pi and answer with pi-chosen. */
   | { type: "choose-pi" }
   /** The theme your settings ask for, which main applies to the window. */
@@ -828,6 +833,7 @@ export function parseClientMessage(data: unknown): ParseResult {
       return exactly(message, { v, type, patch });
     }
     case "choose-pi-path":
+    case "choose-worktree-directory":
     case "retry-pi":
     case "get-pi-accounts":
       return exactly(message, { v, type });
@@ -931,10 +937,20 @@ function parsePatch(patch: unknown): SettingsPatch | string {
         "panelWidths",
         "shortcuts",
         "piPath",
+        "worktreeDirectory",
       ].includes(key),
   );
   if (extra !== undefined) return `patch has an unexpected field ${describe(extra)}`;
-  const { theme, palette, expandThinking, pool, panelWidths, shortcuts, piPath } = patch;
+  const {
+    theme,
+    palette,
+    expandThinking,
+    pool,
+    panelWidths,
+    shortcuts,
+    piPath,
+    worktreeDirectory,
+  } = patch;
   const parsed: {
     theme?: ThemeSetting;
     palette?: PaletteSetting;
@@ -943,6 +959,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     panelWidths?: Partial<PanelWidths>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
+    worktreeDirectory?: string | null;
   } = {};
   if (theme !== undefined) {
     if (!isThemeSetting(theme))
@@ -1001,6 +1018,19 @@ function parsePatch(patch: unknown): SettingsPatch | string {
       copy[command] = text;
     }
     parsed.shortcuts = copy;
+  }
+  if (worktreeDirectory !== undefined) {
+    if (
+      worktreeDirectory !== null &&
+      !(
+        typeof worktreeDirectory === "string" &&
+        worktreeDirectory.length > 0 &&
+        worktreeDirectory.length <= MAX_PATH &&
+        !worktreeDirectory.includes("\0")
+      )
+    )
+      return `worktreeDirectory must be a path or null, not ${describe(worktreeDirectory)}`;
+    parsed.worktreeDirectory = worktreeDirectory;
   }
   if (piPath !== undefined) {
     if (

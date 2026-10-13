@@ -13,10 +13,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bringToFront, captureOpenExternal, type Tondo } from "./launch";
+import { bringToFront, captureOpenExternal, launchTondo, type Tondo } from "./launch";
 import { piGroup, piGroups } from "./processes";
 import {
   addProject,
+  answerFolderDialog,
   bashCall,
   composer,
   expectDraft,
@@ -236,6 +237,150 @@ test("status labels and the PR link update without opening Git actions or Change
   await waitForPi(page);
   await expect(pr).toBeVisible();
   await expect(pill).toContainText("1 ahead, 1 behind origin/main");
+  expect(errors).toEqual([]);
+});
+
+test("the worktree directory setting affects new checkouts, survives restart and leaves old checkouts removable", async () => {
+  test.setTimeout(90_000);
+  const first = await start([bashCall("pwd"), reply("Working in the custom folder.")]);
+  let { page } = first;
+  const errors: string[] = [];
+  const watchErrors = (target: Page) => {
+    target.on("pageerror", (error) => errors.push(error.message));
+    target.on("console", (message) => {
+      if (message.type() === "error") errors.push(message.text());
+    });
+  };
+  watchErrors(page);
+  const settingsFile = path.join(first.profileDir, "settings.json");
+  const saved = () => JSON.parse(readFileSync(settingsFile, "utf8"));
+  const customRoot = path.join(dir, "custom worktrees");
+  const nextRoot = path.join(dir, "other worktrees");
+  mkdirSync(customRoot);
+  mkdirSync(nextRoot);
+
+  const openWorktreeSettings = async () => {
+    await page.keyboard.press("ControlOrMeta+Comma");
+    const settings = page.getByRole("region", { name: "Settings", exact: true });
+    await settings
+      .getByRole("navigation", { name: "Settings sections" })
+      .getByRole("button", { name: "Threads", exact: true })
+      .click();
+    await expect(settings.getByText("Worktree location", { exact: true })).toBeVisible();
+    return settings;
+  };
+  const back = async () => {
+    await page.locator("header").getByRole("button", { name: "Back", exact: true }).click();
+    await waitForPi(page);
+  };
+  const create = async (branch: string) => {
+    await gitAction(page, "New worktree");
+    await page.getByLabel("Branch name", { exact: true }).fill(branch);
+    await submit("Create worktree thread");
+    await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
+    await waitForPi(page);
+    await expectBranch(page, branch);
+    return worktreePath();
+  };
+  const remove = async () => {
+    await gitAction(page, "Remove worktree");
+    await submit("Remove worktree");
+    await page.getByRole("button", { name: "New thread in project", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
+    await waitForPi(page);
+    await expectBranch(page, "main");
+  };
+
+  let settings = await openWorktreeSettings();
+  await expect(
+    settings.getByText("Default: worktrees in Tondo's app data folder.", { exact: true }),
+  ).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Use default", exact: true })).toHaveCount(0);
+  await first.app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+  });
+  await settings.getByRole("button", { name: "Choose folder…", exact: true }).click();
+  // A second dialog request proves cancellation released the host's in-flight guard.
+  await answerFolderDialog(first.app, customRoot);
+  await settings.getByRole("button", { name: "Choose folder…", exact: true }).click();
+  await expect.poll(() => saved().worktreeDirectory).toBe(customRoot);
+  await expect(settings.getByText(customRoot, { exact: true })).toBeVisible();
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({
+    path: test.info().outputPath("worktree-settings-light.png"),
+    animations: "disabled",
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: test.info().outputPath("worktree-settings-dark.png"),
+    animations: "disabled",
+  });
+  await page.emulateMedia({ colorScheme: null });
+  await page.setViewportSize({ width: 800, height: 600 });
+  await settings
+    .getByRole("button", { name: "Choose folder…", exact: true })
+    .scrollIntoViewIfNeeded();
+  expect(await settings.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+    true,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("worktree-settings-custom-small.png"),
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await back();
+  const checkout = await create("feature/custom-location");
+  expect(path.dirname(checkout)).toBe(customRoot);
+  await send(page, "Show custom cwd");
+  await expect(page.getByText("Working in the custom folder.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  await page.getByRole("button", { name: "Done Run pwd", exact: true }).click();
+  await expect(page.getByText(checkout, { exact: true })).toBeVisible();
+
+  settings = await openWorktreeSettings();
+  await answerFolderDialog(first.app, nextRoot);
+  await settings.getByRole("button", { name: "Choose folder…", exact: true }).click();
+  await expect.poll(() => saved().worktreeDirectory).toBe(nextRoot);
+  expect(existsSync(checkout)).toBe(true);
+  await back();
+  await first.close();
+  tondo = await launchTondo({ profileDir: first.profileDir, env });
+  page = tondo.page;
+  watchErrors(page);
+  await bringToFront(tondo);
+  await waitForPi(page);
+  await expectBranch(page, "feature/custom-location");
+  await page.getByRole("button", { name: "Done Run pwd", exact: true }).click();
+  await expect(page.getByText(checkout, { exact: true })).toBeVisible();
+  settings = await openWorktreeSettings();
+  await expect(settings.getByText(nextRoot, { exact: true })).toBeVisible();
+  await back();
+  await remove();
+  expect(existsSync(checkout)).toBe(false);
+  expect(git(project, "branch", "--list", "feature/custom-location")).toContain(
+    "feature/custom-location",
+  );
+
+  const secondCheckout = await create("feature/next-location");
+  expect(path.dirname(secondCheckout)).toBe(nextRoot);
+  settings = await openWorktreeSettings();
+  await settings.getByRole("button", { name: "Use default", exact: true }).click();
+  await expect.poll(() => saved().worktreeDirectory).toBeUndefined();
+  await expect(settings.getByRole("button", { name: "Choose folder…", exact: true })).toBeFocused();
+  await expect(settings.getByRole("button", { name: "Use default", exact: true })).toHaveCount(0);
+  await page.setViewportSize({ width: 800, height: 600 });
+  await settings
+    .getByRole("button", { name: "Choose folder…", exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: test.info().outputPath("worktree-settings-default-small.png"),
+    animations: "disabled",
+  });
+  await back();
+  await remove();
+  expect(existsSync(secondCheckout)).toBe(false);
+  const defaultCheckout = await create("feature/default-location");
+  expect(path.dirname(defaultCheckout)).toBe(path.join(first.profileDir, "worktrees"));
   expect(errors).toEqual([]);
 });
 

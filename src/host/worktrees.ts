@@ -24,6 +24,7 @@ export class Worktrees {
     threadId: string,
     branch: string,
     base: string,
+    directory: string | null = null,
   ): Promise<StoredWorktree> {
     await this.git.branchName(repository, branch);
     const commit = (
@@ -34,10 +35,15 @@ export class Worktrees {
         `${base}^{commit}`,
       ])
     ).trim();
-    await mkdir(this.root, { recursive: true });
-    const root = await realpath(this.root);
+    const directoryPath = directory ?? this.root;
+    if (!path.isAbsolute(directoryPath))
+      throw new Error("Worktree directory must be an absolute path.");
+    await mkdir(directoryPath, { recursive: true });
+    const root = await realpath(directoryPath);
     if (!/^[\da-f-]{36}$/.test(threadId)) throw new Error("Invalid worktree owner.");
-    const worktree = { path: path.join(root, threadId), repository, branch, threadId };
+    const worktree = { root, path: path.join(root, threadId), repository, branch, threadId };
+    if (!(await missing(worktree.path)))
+      throw new Error("The worktree folder already exists. Tondo left it untouched.");
     // Reserve ownership before Git creates a folder. A crash leaves a recoverable orphan.
     this.store.addWorktree(worktree);
     try {
@@ -59,7 +65,7 @@ export class Worktrees {
   }
 
   private async validate(worktree: StoredWorktree): Promise<void> {
-    const root = await realpath(this.root);
+    const root = await realpath(worktree.root ?? this.root);
     if (this.store.projects().some((project) => inside(worktree.path, project.path)))
       throw new Error("A project still uses this worktree. Remove that project from Tondo first.");
     if (
@@ -133,7 +139,8 @@ export class Worktrees {
   private async cleanupOne(worktree: StoredWorktree): Promise<void> {
     // A crash right after Git made the folder leaves it empty. Only an empty folder goes.
     if (
-      path.dirname(worktree.path) === (await realpath(this.root).catch(() => null)) &&
+      path.dirname(worktree.path) ===
+        (await realpath(worktree.root ?? this.root).catch(() => null)) &&
       path.basename(worktree.path) === worktree.threadId
     )
       await rmdir(worktree.path).catch(() => {});

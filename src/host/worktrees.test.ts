@@ -4,6 +4,8 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -64,6 +66,105 @@ it("creates an isolated worktree and distinct default session folder; removal ke
   expect(existsSync(worktree.path)).toBe(false);
   expect((await git.status(cwd)).branches).toContain("topic/test");
   expect(store.worktrees()).toEqual([]);
+});
+
+it("creates in a custom folder and keeps ownership across directory changes and restart", async () => {
+  const defaultTree = await worktrees.create(cwd, owner(15), "default", "HEAD");
+  const customRoot = path.join(dir, "custom folder", "nested");
+  const custom = await worktrees.create(cwd, owner(16), "custom", "HEAD", customRoot);
+  expect(custom.path).toBe(path.join(customRoot, owner(16)));
+  expect(custom.root).toBe(customRoot);
+  const another = await worktrees.create(
+    cwd,
+    owner(17),
+    "another",
+    "HEAD",
+    path.join(dir, "another"),
+  );
+
+  // A fresh manager still removes both old and new locations from the saved ledger.
+  worktrees = new Worktrees(path.join(dir, "managed"), store, git);
+  await worktrees.remove(worktrees.forThread(defaultTree.threadId)!, false);
+  await worktrees.remove(worktrees.forThread(custom.threadId)!, false);
+  const messages: string[] = [];
+  await worktrees.cleanup((message) => messages.push(message));
+  expect(messages).toEqual([]);
+  expect(store.worktrees()).toEqual([]);
+  expect(existsSync(another.path)).toBe(false);
+  expect(existsSync(customRoot)).toBe(true);
+});
+
+it("records the canonical custom root even when the chosen folder is a symlink", async () => {
+  const root = path.join(dir, "real-root");
+  const link = path.join(dir, "chosen-link");
+  mkdirSync(root);
+  symlinkSync(root, link);
+  const created = await worktrees.create(cwd, owner(22), "linked-root", "HEAD", link);
+  expect(created.root).toBe(root);
+  expect(path.dirname(created.path)).toBe(root);
+  await worktrees.remove(created, false);
+});
+
+it("keeps an empty abandoned folder when its parent was replaced with a symlink", async () => {
+  const root = path.join(dir, "custom");
+  const threadId = owner(23);
+  const folder = path.join(root, threadId);
+  mkdirSync(folder, { recursive: true });
+  store.addWorktree({ root, path: folder, repository: cwd, branch: "interrupted", threadId });
+  renameSync(root, path.join(dir, "moved-root"));
+  const foreign = path.join(dir, "foreign");
+  mkdirSync(path.join(foreign, threadId), { recursive: true });
+  symlinkSync(foreign, root);
+  const messages: string[] = [];
+  await worktrees.cleanup((message) => messages.push(message));
+  expect(messages).toHaveLength(1);
+  expect(existsSync(path.join(foreign, threadId))).toBe(true);
+  expect(store.worktrees()).toHaveLength(1);
+});
+
+it("uses the legacy default root for old ledger entries", async () => {
+  const created = await worktrees.create(cwd, owner(18), "legacy", "HEAD");
+  store.forgetWorktree(created.path);
+  store.addWorktree({ ...created, root: null });
+  await worktrees.remove(worktrees.forThread(created.threadId)!, false);
+  expect(store.worktrees()).toEqual([]);
+});
+
+it("never adopts an existing folder in the selected directory", async () => {
+  const root = path.join(dir, "custom");
+  const folder = path.join(root, owner(19));
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, "valuable"), "keep");
+  await expect(worktrees.create(cwd, owner(19), "collision", "HEAD", root)).rejects.toThrow(
+    "already exists",
+  );
+  expect(store.worktrees()).toEqual([]);
+  expect(readFileSync(path.join(folder, "valuable"), "utf8")).toBe("keep");
+  expect((await git.status(cwd)).branches).not.toContain("collision");
+});
+
+it("refuses non-directory custom roots without reserving ownership", async () => {
+  const file = path.join(dir, "file");
+  writeFileSync(file, "keep");
+  await expect(worktrees.create(cwd, owner(20), "file", "HEAD", file)).rejects.toThrow();
+  await expect(worktrees.create(cwd, owner(20), "relative", "HEAD", "relative")).rejects.toThrow(
+    "absolute path",
+  );
+  expect(store.worktrees()).toEqual([]);
+});
+
+it("rejects symlink replacements in custom directories", async () => {
+  const created = await worktrees.create(
+    cwd,
+    owner(21),
+    "custom-safe",
+    "HEAD",
+    path.join(dir, "custom"),
+  );
+  await git.run(cwd, ["worktree", "remove", created.path]);
+  symlinkSync(cwd, created.path);
+  await expect(worktrees.remove(created, true)).rejects.toThrow("managed linked worktree");
+  expect(existsSync(path.join(cwd, "a"))).toBe(true);
 });
 
 it("requires explicit force for dirty and ignored files", async () => {
@@ -154,10 +255,22 @@ it("forgets a live thread's worktree whose folder was deleted, keeping its branc
 it("clears an abandoned empty owned folder, and explains a foreign one in plain words", async () => {
   const root = path.join(dir, "managed");
   mkdirSync(root);
-  const empty = { path: path.join(root, owner(12)), repository: cwd, branch: "x", threadId: "" };
+  const empty = {
+    root: null,
+    path: path.join(root, owner(12)),
+    repository: cwd,
+    branch: "x",
+    threadId: "",
+  };
   empty.threadId = path.basename(empty.path);
   mkdirSync(empty.path);
-  const full = { path: path.join(root, owner(13)), repository: cwd, branch: "y", threadId: "" };
+  const full = {
+    root: null,
+    path: path.join(root, owner(13)),
+    repository: cwd,
+    branch: "y",
+    threadId: "",
+  };
   full.threadId = path.basename(full.path);
   mkdirSync(full.path);
   writeFileSync(path.join(full.path, "notes"), "keep");

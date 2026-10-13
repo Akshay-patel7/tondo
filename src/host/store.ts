@@ -54,6 +54,8 @@ export const MIGRATIONS: readonly string[] = [
   // so cleanup can inspect only folders Tondo actually created.
   // Existing records remain listed, including resumed sessions without live messages.
   `ALTER TABLE threads ADD COLUMN visible INTEGER NOT NULL DEFAULT 1;`,
+  // NULL identifies legacy worktrees created under the app data folder.
+  `ALTER TABLE worktrees ADD COLUMN root TEXT;`,
 ];
 
 /** Brings `db` up to date with `migrations`, one transaction per migration. */
@@ -110,6 +112,8 @@ export interface StoredThread {
 }
 
 export interface StoredWorktree {
+  /** Canonical parent at creation. null uses the legacy app-data root. */
+  readonly root: string | null;
   readonly path: string;
   readonly repository: string;
   readonly branch: string;
@@ -336,14 +340,16 @@ export class Store {
 
   worktrees(): StoredWorktree[] {
     return this.db
-      .prepare("SELECT path, repository, branch, thread_id AS threadId FROM worktrees")
+      .prepare("SELECT path, repository, branch, thread_id AS threadId, root FROM worktrees")
       .all() as unknown as StoredWorktree[];
   }
 
   addWorktree(worktree: StoredWorktree): void {
     this.db
-      .prepare("INSERT INTO worktrees (path, repository, branch, thread_id) VALUES (?, ?, ?, ?)")
-      .run(worktree.path, worktree.repository, worktree.branch, worktree.threadId);
+      .prepare(
+        "INSERT INTO worktrees (path, repository, branch, thread_id, root) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(worktree.path, worktree.repository, worktree.branch, worktree.threadId, worktree.root);
   }
 
   forgetWorktree(worktreePath: string): void {

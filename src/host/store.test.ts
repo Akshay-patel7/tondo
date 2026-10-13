@@ -78,7 +78,7 @@ describe("migrate", () => {
   it("keeps all older records visible, including sessions without live messages", () => {
     const file = path.join(dir, "legacy.sqlite");
     const db = new DatabaseSync(file);
-    migrate(db, MIGRATIONS.slice(0, -1));
+    migrate(db, MIGRATIONS.slice(0, 4));
     db.exec(
       "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, session_file, created_at) VALUES ('resumed', 1, '/sessions/resumed.jsonl', 2), ('empty-legacy', 1, NULL, 3);",
     );
@@ -88,6 +88,38 @@ describe("migrate", () => {
       { id: "resumed", visible: true },
       { id: "empty-legacy", visible: true },
     ]);
+    store.close();
+  });
+
+  it("keeps legacy worktree ownership and persists custom roots across reopen", () => {
+    const file = path.join(dir, "worktrees.sqlite");
+    const db = new DatabaseSync(file);
+    migrate(db, MIGRATIONS.slice(0, 5));
+    db.exec(
+      "INSERT INTO worktrees (path, repository, branch, thread_id) VALUES ('/default/owner', '/repo', 'legacy', 'owner');",
+    );
+    db.close();
+    let store = Store.open(file);
+    expect(store.worktrees()).toEqual([
+      {
+        path: "/default/owner",
+        repository: "/repo",
+        branch: "legacy",
+        threadId: "owner",
+        root: null,
+      },
+    ]);
+    const custom = {
+      path: "/custom/second",
+      repository: "/repo",
+      branch: "custom",
+      threadId: "second",
+      root: "/custom",
+    };
+    store.addWorktree(custom);
+    store.close();
+    store = Store.open(file);
+    expect(store.worktrees()).toContainEqual(custom);
     store.close();
   });
 

@@ -106,6 +106,9 @@ export function updateSettings(file: string, patch: SettingsPatch): Settings {
       }
       next.shortcuts = shortcuts;
     }
+    if (patch.worktreeDirectory === null) delete next.worktreeDirectory;
+    else if (patch.worktreeDirectory !== undefined)
+      next.worktreeDirectory = patch.worktreeDirectory;
     if (patch.piPath === null) delete next.piPath;
     else if (patch.piPath !== undefined) next.piPath = patch.piPath;
     return next;
@@ -184,6 +187,7 @@ function check(saved: Record<string, unknown>, fail: (what: string) => Error): S
 function parse(saved: Record<string, unknown>, report: (what: string) => void): Settings {
   const {
     piPath,
+    worktreeDirectory,
     projectTrust = {},
     theme = DEFAULT_SETTINGS.theme,
     // A file from before palettes has none, and keeps the look it had.
@@ -197,6 +201,19 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   if (piPath !== undefined) {
     if (typeof piPath === "string" && path.isAbsolute(piPath)) pi = piPath;
     else report(`has a piPath that isn't an absolute path: ${JSON.stringify(piPath)}`);
+  }
+  let worktrees: string | null = null;
+  if (worktreeDirectory !== undefined) {
+    if (
+      typeof worktreeDirectory === "string" &&
+      path.isAbsolute(worktreeDirectory) &&
+      !worktreeDirectory.includes("\0")
+    ) {
+      worktrees = path.resolve(worktreeDirectory);
+    } else
+      report(
+        `has a worktreeDirectory that isn't an absolute path: ${JSON.stringify(worktreeDirectory)}`,
+      );
   }
   const trust: Record<string, boolean> = {};
   if (isObject(projectTrust)) {
@@ -259,6 +276,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   }
   return {
     piPath: pi,
+    worktreeDirectory: worktrees,
     theme: chosenTheme,
     palette: chosenPalette,
     expandThinking:

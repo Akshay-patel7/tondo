@@ -819,6 +819,11 @@ export function choosePiPath(): void {
   send({ v, type: "choose-pi-path" });
 }
 
+/** Shows the folder dialog for new managed worktrees. */
+export function chooseWorktreeDirectory(): void {
+  send({ v, type: "choose-worktree-directory" });
+}
+
 /** Looks for pi again, after you install or update it. */
 export function retryPi(): void {
   send({ v, type: "retry-pi" });
