@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION as v, type HostMessage } from "../shared/protocol";
+import type { PiMessage } from "../shared/thread";
 import type { PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
 import type { ThreadListener } from "./liveThread";
 import { readSettings, readSettingsLeniently, updateSettings } from "./settings";
@@ -36,7 +37,7 @@ const { FakeThread, threads } = vi.hoisted(() => {
     readonly listener: ThreadListener;
     readonly checkpoints: { readonly busy: boolean };
     readonly status = { state: "ready" };
-    readonly state = { messages: [], running: false, compaction: null, retry: null };
+    readonly state = { messages: [] as PiMessage[], running: false, compaction: null, retry: null };
     readonly ui = {};
     readonly waiting = false;
     working = false;
@@ -151,6 +152,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  workspace.disconnected();
   vi.restoreAllMocks();
   store.close();
   rmSync(dir, { recursive: true, force: true });
@@ -224,6 +226,29 @@ describe("settings messages", () => {
     expect(message.error).toMatch(/^Tondo didn't save that change\. It has a pool\.maxLive /);
     expect(message.settings.pool.maxLive).toBe(4);
     expect(readFileSync(settingsFile, "utf8")).toBe("{}\n");
+  });
+
+  it("sends saved panel widths to the page and on reconnect", async () => {
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({
+      v,
+      type: "set-settings",
+      patch: { panelWidths: { sidebar: 360, changes: 600 } },
+    });
+    expect(await changed).toMatchObject({
+      type: "settings",
+      error: null,
+      settings: { panelWidths: { sidebar: 360, changes: 600 } },
+    });
+    expect(JSON.parse(readFileSync(settingsFile, "utf8")).panelWidths).toEqual({
+      sidebar: 360,
+      changes: 600,
+    });
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({
+      settings: { panelWidths: { sidebar: 360, changes: 600 } },
+    });
   });
 
   it("sends the saved expanded thinking setting to the page and on reconnect", async () => {
@@ -581,6 +606,90 @@ async function removeManagedThread(id: string, force = false): Promise<HostMessa
   });
   return result;
 }
+
+describe("worktree creation alongside a busy checkout", () => {
+  it.each(["turn", "checkpoint"])(
+    "creates a separate checkout during a background %s",
+    async (busy) => {
+      const { project, git } = await managedSession();
+      const projectId = store.projects()[0]!.id;
+      addThread(projectId, "working-local");
+      const working = await openThread("working-local");
+      if (busy === "turn") working.working = true;
+      else vi.spyOn(working.checkpoints, "busy", "get").mockReturnValue(true);
+      writeFileSync(path.join(project, "local.txt"), "Keep local changes");
+      addThread(projectId, "new-local");
+      await openThread("new-local");
+      const created = next((message) => message.type === "git-result");
+      workspace.handle({
+        v,
+        type: "git-action",
+        threadId: "new-local",
+        id: 1,
+        expectedBranch: "main",
+        action: { kind: "new-worktree", branch: "parallel", base: "main" },
+      });
+      expect(await created).toMatchObject({ error: null });
+      const id = store.ui().openThread!;
+      const checkout = store.worktrees().find((entry) => entry.threadId === id)!.path;
+      expect(threads.find((thread) => thread.id === id)?.project).toBe(checkout);
+      expect(existsSync(path.join(checkout, "local.txt"))).toBe(false);
+      expect(readFileSync(path.join(project, "local.txt"), "utf8")).toBe("Keep local changes");
+      expect(git("branch", "--show-current")).toBe("main");
+      expect(working.close).not.toHaveBeenCalled();
+      // Creating a checkout is safe; changing the busy checkout still isn't.
+      await openThread("new-local");
+      const refused = next((message) => message.type === "git-result");
+      workspace.handle({
+        v,
+        type: "git-action",
+        threadId: "new-local",
+        id: 2,
+        expectedBranch: "main",
+        action: { kind: "create-branch", branch: "unsafe" },
+      });
+      expect(await refused).toMatchObject({
+        error: expect.stringContaining("pi is starting or working"),
+      });
+      expect(git("branch", "--show-current")).toBe("main");
+    },
+  );
+});
+
+describe("thread titles after compaction", () => {
+  it("uses the original session prompt when pi's current context begins with a later prompt", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    const file = session("compacted", projectId);
+    const header = readFileSync(file, "utf8");
+    writeFileSync(
+      file,
+      `${header}${JSON.stringify({ type: "message", message: { role: "user", content: "Original request" } })}\n`,
+    );
+    await workspace.refresh();
+    const thread = await openThread("compacted");
+    thread.state.messages = [{ role: "user", content: "Later request", timestamp: 2 }];
+    thread.listener.reset();
+    expect(sent.findLast((message) => message.type === "snapshot")).toMatchObject({
+      thread: { title: "Original request" },
+    });
+    await workspace.refresh();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [{ threads: [{ id: "compacted", title: "Original request" }] }],
+    });
+  });
+
+  it("uses the live first prompt until the session has been indexed", async () => {
+    const { id: projectId } = store.addProject(dir, 1);
+    addThread(projectId, "fresh");
+    const thread = await openThread("fresh");
+    thread.state.messages = [{ role: "user", content: "First live request", timestamp: 1 }];
+    thread.listener.reset();
+    expect(sent.findLast((message) => message.type === "snapshot")).toMatchObject({
+      thread: { title: "First live request" },
+    });
+    await workspace.refresh();
+  });
+});
 
 describe("explicit worktree removal retains its session", () => {
   it.each([false, true])(

@@ -504,6 +504,78 @@ test("branch changes are refused while a background local thread is mid-turn", a
   await expectBranch(page, "other");
 });
 
+test("worktrees can be created from new and running threads while the local checkout stays busy", async () => {
+  test.setTimeout(90_000);
+  const release = path.join(dir, "release");
+  const held = waitForFileCommand(release);
+  const command = `pwd > cwd-proof.txt; if [ "$PWD" = "${project}" ]; then printf 'Local edits\\n' > README.md; ${held}; else printf 'Separate edits\\n' > separate.txt; fi`;
+  const { page } = await start([bashCall(command, "held-checkout"), reply("Checkout finished.")]);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  const head = git(project, "rev-parse", "HEAD");
+  const index = git(project, "ls-files", "--stage");
+  await send(page, "Local work in progress");
+  await expect(page.locator('[data-tool-call="held-checkout"]')).toHaveAttribute(
+    "data-status",
+    "running",
+  );
+  await expect
+    .poll(() => readFileSync(path.join(project, "README.md"), "utf8"))
+    .toBe("Local edits\n");
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-accessibility-tree")).toContainText("$");
+  await page.getByRole("button", { name: "project", exact: true }).hover();
+  await page.getByRole("button", { name: "New thread in project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
+  await waitForPi(page);
+  await gitAction(page, "New worktree");
+  await page.getByLabel("Branch name", { exact: true }).fill("parallel-from-new");
+  await submit("Create worktree thread");
+  await expectBranch(page, "parallel-from-new");
+  await waitForPi(page);
+  const checkout = worktreePath();
+  expect(readFileSync(path.join(checkout, "README.md"), "utf8")).toBe("Initial\n");
+  await send(page, "Independent work");
+  await expect(page.getByText("Checkout finished.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  expect(readFileSync(path.join(checkout, "cwd-proof.txt"), "utf8").trim()).toBe(checkout);
+  expect(readFileSync(path.join(checkout, "separate.txt"), "utf8")).toBe("Separate edits\n");
+  expect(existsSync(path.join(project, "separate.txt"))).toBe(false);
+  await expect(threadRows(page).filter({ hasText: "Independent work" })).toHaveCount(1);
+  const local = threadRows(page).filter({ hasText: "Local work in progress" });
+  await expect(local.getByLabel("Working", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("parallel-worktree.png"),
+    animations: "disabled",
+  });
+  await local.click();
+  await expect(
+    page.getByRole("heading", { name: "Local work in progress", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-tool-call="held-checkout"]')).toHaveAttribute(
+    "data-status",
+    "running",
+  );
+  await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeVisible();
+  // Creating directly from the running thread is safe too, even with its shell open.
+  await gitAction(page, "New worktree");
+  await page.getByLabel("Branch name", { exact: true }).fill("parallel-from-running");
+  await submit("Create worktree thread");
+  await expectBranch(page, "parallel-from-running");
+  expect(git(project, "branch", "--show-current")).toBe("main");
+  expect(git(project, "rev-parse", "HEAD")).toBe(head);
+  expect(git(project, "ls-files", "--stage")).toBe(index);
+  expect(readFileSync(path.join(project, "README.md"), "utf8")).toBe("Local edits\n");
+  writeFileSync(release, "go");
+  await local.click();
+  await expect(page.getByText("Checkout finished.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  expect(errors).toEqual([]);
+});
+
 test("a terminal still protects its checkout after the pool stops its thread's pi", async () => {
   env.TONDO_POOL = JSON.stringify({ idleMs: 0 });
   const { page, app } = await start([reply("Ready.")]);

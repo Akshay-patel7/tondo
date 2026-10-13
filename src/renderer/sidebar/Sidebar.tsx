@@ -66,9 +66,10 @@ import {
 } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
+import { PanelResizeHandle } from "../ui/panel-resize";
 import { StatusDot, StatusRing, TondoMark } from "../ui/status";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { toggleSidebarShown } from "./layout";
+import { toggleSidebarShown, usePanelSize } from "./layout";
 import { listedThreads, MORE_SIZE, PAGE_SIZE, runningCount } from "./model";
 import { endRename, startRename, useFocusedRow, useRenaming } from "./store";
 
@@ -269,6 +270,7 @@ function PiState() {
 }
 
 export function Sidebar() {
+  const size = usePanelSize("sidebar");
   const projects = useHost((host) => host.projects);
   const openId = useHost((host) => host.thread?.id);
   const openWorktree = useHost((host) => host.thread?.worktree === true);
@@ -303,8 +305,10 @@ export function Sidebar() {
     // row beside it from one solid color into a raster tile, about 15 MiB at 2x.
     <nav
       aria-label="Threads"
-      className="relative flex w-64 shrink-0 flex-col border-r border-transparent bg-sidebar will-change-transform"
+      className="relative flex min-w-0 shrink-0 flex-col border-r border-transparent bg-sidebar will-change-transform"
+      style={{ width: size.width }}
     >
+      <PanelResizeHandle label="Resize sidebar" edge="right" {...size} />
       <div
         aria-hidden
         className="absolute inset-y-0 -right-px w-px bg-border will-change-transform"

@@ -108,10 +108,13 @@ test("expanded thinking applies to every section, preserves individual toggles d
   const first = {
     ...reply("First reply."),
     content: [
+      { type: "thinking" as const, thinking: "", thinkingSignature: "opaque-test-signature" },
       { type: "thinking" as const, thinking: "First thought." },
       { type: "text" as const, text: "First reply." },
+      { type: "thinking" as const, thinking: " \n\t " },
       { type: "thinking" as const, thinking: "Second thought." },
       { type: "text" as const, text: "Second reply." },
+      { type: "thinking" as const, thinking: "" },
     ],
   };
   const streaming = {
@@ -119,6 +122,7 @@ test("expanded thinking applies to every section, preserves individual toggles d
     content: [
       { type: "thinking" as const, thinking: "Thinking while streaming. ".repeat(50) },
       { type: "text" as const, text: "Streaming finished." },
+      { type: "thinking" as const, thinking: "" },
     ],
   };
   tondo = await launchWithPi({
@@ -206,6 +210,11 @@ test("expanded thinking applies to every section, preserves individual toggles d
     .locator("details")
     .filter({ has: page.locator("summary", { hasText: "Thought" }) });
   await expect(thoughts).toHaveCount(3);
+  expect(await thoughts.locator("div").allTextContents()).toEqual([
+    "First thought.",
+    "Second thought.",
+    "Thinking while streaming. ".repeat(50),
+  ]);
   await expect
     .poll(() =>
       thoughts.evaluateAll((nodes) => nodes.every((node) => (node as HTMLDetailsElement).open)),

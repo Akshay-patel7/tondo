@@ -52,6 +52,24 @@ export const POOL_RANGES: Readonly<
   idleMinutes: { min: 1, max: 240 },
 };
 
+export interface PanelWidths {
+  readonly sidebar: number;
+  readonly changes: number;
+}
+
+export const PANEL_WIDTH_RANGES: Readonly<
+  Record<keyof PanelWidths, { readonly min: number; readonly max: number }>
+> = {
+  sidebar: { min: 200, max: 480 },
+  changes: { min: 280, max: 800 },
+};
+
+/** Whether a saved panel width is a whole number within its limits. */
+export function isPanelWidth(key: keyof PanelWidths, value: unknown): value is number {
+  const { min, max } = PANEL_WIDTH_RANGES[key];
+  return Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
+}
+
 export interface AppSettings {
   /** The pi command to run, or null to find pi on PATH. */
   readonly piPath: string | null;
@@ -60,6 +78,8 @@ export interface AppSettings {
   /** Whether thinking sections start expanded. Each section can still be toggled. */
   readonly expandThinking: boolean;
   readonly pool: PoolSettings;
+  /** Preferred CSS-pixel widths. Small windows can temporarily narrow the panels. */
+  readonly panelWidths: PanelWidths;
   /** Chord text by command. null disables a shortcut, and a missing command keeps its default. */
   readonly shortcuts: Readonly<Partial<Record<ShortcutCommand, string | null>>>;
 }
@@ -71,6 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   palette: "default",
   expandThinking: false,
   pool: { maxLive: 4, idleMinutes: 10 },
+  panelWidths: { sidebar: 256, changes: 432 },
   shortcuts: {},
 };
 
@@ -80,6 +101,7 @@ export interface SettingsPatch {
   readonly palette?: PaletteSetting;
   readonly expandThinking?: boolean;
   readonly pool?: Partial<PoolSettings>;
+  readonly panelWidths?: Partial<PanelWidths>;
   /** "default" removes your binding, so the command gets its default again. */
   readonly shortcuts?: Partial<Record<ShortcutCommand, string | null | "default">>;
   /** null goes back to finding pi on PATH. */

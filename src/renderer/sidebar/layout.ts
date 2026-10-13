@@ -2,13 +2,16 @@
 // as sidebarHidden. But in a window too narrow for the sidebar and a usable
 // thread, such as the 840 px minimum with Changes open or the default window
 // at 200% zoom, it steps aside until you show it there or the window has room.
-import { useLayoutEffect, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { create } from "zustand";
-import { toggleSidebar, useHost } from "../connection";
+import { DEFAULT_SETTINGS, PANEL_WIDTH_RANGES, type PanelWidths } from "../../shared/settings";
+import { toggleSidebar, updateSettings, useHost, usePiUpdates } from "../connection";
+import { panelSizes } from "../shell/panelSizes";
+import { addToast } from "../toasts/store";
 import { useRenaming } from "./store";
 
 // Beside the 256 px sidebar, a thread of 512 px, or beside it and the Changes
-// panel's 420, one of about 320.
+// panel's 432, one of about 320. Resized panels are capped to fit the same window.
 const ROOM = window.matchMedia("(min-width: 768px)");
 const ROOM_BESIDE_CHANGES = window.matchMedia("(min-width: 1000px)");
 
@@ -63,6 +66,75 @@ export function toggleSidebarShown(): void {
   const hidden = useHost.getState().sidebarHidden;
   if (hidden) toggleSidebar();
   useShownAnyway.setState(hidden || !useShownAnyway.getState(), true);
+}
+
+// A preview is local to the page. Only releasing the drag writes settings.
+const useWidthPreview = create<Partial<PanelWidths>>(() => ({}));
+const savingWidths = new Map<keyof PanelWidths, number>();
+
+useHost.subscribe((host, previous) => {
+  if (host.connection !== "connected") {
+    savingWidths.clear();
+    useWidthPreview.setState({}, true);
+    return;
+  }
+  if (savingWidths.size === 0 || host.settings === previous.settings) return;
+  const error = host.settingsError ?? host.settingsFileError;
+  if (error) {
+    savingWidths.clear();
+    useWidthPreview.setState({}, true);
+    addToast({ level: "error", message: `Couldn't save panel width. ${error}` });
+    return;
+  }
+  for (const [panel, value] of savingWidths) {
+    if (host.settings?.panelWidths[panel] !== value) continue;
+    savingWidths.delete(panel);
+    // A newer drag can already be previewing another width. Its reply must not reset it.
+    if (useWidthPreview.getState()[panel] === value) clearWidthPreview(panel);
+  }
+});
+
+function subscribeToWidth(onChange: () => void): () => void {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function clearWidthPreview(panel: keyof PanelWidths): void {
+  const next = { ...useWidthPreview.getState() };
+  const pending = savingWidths.get(panel);
+  if (pending === undefined) delete next[panel];
+  else next[panel] = pending;
+  useWidthPreview.setState(next, true);
+}
+
+/** The displayed width and resize controls for one of the two side panels. */
+export function usePanelSize(panel: keyof PanelWidths) {
+  const saved = useHost((host) => host.settings?.panelWidths ?? DEFAULT_SETTINGS.panelWidths);
+  const connected = useHost((host) => host.connection === "connected");
+  const updating = usePiUpdates((updates) => updates.updating);
+  const preview = useWidthPreview();
+  const viewport = useSyncExternalStore(subscribeToWidth, () => window.innerWidth);
+  const sidebarShown = useSidebarShown();
+  const changesShown = useChangesShown();
+  const sizes = panelSizes({ ...saved, ...preview }, viewport, sidebarShown, changesShown);
+  const max = panel === "sidebar" ? sizes.sidebarMax : sizes.changesMax;
+  const range = PANEL_WIDTH_RANGES[panel];
+  useEffect(() => () => clearWidthPreview(panel), [panel]);
+  return {
+    width: sizes[panel],
+    min: Math.min(range.min, max),
+    max,
+    defaultWidth: DEFAULT_SETTINGS.panelWidths[panel],
+    disabled: !connected || updating,
+    onChange: (width: number) => useWidthPreview.setState({ [panel]: width }),
+    onCancel: () => clearWidthPreview(panel),
+    onCommit: (width: number) => {
+      const value = Math.max(range.min, Math.min(Math.round(width), range.max));
+      useWidthPreview.setState({ [panel]: value });
+      savingWidths.set(panel, value);
+      updateSettings({ panelWidths: { [panel]: value } });
+    },
+  };
 }
 
 /** Tells the sidebar, for as long as the caller is on screen, whether the Changes panel is too. */

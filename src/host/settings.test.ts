@@ -37,6 +37,7 @@ describe("readSettings", () => {
       theme: "system",
       palette: "default",
       expandThinking: false,
+      panelWidths: { sidebar: 256, changes: 432 },
       pool: { maxLive: 4, idleMinutes: 10 },
       shortcuts: {},
       projectTrust: {},
@@ -62,6 +63,7 @@ describe("readSettings", () => {
       theme: "dark",
       palette: "ocean",
       expandThinking: true,
+      panelWidths: { sidebar: 256, changes: 432 },
       pool: { maxLive: 12, idleMinutes: 240 },
       shortcuts: { palette: "mod+shift+p", settings: null },
       projectTrust: { "/work/a": true, "/work/b": false },
@@ -88,6 +90,25 @@ describe("readSettings", () => {
     ['{"palette":null}', "has a palette that isn't default, slate, ocean or rose: null"],
     ['{"expandThinking":"true"}', 'has an expandThinking that isn\'t true or false: "true"'],
     ['{"expandThinking":null}', "has an expandThinking that isn't true or false: null"],
+    ['{"panelWidths":null}', "has panelWidths that aren't an object"],
+    [
+      '{"panelWidths":{"sidebar":199}}',
+      "has a panelWidths.sidebar that isn't a whole number from 200 to 480",
+    ],
+    [
+      '{"panelWidths":{"sidebar":481}}',
+      "has a panelWidths.sidebar that isn't a whole number from 200 to 480",
+    ],
+    [
+      '{"panelWidths":{"changes":279}}',
+      "has a panelWidths.changes that isn't a whole number from 280 to 800",
+    ],
+    [
+      '{"panelWidths":{"changes":801}}',
+      "has a panelWidths.changes that isn't a whole number from 280 to 800",
+    ],
+    ['{"panelWidths":{"sidebar":256.5}}', "has a panelWidths.sidebar that isn't a whole number"],
+    ['{"panelWidths":{"sidebar":null}}', "has a panelWidths.sidebar that isn't a whole number"],
     ['{"pool":4}', "has a pool that isn't an object"],
     ['{"pool":{"maxLive":0}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 0"],
     ['{"pool":{"maxLive":13}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 13"],
@@ -161,6 +182,7 @@ describe("readSettingsLeniently", () => {
         theme: "system",
         palette: "default",
         expandThinking: false,
+        panelWidths: { sidebar: 256, changes: 432 },
         pool: { maxLive: 4, idleMinutes: 30 },
         shortcuts: { settings: "mod+j" },
         projectTrust: { "/work/a": true },
@@ -195,6 +217,39 @@ describe("newShortcutProblems", () => {
 });
 
 describe("updateSettings", () => {
+  it("saves either panel width independently and preserves unrelated settings and future keys", () => {
+    writeFileSync(file, JSON.stringify({ theme: "dark", later: true, panelWidths: { extra: 7 } }));
+    expect(readSettings(file).panelWidths).toEqual({ sidebar: 256, changes: 432 });
+    expect(updateSettings(file, { panelWidths: { sidebar: 360 } }).panelWidths).toEqual({
+      sidebar: 360,
+      changes: 432,
+    });
+    expect(updateSettings(file, { panelWidths: { changes: 600 } }).panelWidths).toEqual({
+      sidebar: 360,
+      changes: 600,
+    });
+    expect(readSettings(file).panelWidths).toEqual({ sidebar: 360, changes: 600 });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      theme: "dark",
+      later: true,
+      panelWidths: { extra: 7, sidebar: 360, changes: 600 },
+    });
+  });
+
+  it("defaults only the malformed width in a lenient read", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({ theme: "dark", panelWidths: { sidebar: 500, changes: 600 } }),
+    );
+    const { settings, problem } = readSettingsLeniently(file);
+    expect(settings).toEqual({
+      ...DEFAULTS,
+      theme: "dark",
+      panelWidths: { sidebar: 256, changes: 600 },
+    });
+    expect(problem).toContain("panelWidths.sidebar");
+  });
+
   it("saves and disables expanded thinking without changing other settings", () => {
     writeFileSync(file, JSON.stringify({ theme: "dark", later: 1 }));
     expect(readSettings(file).expandThinking).toBe(false);
@@ -270,6 +325,7 @@ describe("updateSettings", () => {
   });
 
   it.each([
+    [{ panelWidths: { changes: 2000 } }, "has a panelWidths.changes that isn't a whole number"],
     [{ piPath: "bin/pi" }, `has a piPath that isn't an absolute path: "bin/pi"`],
     [{ pool: { idleMinutes: 0 } }, "has a pool.idleMinutes that isn't a whole number"],
     [{ shortcuts: { palette: "mod+nope" } }, `has a palette shortcut that isn't one`],

@@ -149,9 +149,29 @@ describe("turnStack", () => {
     expect(items[3]).toMatchObject({ text: "boom" });
   });
 
+  test("empty and whitespace-only thoughts stay out of the stack, including while streaming", () => {
+    const empty = assistant([
+      { type: "thinking", thinking: "" },
+      { type: "thinking", thinking: " \n\t " },
+    ]);
+    expect(turnStack([empty], null)).toEqual([]);
+    expect(turnStack([], empty)).toEqual([]);
+    const first = assistant([call("read", {}, "a"), { type: "thinking", thinking: "" }]);
+    const second = assistant([{ type: "thinking", thinking: " " }, call("read", {}, "b")]);
+    expect(turnStack([first, second], null)).toMatchObject([
+      { kind: "workLog", calls: [{ call: { id: "a" } }, { call: { id: "b" } }] },
+    ]);
+    expect(
+      turnStack([empty], assistant([{ type: "thinking", thinking: "Real thought" }])),
+    ).toMatchObject([{ kind: "thought", key: "1:0", text: "Real thought", active: true }]);
+  });
+
   test("the message pi is writing joins the stack, its calls marked as being written", () => {
     const finished = assistant([call("ls", {}, "a")]);
-    const streaming = assistant([call("read", {}, "b"), { type: "thinking", thinking: "" }]);
+    const streaming = assistant([
+      call("read", {}, "b"),
+      { type: "thinking", thinking: "Reading." },
+    ]);
     const items = turnStack([finished], streaming);
 
     expect(items.map((item) => item.kind)).toEqual(["workLog", "thought"]);

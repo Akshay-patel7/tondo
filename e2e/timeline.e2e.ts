@@ -38,8 +38,22 @@ test("a small animated scroll is not pulled back inside the follow band", async 
   const transcript = page.getByRole("region", { name: "Transcript" });
   await expect.poll(() => gapToEnd(page)).toBeLessThanOrEqual(1);
   const gap = await transcript.evaluate(async (list) => {
+    const start = list.scrollTop;
+    let movedUp = false;
+    const scrolled = () => {
+      movedUp ||= list.scrollTop < start;
+    };
     const ended = new Promise<void>((resolve) => {
-      list.addEventListener("scrollend", () => resolve(), { once: true });
+      const onEnd = () => {
+        // Opening the transcript can leave a programmatic scrollend pending.
+        // Wait for this upward scroll, and still catch a snap back afterward.
+        if (!movedUp) return;
+        list.removeEventListener("scroll", scrolled);
+        list.removeEventListener("scrollend", onEnd);
+        resolve();
+      };
+      list.addEventListener("scroll", scrolled);
+      list.addEventListener("scrollend", onEnd);
     });
     list.scrollBy({ top: -20, behavior: "smooth" });
     await ended;

@@ -19,6 +19,8 @@ import { FilterInput } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
+import { PanelResizeHandle } from "../ui/panel-resize";
+import { usePanelSize } from "../sidebar/layout";
 import { useDiffPanel, useDiffTurn } from "./store";
 
 export { toggleDiffPanel, useDiffPanel } from "./store";
@@ -51,6 +53,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export function DiffPanel() {
+  const size = usePanelSize("changes");
   const connection = useHost((host) => host.connection);
   const updating = usePiUpdates((updates) => updates.updating);
   const turns = useCheckpoints((state) => state.turns);
@@ -93,13 +96,14 @@ export function DiffPanel() {
   };
 
   return (
-    // In a narrow window, as at 200% zoom, the panel narrows too, so the
-    // thread beside it keeps about 320 px (sidebar/layout.ts).
+    // The preferred width narrows to fit a small window without changing the saved setting.
     <aside
       aria-label="Turn changes"
-      className="flex w-[min(432px,45vw)] min-w-0 shrink-0 flex-col border-l border-border bg-sidebar"
+      className="relative flex min-w-0 shrink-0 flex-col border-l border-border bg-sidebar"
+      style={{ width: size.width }}
       onKeyDown={onKeyDown}
     >
+      <PanelResizeHandle label="Resize changes" edge="left" {...size} />
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border ps-4 pe-2">
         <h2 className="text-sm font-medium">Changes</h2>
         <Select

@@ -17,11 +17,13 @@ import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 import {
   isPaletteSetting,
+  isPanelWidth,
   isPoolValue,
   isShortcutCommand,
   isThemeSetting,
   type AppSettings,
   type PaletteSetting,
+  type PanelWidths,
   type PoolSettings,
   type SettingsPatch,
   type ShortcutCommand,
@@ -30,7 +32,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -920,15 +922,25 @@ const MAX_PATH = 4096;
 function parsePatch(patch: unknown): SettingsPatch | string {
   if (!isRecord(patch)) return `patch must be an object, not ${describe(patch)}`;
   const extra = Object.keys(patch).find(
-    (key) => !["theme", "palette", "expandThinking", "pool", "shortcuts", "piPath"].includes(key),
+    (key) =>
+      ![
+        "theme",
+        "palette",
+        "expandThinking",
+        "pool",
+        "panelWidths",
+        "shortcuts",
+        "piPath",
+      ].includes(key),
   );
   if (extra !== undefined) return `patch has an unexpected field ${describe(extra)}`;
-  const { theme, palette, expandThinking, pool, shortcuts, piPath } = patch;
+  const { theme, palette, expandThinking, pool, panelWidths, shortcuts, piPath } = patch;
   const parsed: {
     theme?: ThemeSetting;
     palette?: PaletteSetting;
     expandThinking?: boolean;
     pool?: Partial<PoolSettings>;
+    panelWidths?: Partial<PanelWidths>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
   } = {};
@@ -957,6 +969,19 @@ function parsePatch(patch: unknown): SettingsPatch | string {
       copy[key] = value;
     }
     parsed.pool = copy;
+  }
+  if (panelWidths !== undefined) {
+    if (!isRecord(panelWidths))
+      return `panelWidths must be an object, not ${describe(panelWidths)}`;
+    const copy: { sidebar?: number; changes?: number } = {};
+    for (const [key, value] of Object.entries(panelWidths)) {
+      if (key !== "sidebar" && key !== "changes")
+        return `panelWidths has an unexpected field ${describe(key)}`;
+      if (!isPanelWidth(key, value))
+        return `panelWidths.${key} is out of range: ${describe(value)}`;
+      copy[key] = value;
+    }
+    parsed.panelWidths = copy;
   }
   if (shortcuts !== undefined) {
     if (!isRecord(shortcuts)) return `shortcuts must be an object, not ${describe(shortcuts)}`;

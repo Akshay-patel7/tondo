@@ -618,12 +618,12 @@ export class Workspace {
     const { settings, problem } = this.supervisor.readableSettings();
     // The page may offer to show a broken file in Finder.
     if (problem !== null) this.offered.add(this.supervisor.settingsFile);
-    const { piPath, theme, palette, expandThinking, pool, shortcuts } = settings;
+    const { piPath, theme, palette, expandThinking, pool, panelWidths, shortcuts } = settings;
     this.send({
       v,
       type: "settings",
       // The page applies the same saved palette that main receives for its window.
-      settings: { piPath, theme, palette, expandThinking, pool, shortcuts },
+      settings: { piPath, theme, palette, expandThinking, pool, panelWidths, shortcuts },
       error,
       fileProblem:
         problem === null ? null : { path: this.supervisor.settingsFile, message: problem },
@@ -1094,12 +1094,16 @@ export class Workspace {
       if (!status.root) throw new Error("This folder is not a Git checkout.");
       if (status.branch !== expectedBranch)
         throw new Error("The branch changed. Review it and try again.");
-      const members = [...this.live.values()];
-      const roots = await Promise.all(members.map((thread) => checkpointRoot(thread.project)));
-      if (members.some((thread, index) => thread.busy && roots[index] === status.root))
-        throw new Error(
-          "pi is starting or working in this checkout. Wait for every turn and queued prompt to finish before changing Git state.",
-        );
+      // A new worktree reads a committed base into a separate checkout. It doesn't
+      // change files, HEAD or the index in the checkout where pi is working.
+      if (action.kind !== "new-worktree") {
+        const members = [...this.live.values()];
+        const roots = await Promise.all(members.map((thread) => checkpointRoot(thread.project)));
+        if (members.some((thread, index) => thread.busy && roots[index] === status.root))
+          throw new Error(
+            "pi is starting or working in this checkout. Wait for every turn and queued prompt to finish before changing Git state.",
+          );
+      }
       if (["switch", "create-branch", "remove-worktree"].includes(action.kind)) {
         // The pool may have stopped a background thread's pi while its shell lives on.
         const terminalRows = this.store.threads().filter((stored) => this.terminals.has(stored.id));
@@ -1575,8 +1579,10 @@ export class Workspace {
     const titles = [
       thread?.name,
       summary?.name,
-      asked && messageTitle(asked),
+      // Compaction can remove the original prompt from pi's current context,
+      // but not from its session file. Prefer that original when it's indexed.
       summary?.firstMessage,
+      asked && messageTitle(asked),
     ];
     return titles.find(Boolean) ?? "New thread";
   }

@@ -5,6 +5,8 @@ import path from "node:path";
 import {
   DEFAULT_SETTINGS,
   isPaletteSetting,
+  isPanelWidth,
+  PANEL_WIDTH_RANGES,
   isPoolValue,
   isShortcutCommand,
   isThemeSetting,
@@ -81,6 +83,12 @@ export function updateSettings(file: string, patch: SettingsPatch): Settings {
     if (patch.theme !== undefined) next.theme = patch.theme;
     if (patch.palette !== undefined) next.palette = patch.palette;
     if (patch.expandThinking !== undefined) next.expandThinking = patch.expandThinking;
+    if (patch.panelWidths !== undefined) {
+      next.panelWidths = {
+        ...(isObject(saved.panelWidths) ? saved.panelWidths : {}),
+        ...patch.panelWidths,
+      };
+    }
     if (patch.pool !== undefined) {
       next.pool = { ...(isObject(saved.pool) ? saved.pool : {}), ...patch.pool };
     }
@@ -182,6 +190,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     palette = DEFAULT_SETTINGS.palette,
     expandThinking = DEFAULT_SETTINGS.expandThinking,
     pool = {},
+    panelWidths = {},
     shortcuts = {},
   } = saved;
   let pi: string | null = null;
@@ -223,6 +232,21 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
       }
     }
   }
+  const widths = { ...DEFAULT_SETTINGS.panelWidths };
+  if (!isObject(panelWidths)) report("has panelWidths that aren't an object");
+  else {
+    for (const key of ["sidebar", "changes"] as const) {
+      const value =
+        panelWidths[key] === undefined ? DEFAULT_SETTINGS.panelWidths[key] : panelWidths[key];
+      if (isPanelWidth(key, value)) widths[key] = value;
+      else {
+        const { min, max } = PANEL_WIDTH_RANGES[key];
+        report(
+          `has a panelWidths.${key} that isn't a whole number from ${min} to ${max}: ${JSON.stringify(value)}`,
+        );
+      }
+    }
+  }
   const bindings: Partial<Record<ShortcutCommand, string | null>> = {};
   if (!isObject(shortcuts)) report("has shortcuts that aren't an object");
   else {
@@ -240,6 +264,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     expandThinking:
       typeof expandThinking === "boolean" ? expandThinking : DEFAULT_SETTINGS.expandThinking,
     pool: limits,
+    panelWidths: widths,
     shortcuts: bindings,
     projectTrust: trust,
   };

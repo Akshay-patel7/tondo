@@ -179,6 +179,9 @@ export function turnStack(
       const key = `${index}:${blockIndex}`;
       switch (block.type) {
         case "thinking":
+          // Providers may send signature-only or redacted thinking blocks.
+          // Wait for visible text during streaming instead of showing an empty disclosure.
+          if (!block.thinking.trim()) break;
           endLog();
           items.push({
             kind: "thought",

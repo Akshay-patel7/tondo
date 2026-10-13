@@ -97,6 +97,9 @@ describe("parseClientMessage", () => {
       { v, type: "set-settings", patch: { palette: "slate" } },
       { v, type: "set-settings", patch: { expandThinking: true } },
       { v, type: "set-settings", patch: { expandThinking: false } },
+      { v, type: "set-settings", patch: { panelWidths: { sidebar: 200, changes: 800 } } },
+      { v, type: "set-settings", patch: { panelWidths: { sidebar: 480 } } },
+      { v, type: "set-settings", patch: { panelWidths: { changes: 280 } } },
       { v, type: "set-settings", patch: { theme: "light", palette: "default" } },
       { v, type: "set-settings", patch: { pool: { maxLive: 1, idleMinutes: 240 } } },
       { v, type: "set-settings", patch: { pool: { maxLive: 12 } } },
@@ -384,6 +387,36 @@ describe("parseClientMessage", () => {
     [{ patch: { expandThinking: "true" } }, "set-settings: expandThinking must be true or false"],
     [{ patch: { expandThinking: null } }, "set-settings: expandThinking must be true or false"],
     [{ patch: { expandThinking: 1 } }, "set-settings: expandThinking must be true or false"],
+    [{ patch: { panelWidths: [] } }, "set-settings: panelWidths must be an object"],
+    [{ patch: { panelWidths: null } }, "set-settings: panelWidths must be an object"],
+    [
+      { patch: { panelWidths: { sidebar: 199 } } },
+      "set-settings: panelWidths.sidebar is out of range",
+    ],
+    [
+      { patch: { panelWidths: { sidebar: 481 } } },
+      "set-settings: panelWidths.sidebar is out of range",
+    ],
+    [
+      { patch: { panelWidths: { changes: 279 } } },
+      "set-settings: panelWidths.changes is out of range",
+    ],
+    [
+      { patch: { panelWidths: { changes: 801 } } },
+      "set-settings: panelWidths.changes is out of range",
+    ],
+    [
+      { patch: { panelWidths: { sidebar: 256.5 } } },
+      "set-settings: panelWidths.sidebar is out of range",
+    ],
+    [
+      { patch: { panelWidths: { sidebar: "256" } } },
+      "set-settings: panelWidths.sidebar is out of range",
+    ],
+    [
+      { patch: { panelWidths: { other: 400 } } },
+      'set-settings: panelWidths has an unexpected field "other"',
+    ],
     [{ patch: { pool: 4 } }, "set-settings: pool must be an object"],
     [{ patch: { pool: { maxLive: 0 } } }, "set-settings: pool.maxLive is out of range: 0"],
     [{ patch: { pool: { maxLive: 13 } } }, "set-settings: pool.maxLive is out of range: 13"],
@@ -411,8 +444,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 17, which adds the expanded thinking setting", () => {
-    expect(PROTOCOL_VERSION).toBe(17);
+  it("speaks version 18, which adds saved panel widths", () => {
+    expect(PROTOCOL_VERSION).toBe(18);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {

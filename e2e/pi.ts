@@ -94,7 +94,7 @@ function installPi(
   const node = path.join(bin, "node");
   symlinkSync(cli, pi);
   if (process.env.TONDO_E2E_EXECUTABLE) {
-    mkdirSync(faux.agentDir);
+    mkdirSync(faux.agentDir, { recursive: true });
     writeFileSync(
       node,
       [
