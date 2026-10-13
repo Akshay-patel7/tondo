@@ -226,6 +226,20 @@ describe("settings messages", () => {
     expect(readFileSync(settingsFile, "utf8")).toBe("{}\n");
   });
 
+  it("sends the saved expanded thinking setting to the page and on reconnect", async () => {
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch: { expandThinking: true } });
+    expect(await changed).toMatchObject({
+      type: "settings",
+      error: null,
+      settings: { expandThinking: true },
+    });
+    expect(JSON.parse(readFileSync(settingsFile, "utf8")).expandThinking).toBe(true);
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({ settings: { expandThinking: true } });
+  });
+
   it("sends a palette change to the page and main without changing the scheme", async () => {
     writeFileSync(settingsFile, JSON.stringify({ theme: "dark" }));
     workspace.applySettings();

@@ -62,7 +62,7 @@ A new thread opens its composer immediately but stays out of the sidebar until y
 
 Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has five sections:
 
-- **Appearance:** System, Light or Dark, with Default, Slate, Ocean or Rose colors. Each palette has light and dark versions.
+- **Appearance:** System, Light or Dark, with Default, Slate, Ocean or Rose colors. Each palette has light and dark versions. Expand thinking sections opens every section by default, including past replies. It starts off, and individual sections can still be toggled.
 - **pi:** the version and path in use. Choose a pi, go back to the one on your PATH, or open pi's global and project settings files.
 - **Accounts:** the providers pi is signed in to and how each one signs in, read from pi's `auth.json`. Tokens are never shown. When the thread on screen has the usage line that pi-claude-subscription-connector publishes, it shows here too. Sign in with Claude opens the sign-in terminal straight on Anthropic; Sign in to a provider opens pi's general sign-in menu. The header offers sign-in only while no provider is configured.
 - **Threads:** how many pi processes may run at once (1 to 12, default 4), and how many idle minutes pass before a hidden thread's pi stops (1 to 240, default 10). Changes apply at once.

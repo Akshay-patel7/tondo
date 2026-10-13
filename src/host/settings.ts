@@ -80,6 +80,7 @@ export function updateSettings(file: string, patch: SettingsPatch): Settings {
     const next: Record<string, unknown> = { ...saved };
     if (patch.theme !== undefined) next.theme = patch.theme;
     if (patch.palette !== undefined) next.palette = patch.palette;
+    if (patch.expandThinking !== undefined) next.expandThinking = patch.expandThinking;
     if (patch.pool !== undefined) {
       next.pool = { ...(isObject(saved.pool) ? saved.pool : {}), ...patch.pool };
     }
@@ -179,6 +180,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     theme = DEFAULT_SETTINGS.theme,
     // A file from before palettes has none, and keeps the look it had.
     palette = DEFAULT_SETTINGS.palette,
+    expandThinking = DEFAULT_SETTINGS.expandThinking,
     pool = {},
     shortcuts = {},
   } = saved;
@@ -203,6 +205,9 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   if (isPaletteSetting(palette)) chosenPalette = palette;
   else {
     report(`has a palette that isn't default, slate, ocean or rose: ${JSON.stringify(palette)}`);
+  }
+  if (typeof expandThinking !== "boolean") {
+    report(`has an expandThinking that isn't true or false: ${JSON.stringify(expandThinking)}`);
   }
   if (!isObject(pool)) report("has a pool that isn't an object");
   const limits = { ...DEFAULT_SETTINGS.pool };
@@ -232,6 +237,8 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     piPath: pi,
     theme: chosenTheme,
     palette: chosenPalette,
+    expandThinking:
+      typeof expandThinking === "boolean" ? expandThinking : DEFAULT_SETTINGS.expandThinking,
     pool: limits,
     shortcuts: bindings,
     projectTrust: trust,

@@ -80,6 +80,8 @@ describe("parseClientMessage", () => {
       { v, type: "set-settings", patch: {} },
       { v, type: "set-settings", patch: { theme: "dark" } },
       { v, type: "set-settings", patch: { palette: "slate" } },
+      { v, type: "set-settings", patch: { expandThinking: true } },
+      { v, type: "set-settings", patch: { expandThinking: false } },
       { v, type: "set-settings", patch: { theme: "light", palette: "default" } },
       { v, type: "set-settings", patch: { pool: { maxLive: 1, idleMinutes: 240 } } },
       { v, type: "set-settings", patch: { pool: { maxLive: 12 } } },
@@ -364,6 +366,9 @@ describe("parseClientMessage", () => {
     [{ patch: { palette: "dark" } }, 'set-settings: palette must be "default", "slate", "ocean"'],
     [{ patch: { palette: "teal" } }, "set-settings: palette must be"],
     [{ patch: { palette: null } }, "set-settings: palette must be"],
+    [{ patch: { expandThinking: "true" } }, "set-settings: expandThinking must be true or false"],
+    [{ patch: { expandThinking: null } }, "set-settings: expandThinking must be true or false"],
+    [{ patch: { expandThinking: 1 } }, "set-settings: expandThinking must be true or false"],
     [{ patch: { pool: 4 } }, "set-settings: pool must be an object"],
     [{ patch: { pool: { maxLive: 0 } } }, "set-settings: pool.maxLive is out of range: 0"],
     [{ patch: { pool: { maxLive: 13 } } }, "set-settings: pool.maxLive is out of range: 13"],
@@ -391,8 +396,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 16, which adds the pull Git action", () => {
-    expect(PROTOCOL_VERSION).toBe(16);
+  it("speaks version 17, which adds the expanded thinking setting", () => {
+    expect(PROTOCOL_VERSION).toBe(17);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {
