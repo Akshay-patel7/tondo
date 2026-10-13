@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   APP_SCHEME,
+  APP_URL,
   CONTENT_SECURITY_POLICY,
   isExternalHttpUrl,
   resolveAppRequest,
@@ -86,7 +87,15 @@ function openExternally(url: string): void {
   });
 }
 
-export function denyAllPermissions(session: Session): void {
-  session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+/**
+ * Denies every permission except clipboard writes from the app's own page,
+ * which copy buttons in replies (Streamdown's) need. Reading stays denied.
+ */
+export function denyPermissionsButClipboardWrite(session: Session): void {
+  session.setPermissionRequestHandler((_contents, permission, callback, details) =>
+    callback(
+      permission === "clipboard-sanitized-write" && details.requestingUrl.startsWith(APP_URL),
+    ),
+  );
   session.setPermissionCheckHandler(() => false);
 }

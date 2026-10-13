@@ -89,14 +89,6 @@ test("markdown code controls stay usable without backdrop blur in both themes", 
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
-  // Exercise Copy without replacing the user's clipboard.
-  const copied = await page.evaluateHandle(() => {
-    const values: string[] = [];
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: async (text: string) => void values.push(text) },
-    });
-    return values;
-  });
   await send(page, "Show the code.");
   await waitForIdle(page);
   await expect(page.locator("pre")).toContainText(code);
@@ -108,8 +100,38 @@ test("markdown code controls stay usable without backdrop blur in both themes", 
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(actions).toHaveCSS("backdrop-filter", "none");
   await page.screenshot({ path: "test-results/code-controls-dark.png" });
-  await actions.getByRole("button", { name: "Copy Code", exact: true }).click();
-  await expect.poll(() => copied.jsonValue()).toEqual([`${code}\n`]);
+  // Copy goes through the page's real clipboard API, so save the user's
+  // clipboard in main, every format, and put it back afterwards.
+  const app = tondo!.app;
+  await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+    const state = globalThis as typeof globalThis & { savedClipboard?: Electron.ClipboardItem[] };
+    state.savedClipboard = await Promise.all(
+      (await clipboard.read())
+        .filter((item) => item.types.length > 0)
+        .map(
+          async (item) =>
+            new ClipboardItem(
+              Object.fromEntries(
+                await Promise.all(item.types.map(async (type) => [type, await item.getType(type)])),
+              ),
+            ),
+        ),
+    );
+    clipboard.clear();
+  });
+  try {
+    await actions.getByRole("button", { name: "Copy Code", exact: true }).click();
+    await expect
+      .poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(`${code}\n`);
+  } finally {
+    await app.evaluate(async ({ clipboard }) => {
+      const state = globalThis as typeof globalThis & { savedClipboard?: Electron.ClipboardItem[] };
+      if (state.savedClipboard?.length) await clipboard.write(state.savedClipboard);
+      else clipboard.clear();
+      delete state.savedClipboard;
+    });
+  }
   expect(errors).toEqual([]);
 });
 

@@ -15,7 +15,7 @@ import { threadNotifications } from "./notifications";
 import { piOptions, resolveUserDataDir } from "./profile";
 import { reloadWhenRendererDies } from "./rendererRecovery";
 import {
-  denyAllPermissions,
+  denyPermissionsButClipboardWrite,
   handleAppProtocol,
   hardenWebContents,
   registerAppScheme,
@@ -151,7 +151,7 @@ if (!app.requestSingleInstanceLock()) {
     .then(() => {
       handleAppProtocol(path.join(__dirname, "../renderer"));
       installAppMenu({ isPackaged: app.isPackaged, platform: process.platform });
-      denyAllPermissions(session.defaultSession);
+      denyPermissionsButClipboardWrite(session.defaultSession);
       const userData = app.getPath("userData");
       const { TONDO_PI_ARGS: piArgs, TONDO_POOL: pool } = process.env;
       const started = startHost({

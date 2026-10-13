@@ -46,7 +46,7 @@ CI runs `typecheck`, `lint`, `format:check`, `test`, `build`, `smoke` and `e2e` 
 - Main loads electron-updater with a dynamic import, only when updates are on, so unpackaged runs keep main's memory unchanged.
 - Main, preload and host build as CommonJS, and the renderer as ESM. Don't add `"type": "module"` to package.json: electron-vite would then emit the preload as `.mjs`, which a sandboxed preload can't load.
 - `src/renderer/ui` owns its look. Outside it, pick a component's variant or size and pass only layout classes. For a new look, add a variant in the ui file. The `tondo/no-restyle` rule (`scripts/lint/no-restyle.mjs`) fails lint on any other class, or on a className it can't read statically.
-- The window stays locked down: context isolation and the sandbox on, Node integration off, pages served from `tondo://` with the CSP in `src/main/securityPolicy.ts`, and navigation, new windows and permission requests denied. `e2e/window.e2e.ts` tests all of it except context isolation and the sandbox, so keep it passing.
+- The window stays locked down: context isolation and the sandbox on, Node integration off, pages served from `tondo://` with the CSP in `src/main/securityPolicy.ts`, navigation and new windows denied, and every permission request denied except clipboard writes from the app's own page. `e2e/window.e2e.ts` tests all of it except context isolation and the sandbox, so keep it passing.
 
 ## App data and your pi setup
 
