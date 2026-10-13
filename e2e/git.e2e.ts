@@ -69,7 +69,7 @@ test.beforeEach(() => {
   const gh = path.join(bin, "gh");
   writeFileSync(
     gh,
-    `#!${process.execPath}\nconst fs=require('fs'); const a=process.argv.slice(2); fs.appendFileSync(${JSON.stringify(path.join(dir, "gh.jsonl"))},JSON.stringify({args:a,input:fs.readFileSync(0,'utf8')})+'\\n');if(fs.existsSync(${JSON.stringify(path.join(dir, "logged-out"))}))process.exit(1); if(a[0]==='pr'&&a[1]==='list')console.log(fs.existsSync(${JSON.stringify(path.join(dir, "created"))})?'[{"number":7,"title":"Test PR","state":"OPEN","url":"https://github.example.com/team/repo/pull/7"}]':'[]');if(a[1]==='create'){fs.writeFileSync(${JSON.stringify(path.join(dir, "created"))},'yes');console.log('https://github.example.com/team/repo/pull/7');}\n`,
+    `#!${process.execPath}\nconst fs=require('fs'); const a=process.argv.slice(2); fs.appendFileSync(${JSON.stringify(path.join(dir, "gh.jsonl"))},JSON.stringify({args:a,input:fs.readFileSync(0,'utf8')})+'\\n');if(fs.existsSync(${JSON.stringify(path.join(dir, "logged-out"))}))process.exit(1); if(a[0]==='pr'&&a[1]==='list'){const f=${JSON.stringify(path.join(dir, "pr-branch"))};const branch=a[a.indexOf('--head')+1];console.log(fs.existsSync(${JSON.stringify(path.join(dir, "created"))})&&(!fs.existsSync(f)||fs.readFileSync(f,'utf8')===branch)?'[{"number":7,"title":"Test PR","state":"OPEN","url":"https://github.example.com/team/repo/pull/7"}]':'[]');}if(a[1]==='create'){fs.writeFileSync(${JSON.stringify(path.join(dir, "created"))},'yes');console.log('https://github.example.com/team/repo/pull/7');}\n`,
   );
   chmodSync(gh, 0o755);
   // The test's login shell keeps its PATH, rather than loading the developer's dotfiles.
@@ -179,6 +179,66 @@ function worktreePath(): string {
   return field.slice(9);
 }
 
+test("status labels and the PR link update without opening Git actions or Changes", async () => {
+  writeFileSync(path.join(dir, "created"), "yes");
+  writeFileSync(path.join(dir, "pr-branch"), "main");
+  const { page, app } = await start([reply("Ready.")]);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  const pill = gitPill(page);
+  const pr = pill.getByRole("link", { name: "PR 7", exact: true });
+  await expect(pr).toBeVisible();
+  await expect(pr).toHaveAttribute("href", "https://github.example.com/team/repo/pull/7");
+  const opened = await captureOpenExternal(app);
+  await pr.click();
+  expect(await opened()).toBe("https://github.example.com/team/repo/pull/7");
+  expect(app.windows()).toHaveLength(1);
+  expect(page.url()).toBe("tondo://app/");
+  await expect(pill).toContainText("No changes");
+  await expect(pill).toContainText("Up to date with origin/main");
+  writeFileSync(path.join(project, "new.txt"), "new\n");
+  await expect(pill).toContainText("1 change");
+  writeFileSync(path.join(project, "README.md"), "Changed\n");
+  await expect(pill).toContainText("2 changes");
+  git(project, "add", ".");
+  git(project, "commit", "-m", "local edits");
+  await expect(pill).toContainText("No changes");
+  await expect(pill).toContainText("1 ahead of origin/main");
+  pushFromElsewhere("remote.txt", "remote\n");
+  git(project, "fetch", "origin");
+  await expect(pill).toContainText("1 ahead, 1 behind origin/main");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect
+    .poll(() => page.evaluate(() => window.matchMedia("(prefers-color-scheme: dark)").matches))
+    .toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("status-pr-dark.png"),
+    animations: "disabled",
+  });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect
+    .poll(() => page.evaluate(() => window.matchMedia("(prefers-color-scheme: light)").matches))
+    .toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("status-pr-light.png"),
+    animations: "disabled",
+  });
+  git(project, "switch", "-c", "other");
+  await expectBranch(page, "other");
+  await expect(pr).toHaveCount(0);
+  git(project, "switch", "main");
+  await expectBranch(page, "main");
+  await expect(pr).toBeVisible();
+  await page.reload();
+  await waitForPi(page);
+  await expect(pr).toBeVisible();
+  await expect(pill).toContainText("1 ahead, 1 behind origin/main");
+  expect(errors).toEqual([]);
+});
+
 test("worktree tools, files, checkpoints, terminal and sessions use the checkout; commit, push and PR are explicit", async () => {
   test.setTimeout(90_000);
   const app = await start();
@@ -259,6 +319,7 @@ test("worktree tools, files, checkpoints, terminal and sessions use the checkout
   await page.getByLabel("Pull request title").fill("Test PR");
   await page.getByLabel("Pull request description").fill("Test body");
   await submit("Create pull request");
+  await expect(gitPill(page).getByRole("link", { name: "PR 7", exact: true })).toBeVisible();
   const menu = await gitMenu(page);
   const link = menu.getByRole("menuitem", { name: "PR #7 · open", exact: true });
   await expect(link).toHaveAttribute("href", "https://github.example.com/team/repo/pull/7");

@@ -1,8 +1,17 @@
 // The status row's Git pill: which checkout the thread runs in, what's
 // uncommitted, and how the branch stands against its upstream.
-import { ArrowDown, ArrowUp, CircleAlert, File, Folder, FolderGit2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  CircleAlert,
+  File,
+  Folder,
+  FolderGit2,
+  GitPullRequest,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useGit, useHost } from "../connection";
+import { Button } from "../ui/button";
 import { changesLabel, progressLabel, trackingLabel, uncommittedLabel } from "./labels";
 
 /** Nothing for a folder that isn't a Git checkout, and a warning when Git can't read it. */
@@ -24,6 +33,7 @@ export function GitPill() {
   }
   const tracking = status.upstream ? trackingLabel(status, status.upstream) : null;
   const progress = progressLabel(status);
+  const pr = status.github.pr;
   return (
     <Pill>
       <Segment title={worktree ? cwd : "Shared checkout"}>
@@ -62,6 +72,27 @@ export function GitPill() {
             <CircleAlert aria-hidden />
             {progress}
           </Segment>
+        </>
+      ) : null}
+      {pr ? (
+        <>
+          <Divider />
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-full"
+            render={
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noreferrer"
+                title={`${pr.title} · ${pr.state.toLowerCase()}`}
+              />
+            }
+          >
+            <GitPullRequest aria-hidden />
+            {`PR ${pr.number}`}
+          </Button>
         </>
       ) : null}
     </Pill>

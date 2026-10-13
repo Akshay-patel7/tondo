@@ -12,6 +12,7 @@ import type { FileIndex } from "./files";
 import { isGitAction, type GitCommand, type GitEvent } from "./git";
 import type { TerminalCommand, TerminalEvent } from "./terminal";
 import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
+import type { PiUpdates } from "./piUpdates";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 import {
@@ -338,6 +339,10 @@ export type ClientMessage = Versioned<
   | { type: "get-pi-config-files"; threadId: string | null }
   /** Answered with pi-accounts: the sign-ins in pi's auth.json. */
   | { type: "get-pi-accounts" }
+  /** Checks are read-only. Automatic checks respect offline mode; the button opts into network checks. */
+  | { type: "check-pi-updates"; manual: boolean }
+  /** Apply only a host-offered id after the user confirms. */
+  | { type: "apply-pi-update"; id: string }
   /** Answered with project-git: whether the project folder is a Git checkout, and its branch. */
   | { type: "get-project-git"; projectId: number }
 >;
@@ -375,6 +380,7 @@ export type HostMessage = Versioned<
       unavailable: string | null;
     }
   | { type: "checkpoint-diff"; threadId: string; turn: number; id: number; diff: CheckpointDiff }
+  | { type: "pi-updates"; updates: PiUpdates }
   /** Images stay saved until pi accepts them. A failed send leaves them in the draft. */
   | { type: "image-send-ended"; threadId: string; imageIds: readonly string[]; sent: boolean }
   /** The window's state that outlives a restart. The host sends it to each new port. */
@@ -647,6 +653,16 @@ export function parseClientMessage(data: unknown): ParseResult {
         id: id as number,
         query,
       });
+    }
+    case "check-pi-updates": {
+      if (typeof message.manual !== "boolean")
+        return invalid("check-pi-updates: manual must be a boolean");
+      return exactly(message, { v, type, manual: message.manual });
+    }
+    case "apply-pi-update": {
+      if (typeof message.id !== "string" || !/^[0-9a-f-]{36}$/.test(message.id))
+        return invalid("apply-pi-update: id must be a host-offered update id");
+      return exactly(message, { v, type, id: message.id });
     }
     case "list-checkpoints": {
       const bad = badThreadId(type, threadId);

@@ -1,7 +1,7 @@
 // The model and thinking level pickers. They show what pi last reported, and a
 // pick goes to pi, which reports the change back.
 import type { PiSession, ThinkingLevel } from "../../shared/protocol";
-import { setModel, setThinkingLevel } from "../connection";
+import { setModel, setThinkingLevel, usePiUpdates } from "../connection";
 import {
   Select,
   SelectContent,
@@ -29,6 +29,7 @@ function modelKey(provider: string, id: string): string {
 
 // Each trigger keeps data-picker, which /model and /thinking find it by (slash/builtins.ts).
 export function ModelPicker({ session }: { session: PiSession }) {
+  const updating = usePiUpdates((updates) => updates.updating);
   const { model, models } = session;
   const current = model ? modelKey(model.provider, model.id) : null;
   const listed = models.some((option) => modelKey(option.provider, option.id) === current);
@@ -52,7 +53,7 @@ export function ModelPicker({ session }: { session: PiSession }) {
       items={labels}
       value={models.length === 0 ? null : current}
       onValueChange={pick}
-      disabled={models.length === 0}
+      disabled={models.length === 0 || updating}
     >
       <SelectTrigger
         data-picker="model"
@@ -86,6 +87,7 @@ export function ModelPicker({ session }: { session: PiSession }) {
 }
 
 export function ThinkingPicker({ session }: { session: PiSession }) {
+  const updating = usePiUpdates((updates) => updates.updating);
   const { thinkingLevel, thinkingLevels } = session;
   // A model without reasoning offers only "off".
   if (thinkingLevels.length < 2) return null;
@@ -100,6 +102,7 @@ export function ThinkingPicker({ session }: { session: PiSession }) {
       items={thinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level] }))}
       value={thinkingLevel}
       onValueChange={pick}
+      disabled={updating}
     >
       <SelectTrigger data-picker="thinking" aria-label="Thinking level" variant="ghost-picker">
         <SelectValue />

@@ -1,5 +1,11 @@
 import type { CheckpointDiff, CheckpointTurn } from "../shared/checkpoints";
-import { captureCheckpoint, checkpointFiles, checkpointRoot, hasCheckpoint } from "./checkpoints";
+import {
+  captureCheckpoint,
+  checkpointFiles,
+  checkpointRoot,
+  checkpointStats,
+  hasCheckpoint,
+} from "./checkpoints";
 import type { Store, StoredCheckpoint } from "./store";
 
 function reason(error: unknown): string {
@@ -11,6 +17,17 @@ function nestedNote(paths: readonly string[]): string | null {
   if (!paths.length) return null;
   const more = paths.length > 3 ? ` and ${paths.length - 3} more` : "";
   return `Uncommitted changes inside nested repositories and submodules aren't shown: ${paths.slice(0, 3).join(", ")}${more}.`;
+}
+
+/** Exclude the host's Git roots and capture bookkeeping from renderer metadata. */
+export function checkpointMetadata({
+  turn,
+  startedAt,
+  state,
+  reason: message,
+  stats,
+}: CheckpointTurn): CheckpointTurn {
+  return { turn, startedAt, state, reason: message, ...(stats ? { stats } : {}) };
 }
 
 /** Orders Git around pi. Prompt preparation finishes before the host sends RPC. */
@@ -51,12 +68,24 @@ export class TurnCheckpoints {
   }
 
   get turns(): readonly CheckpointTurn[] {
-    return this.records.map(({ turn, startedAt, state, reason: message }) => ({
-      turn,
-      startedAt,
-      state,
-      reason: message,
-    }));
+    return this.records.map(checkpointMetadata);
+  }
+
+  /** Read the latest summary without loading patches. Saved counts survive host and page restarts. */
+  async list(): Promise<readonly CheckpointTurn[]> {
+    const latest = this.records.at(-1);
+    if (latest?.state === "ready" && latest.root && !latest.stats) {
+      let stats;
+      try {
+        stats = await checkpointStats(latest.root, this.threadId, latest.turn - 1, latest.turn);
+      } catch (error) {
+        stats = { error: reason(error) };
+      }
+      // A turn can change while Git runs. Never overwrite newer metadata with an old summary.
+      if (this.records.find((record) => record.turn === latest.turn) === latest)
+        this.save({ ...latest, stats }, false);
+    }
+    return this.turns;
   }
 
   get busy(): boolean {

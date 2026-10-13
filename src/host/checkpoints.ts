@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { isUtf8 } from "node:buffer";
 import { copyFile, mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import path from "node:path";
-import type { CheckpointFile } from "../shared/checkpoints";
+import type { CheckpointFile, CheckpointStats } from "../shared/checkpoints";
 import { drainGroup, signalGroup } from "./processGroup";
 
 export const CHECKPOINT_DIFF_BYTES = 10_000_000;
@@ -397,6 +397,38 @@ export function diffCheckpoints(
   to: number,
 ): Promise<string> {
   return patchBetween(root, checkpointRange(threadId, from, to));
+}
+
+/** Count every text line, including files whose patches exceed the preview cap. Binary files add none. */
+export async function checkpointStats(
+  root: string,
+  threadId: string,
+  from: number,
+  to: number,
+): Promise<CheckpointStats> {
+  const output = await git(root, [
+    ...DIFF,
+    "--numstat",
+    "-z",
+    ...checkpointRange(threadId, from, to),
+    "--",
+  ]);
+  const records = output.split("\0");
+  let added = 0;
+  let removed = 0;
+  for (let i = 0; i < records.length - 1; i++) {
+    const match = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(records[i]!);
+    if (!match) throw new Error("Checkpoint line counts are invalid");
+    if (match[1] !== "-" && match[2] !== "-") {
+      added += Number(match[1]);
+      removed += Number(match[2]);
+    }
+    // With -z, a rename has an empty name here, then two NUL-separated paths.
+    if (match[3] === "") i += 2;
+  }
+  if (!Number.isSafeInteger(added) || !Number.isSafeInteger(removed))
+    throw new Error("Checkpoint line counts exceed safe integers");
+  return { added, removed, error: null };
 }
 
 /** Most files listed without a patch before the rest are given up on. */

@@ -20,6 +20,7 @@ import {
   checkpointFiles,
   checkpointRef,
   checkpointRoot,
+  checkpointStats,
   deleteCheckpoints,
   diffCheckpoints,
   hasCheckpoint,
@@ -70,6 +71,45 @@ afterEach(() => {
 });
 
 describe("Git checkpoints", () => {
+  test("line counts include additions, removals and edits but not binary or rename headers", async () => {
+    git("init", "-q");
+    write("edited.txt", "before\nkept\n");
+    write("deleted.txt", "one\ntwo\n");
+    write("renamed\told\n.txt", "unchanged\n".repeat(20));
+    write("binary.bin", Buffer.from([0, 1, 2]));
+    await capture(0);
+    write("edited.txt", "after\nkept\nextra\n");
+    rmSync(path.join(folder, "deleted.txt"));
+    renameSync(path.join(folder, "renamed\told\n.txt"), path.join(folder, "renamed\tnew\n.txt"));
+    write("new\tfile\n.txt", "new\nlines\n");
+    write("binary.bin", Buffer.from([0, 3, 4]));
+    await capture(1);
+    expect(await checkpointStats(folder, thread, 0, 1)).toEqual({
+      added: 4,
+      removed: 3,
+      error: null,
+    });
+    expect(await checkpointStats(folder, thread, 1, 1)).toEqual({
+      added: 0,
+      removed: 0,
+      error: null,
+    });
+    git("update-ref", "-d", checkpointRef(thread, 0));
+    await expect(checkpointStats(folder, thread, 0, 1)).rejects.toThrow();
+  });
+
+  test("line counts do not truncate text whose patch exceeds the preview cap", async () => {
+    git("init", "-q");
+    await capture(0);
+    write("huge.txt", "a".repeat(10_000_001) + "\nsecond\n");
+    await capture(1);
+    expect(await checkpointStats(folder, thread, 0, 1)).toEqual({
+      added: 2,
+      removed: 0,
+      error: null,
+    });
+  });
+
   test("encodes a thread namespace and rejects invalid turn numbers", () => {
     expect(checkpointRef("hello", 2)).toBe("refs/tondo/checkpoints/aGVsbG8/turn/2");
     for (const turn of [-1, 1.5, NaN, Infinity])

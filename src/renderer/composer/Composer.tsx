@@ -14,6 +14,7 @@ import {
   usePi,
   useHost,
   useImageSends,
+  usePiUpdates,
 } from "../connection";
 import { IMAGE_COUNT, type DraftImage } from "../../shared/images";
 import { addToast } from "../toasts/store";
@@ -82,6 +83,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const images = useDraftImages((items) => items);
   const threadId = useHost((host) => host.thread?.id);
   const connection = useHost((host) => host.connection);
+  const updating = usePiUpdates((updates) => updates.updating);
   const sendingImages = useImageSends((sending) => threadId !== undefined && sending.has(threadId));
   const [loadingImages, setLoadingImages] = useState(0);
   const pi = usePi();
@@ -107,6 +109,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const text = draft.trim();
   const locked = loadingImages > 0 || sendingImages;
   const canSend =
+    !updating &&
     !locked &&
     (text !== "" || images.length > 0) &&
     (pi.state === "ready" || builtinIn(text) !== null) &&
@@ -154,6 +157,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
 
   const submitText = (source: string, behavior: StreamingBehavior) => {
     if (
+      updating ||
       locked ||
       (images.length > 0 &&
         (working || queued) &&

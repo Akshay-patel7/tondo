@@ -1,9 +1,15 @@
+export type CheckpointStats =
+  | { readonly added: number; readonly removed: number; readonly error: null }
+  | { readonly error: string };
+
 /** One Tondo run, including steering and follow-ups consumed before agent_settled. */
 export interface CheckpointTurn {
   readonly turn: number;
   readonly startedAt: number;
   readonly state: "running" | "capturing" | "ready" | "unavailable";
   readonly reason: string | null;
+  /** Git's line counts, independent of whether the panel has loaded this turn's patches. */
+  readonly stats?: CheckpointStats;
 }
 
 export interface CheckpointFile {

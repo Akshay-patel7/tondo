@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { CheckpointFile, CheckpointTurn } from "../../shared/checkpoints";
-import { listCheckpoints, readCheckpoint, useCheckpoints, useHost } from "../connection";
+import { readCheckpoint, useCheckpoints, useHost, usePiUpdates } from "../connection";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -51,8 +51,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export function DiffPanel() {
-  const threadId = useHost((host) => host.thread?.id);
   const connection = useHost((host) => host.connection);
+  const updating = usePiUpdates((updates) => updates.updating);
   const turns = useCheckpoints((state) => state.turns);
   const chosen = useDiffTurn();
   const opener = useRef<Element | null>(null);
@@ -71,11 +71,9 @@ export function DiffPanel() {
     opener.current = document.activeElement;
   }, []);
   useEffect(() => {
-    if (threadId && connection === "connected") listCheckpoints();
-  }, [threadId, connection]);
-  useEffect(() => {
-    if (turn?.state === "ready" && connection === "connected") readCheckpoint(turn.turn);
-  }, [turn?.turn, turn?.state, connection]);
+    if (!updating && turn?.state === "ready" && connection === "connected")
+      readCheckpoint(turn.turn);
+  }, [turn?.turn, turn?.state, connection, updating]);
 
   const close = () => {
     if (opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus();

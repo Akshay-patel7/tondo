@@ -17,6 +17,7 @@ import { Button } from "../ui/button";
 import { CardGroup, CardGroupRow, CardGroupRowText, CardGroupRowTitle } from "../ui/card-group";
 import { Spinner } from "../ui/spinner";
 import { Loading, SubHeading } from "./rows";
+import { PiUpdateSettings } from "./PiUpdates";
 
 const REVEAL = isMac ? "Show in Finder" : "Show in folder";
 
@@ -74,6 +75,7 @@ export function PiSettings() {
           </div>
         </div>
       </CardGroup>
+      <PiUpdateSettings />
       <SubHeading
         title="pi's settings files"
         description="pi reads its own settings from these. A project's file wins over your global one."

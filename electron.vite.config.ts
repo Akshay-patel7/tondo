@@ -56,7 +56,11 @@ export default defineConfig({
     build: {
       rollupOptions: {
         // The host is its own entry so the utility process loads it without main's code.
-        input: { index: "src/main/index.ts", host: "src/host/index.ts" },
+        input: {
+          index: "src/main/index.ts",
+          host: "src/host/index.ts",
+          piUpdateProbe: "src/host/piUpdateProbe.ts",
+        },
       },
     },
   },

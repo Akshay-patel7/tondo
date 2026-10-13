@@ -1,8 +1,15 @@
 import { ArrowLeft, GitBranch, GitCompareArrows, PanelLeft, Search, Terminal } from "lucide-react";
 import { useEffect, useId, type ReactNode } from "react";
-import type { CheckpointFile } from "../../shared/checkpoints";
 import type { ShortcutCommand } from "../../shared/settings";
-import { openTerminal, requestPiAccounts, useCheckpoints, useGit, useHost } from "../connection";
+import {
+  listCheckpoints,
+  openTerminal,
+  requestPiAccounts,
+  useCheckpoints,
+  useGit,
+  useHost,
+  usePiUpdates,
+} from "../connection";
 import { toggleDiffPanel, useDiffPanel } from "../diffs/store";
 import { folderName } from "../format";
 import { GitActions } from "../git/GitActions";
@@ -165,63 +172,47 @@ function Breadcrumb({ project }: { project: string }) {
   );
 }
 
-/**
- * Toggles the Changes panel. It shows the lines the latest turn added and
- * removed once the panel has read that turn's diff, and nothing before.
- */
+/** Toggles the panel. The counts always describe the latest turn, even while browsing an older one. */
 function ChangesButton() {
   const changesOpen = useDiffPanel((open) => open);
-  const latest = useCheckpoints((state) => state.turns.at(-1)?.turn);
-  const loaded = useCheckpoints((state) => state.turn);
-  const diff = useCheckpoints((state) => state.diff);
+  const threadId = useHost((host) => host.thread?.id);
+  const connected = useHost((host) => host.connection === "connected");
+  const latest = useCheckpoints((state) => state.turns.at(-1));
   const statsId = useId();
-  const stats =
-    latest !== undefined && loaded === latest && diff?.error === null
-      ? lineStats(diff.files)
-      : null;
+  const updating = usePiUpdates((updates) => updates.updating);
+  const stats = latest?.state === "ready" ? latest.stats : undefined;
+  const counts = stats?.error === null ? stats : null;
+  useEffect(() => {
+    if (threadId && connected) listCheckpoints();
+  }, [threadId, connected]);
   return (
     <Button
       variant="neutral"
       aria-pressed={changesOpen}
+      disabled={updating}
       aria-describedby={stats ? statsId : undefined}
+      title={stats?.error ? `Couldn't count the latest turn's changes: ${stats.error}` : undefined}
       onClick={toggleDiffPanel}
       className="app-no-drag"
     >
       <GitCompareArrows aria-hidden />
       <span className="@max-2xl:sr-only">Changes</span>
       {/* The counts describe the button rather than name it, so it stays "Changes". */}
+      {counts ? (
+        <span aria-hidden className="font-mono text-2xs">
+          <span className="text-addition">+{counts.added}</span>{" "}
+          <span className="text-deletion">−{counts.removed}</span>
+        </span>
+      ) : null}
       {stats ? (
-        <>
-          <span aria-hidden className="font-mono text-2xs">
-            <span className="text-addition">+{stats.added}</span>{" "}
-            <span className="text-deletion">−{stats.removed}</span>
-          </span>
-          <span id={statsId} hidden>
-            {`${stats.added} added, ${stats.removed} removed`}
-          </span>
-        </>
+        <span id={statsId} hidden>
+          {counts
+            ? `Latest turn: ${counts.added} added, ${counts.removed} removed`
+            : `Couldn't count the latest turn's changes: ${stats.error}`}
+        </span>
       ) : null}
     </Button>
   );
-}
-
-/** Lines added and removed across the files' patches. Only hunk lines count, never the file headers. */
-function lineStats(files: readonly CheckpointFile[]): { added: number; removed: number } {
-  let added = 0;
-  let removed = 0;
-  for (const { patch } of files) {
-    let inHunk = false;
-    let start = 0;
-    while (start < patch.length) {
-      const end = patch.indexOf("\n", start);
-      const first = patch[start];
-      if (patch.startsWith("@@", start)) inHunk = true;
-      else if (inHunk && first === "+") added += 1;
-      else if (inHunk && first === "-") removed += 1;
-      start = (end === -1 ? patch.length : end) + 1;
-    }
-  }
-  return { added, removed };
 }
 
 export function HeaderDivider() {

@@ -4,7 +4,7 @@ import { Banners } from "./banners/Banners";
 import { runAppCommand } from "./commands";
 import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
-import { useHost } from "./connection";
+import { checkPiUpdates, useHost } from "./connection";
 import { useTerminals } from "./terminal/store";
 import { DialogPanel } from "./extensionUi/DialogPanel";
 import { DiffPanel, useDiffPanel } from "./diffs/DiffPanel";
@@ -19,6 +19,7 @@ import { isMac } from "./platform";
 import { NoThread } from "./project/NoThread";
 import { TrustPrompt } from "./project/TrustPrompt";
 import { useSettingsPage } from "./settings/store";
+import { PiUpdateIndicator } from "./settings/PiUpdateIndicator";
 import { Sheets } from "./sheets/Sheets";
 import { appCommand } from "./shortcuts";
 import { toggleSidebarShown, useChangesPanelShown, useSidebarShown } from "./sidebar/layout";
@@ -60,6 +61,11 @@ export function App() {
   // Until the host sends the settings, the page keeps the palette it has: the
   // default, which index.css gives :root, or the last one while it reconnects.
   const colorPalette = useHost((host) => host.settings?.palette);
+  const connected = useHost((host) => host.connection === "connected");
+  const piFound = useHost((host) => host.piEnv?.state === "found");
+  useEffect(() => {
+    if (connected && piFound) checkPiUpdates(false);
+  }, [connected, piFound]);
 
   // Before paint, so no frame shows the new settings in the old colors.
   useLayoutEffect(() => {
@@ -164,7 +170,14 @@ function Thread() {
             {/* An extension's dialog takes the composer's place, as in pi's terminal UI. */}
             <DialogPanel />
             <Composer key={threadId} hidden={asking} />
-            <StatusRow end={<GitPill />} />
+            <StatusRow
+              end={
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <GitPill />
+                  <PiUpdateIndicator />
+                </div>
+              }
+            />
             <Widgets placement="belowEditor" />
           </div>
         </footer>

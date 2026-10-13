@@ -103,6 +103,7 @@ function installPi(
         `export TONDO_FAUX_SCRIPT=${shellQuote(faux.scriptPath)}`,
         'cli="$1"',
         "shift",
+        `case "$cli" in */piUpdateProbe.js) exec ${shellQuote(process.execPath)} "$cli" "$@";; esac`,
         `exec ${shellQuote(process.execPath)} "$cli" ${faux.args.map(shellQuote).join(" ")} "$@"`,
         "",
       ].join("\n"),

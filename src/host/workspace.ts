@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { Git } from "./git";
 import { GitCommands } from "./gitCommand";
+import { PiUpdatesService } from "./piUpdates";
 import { inside, missing, Worktrees } from "./worktrees";
 import {
   NO_EXTENSION_UI,
@@ -28,7 +29,7 @@ import type { AppSettings, PaletteSetting, SettingsPatch, ThemeSetting } from ".
 import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
-import { TurnCheckpoints } from "./turnCheckpoints";
+import { checkpointMetadata, TurnCheckpoints } from "./turnCheckpoints";
 import type { DraftImage } from "../shared/images";
 import { LiveThread, type ThreadListener } from "./liveThread";
 import { PiExitError } from "./piProcess";
@@ -59,6 +60,7 @@ const NOTIFICATION_CHARS = 200;
 export interface WorkspaceOptions {
   readonly userData: string;
   readonly gitGroups: (pgids: number[]) => void;
+  readonly maintenanceGroups?: (pgids: number[]) => void;
   readonly store: Store;
   readonly supervisor: Supervisor;
   /** Pool limits that win over the settings, as TONDO_POOL sets for tests. */
@@ -106,6 +108,8 @@ export class Workspace {
   private readonly extensionDrafts = new Map<string, string>();
   private readonly terminals: Terminals;
   private readonly git: Git;
+  private readonly piUpdates: PiUpdatesService;
+  private piUpdating = false;
   private readonly worktrees: Worktrees;
   private gitTimer: NodeJS.Timeout | undefined;
   private gitGeneration = 0;
@@ -146,6 +150,10 @@ export class Workspace {
     this.copy = options.copy;
     this.reveal = options.reveal;
     this.git = new Git(new GitCommands(() => this.supervisor.captureLoginEnv(), options.gitGroups));
+    this.piUpdates = new PiUpdatesService(
+      (updates) => this.send({ v, type: "pi-updates", updates }),
+      options.maintenanceGroups ?? (() => {}),
+    );
     this.worktrees = new Worktrees(path.join(options.userData, "worktrees"), this.store, this.git);
     this.terminals = new Terminals(
       async (threadId, kind) => {
@@ -210,7 +218,7 @@ export class Workspace {
 
   /** You clicked a notification about the thread. */
   openThread(threadId: string): void {
-    if (this.gitMutation) return;
+    if (this.gitMutation || this.piUpdating) return;
     this.run(() => this.open(threadId));
   }
 
@@ -227,6 +235,7 @@ export class Workspace {
   greet(): void {
     this.send({ v, type: "ui", sidebarHidden: this.store.ui().sidebarHidden });
     this.sendSettings(null);
+    this.piUpdates.report();
     this.run(() => this.sendPiEnv());
     this.sendSnapshot();
     this.lastSidebar = "";
@@ -237,6 +246,42 @@ export class Workspace {
   }
 
   handle(message: ClientMessage): void {
+    if (
+      this.piUpdating &&
+      ![
+        "ping",
+        "stop",
+        "set-draft",
+        "set-draft-images",
+        "set-sidebar-hidden",
+        "prompt",
+        "list-files",
+        "list-checkpoints",
+        "find-files",
+        "get-pi-config-files",
+        "get-pi-accounts",
+        "get-project-git",
+        "reveal",
+        "check-pi-updates",
+        "apply-pi-update",
+      ].includes(message.type)
+    ) {
+      const error =
+        "Wait for the pi update to finish before changing threads, settings or Git state.";
+      if (message.type === "git-action")
+        this.send({ v, type: "git-result", threadId: message.threadId, id: message.id, error });
+      else if (message.type === "read-checkpoint")
+        this.send({
+          v,
+          type: "checkpoint-diff",
+          threadId: message.threadId,
+          id: message.id,
+          turn: message.turn,
+          diff: { files: [], error },
+        });
+      else this.send({ v, type: "error", message: error });
+      return;
+    }
     if (
       "threadId" in message &&
       message.threadId !== null &&
@@ -328,7 +373,21 @@ export class Workspace {
         });
         break;
       case "list-checkpoints":
-        this.run(() => this.sendCheckpoints(this.running(message.threadId)));
+        this.run(() => {
+          const thread = this.live.get(message.threadId);
+          if (thread) return this.sendCheckpoints(thread);
+          // The header can request metadata while maintenance has stopped its pi.
+          this.row(message.threadId);
+          const turns = this.store.checkpoints(message.threadId).map(checkpointMetadata);
+          this.send({
+            v,
+            type: "checkpoints",
+            threadId: message.threadId,
+            turns,
+            shared: false,
+            unavailable: "pi is stopped. Turn diffs resume when you reopen the thread.",
+          });
+        });
         break;
       case "read-checkpoint":
         this.run(async () => {
@@ -481,6 +540,27 @@ export class Workspace {
           this.send({ v, type: "pi-config-files", files });
         });
         break;
+      case "check-pi-updates":
+        if (this.piUpdating) {
+          this.piUpdates.report();
+          break;
+        }
+        this.run(async () => {
+          const cwd =
+            message.manual && this.visibleId ? this.checkout(this.row(this.visibleId)) : null;
+          try {
+            await this.piUpdates.check(
+              await this.supervisor.maintenanceContext(cwd),
+              message.manual,
+            );
+          } catch (error) {
+            this.piUpdates.failed(error);
+          }
+        });
+        break;
+      case "apply-pi-update":
+        this.run(() => this.applyPiUpdate(message.id));
+        break;
       case "get-pi-accounts":
         this.run(async () => {
           const { accounts, error } = await this.supervisor.piAccounts();
@@ -507,6 +587,7 @@ export class Workspace {
    * the page gets the settings, with the reason if they didn't change.
    */
   private async setSettings(patch: SettingsPatch): Promise<void> {
+    if (this.piUpdating) throw new Error("Wait for the pi update before changing settings.");
     let before: Settings;
     let after: Settings;
     try {
@@ -591,8 +672,11 @@ export class Workspace {
   projectChosen(folder: string | null): void {
     this.choosing = false;
     if (folder === null) return;
-    if (this.gitMutation) {
-      this.toast("warning", "Wait for the Git action, then add the project again.");
+    if (this.gitMutation || this.piUpdating) {
+      this.toast(
+        "warning",
+        "Wait for the current Git or pi update operation, then add the project again.",
+      );
       return;
     }
     this.run(async () => {
@@ -710,11 +794,13 @@ export class Workspace {
   /** Puts a thread on screen, starting its pi if it isn't running. */
   private open(id: string): void {
     if (id === this.visibleId && this.live.has(id)) return;
+    // Capture this before startThread registers a replacement for the visible pi.
+    // Otherwise reopening that same thread mistakes its replacement for one we left.
+    const previous = this.visibleThread();
     const existing = this.live.get(id);
     const thread = existing ?? this.startThread(id);
     // You may have answered for the project in another thread since.
     if (existing?.askingTrust) this.run(() => existing.open());
-    const previous = this.visibleThread();
     if (previous) {
       previous.hide();
       previous.lastUsed = Date.now();
@@ -734,6 +820,7 @@ export class Workspace {
 
   /** Starts a thread's pi, off screen until you open it. */
   private startThread(id: string): LiveThread {
+    if (this.piUpdating) throw new Error("Wait for the pi update before starting a thread.");
     const row = this.row(id);
     const project = this.project(row.projectId);
     const cwd = this.checkout(row);
@@ -765,11 +852,12 @@ export class Workspace {
     const shared = [...this.live.values()].some(
       (other) => other.id !== thread.id && other.project === thread.project,
     );
+    const turns = await thread.checkpoints.list();
     this.send({
       v,
       type: "checkpoints",
       threadId: thread.id,
-      turns: thread.checkpoints.turns,
+      turns,
       shared,
       unavailable,
     });
@@ -888,6 +976,7 @@ export class Workspace {
       let thread: LiveThread;
       let images: DraftImage[];
       try {
+        if (this.piUpdating) throw new Error("Wait for the pi update before sending a prompt.");
         thread = this.running(threadId);
         if (this.gitMutation) throw new Error("Wait for the Git action before sending a prompt.");
         images =
@@ -1236,6 +1325,7 @@ export class Workspace {
       row.hasImages ||
       this.worktrees.forThread(id) ||
       this.gitMutation ||
+      this.piUpdating ||
       this.terminals.has(id) ||
       this.forgettingThreads.has(id) ||
       this.deletingThreads.has(id) ||
@@ -1288,6 +1378,7 @@ export class Workspace {
   /** Stops the pi of threads you left, as the pool decides. */
   private checkPool(): void {
     clearTimeout(this.poolTimer);
+    if (this.piUpdating) return;
     this.poolTimer = undefined;
     const now = Date.now();
     const members = [...this.live.values()]
@@ -1300,6 +1391,54 @@ export class Workspace {
     }
     if (nextCheckAt !== undefined) {
       this.poolTimer = setTimeout(() => this.checkPool(), Math.max(0, nextCheckAt - now));
+    }
+  }
+
+  /** Stop idle pi processes before changing their installation. Background threads stay pooled off. */
+  private async applyPiUpdate(id: string): Promise<void> {
+    if (this.piUpdating) throw new Error("Another pi update is already running.");
+    this.piUpdating = true;
+    this.piUpdates.setUpdating(true);
+    let updated = false;
+    try {
+      const cwd = this.visibleId ? this.checkout(this.row(this.visibleId)) : null;
+      const context = await this.supervisor.maintenanceContext(cwd);
+      await this.piUpdates.apply(id, context, async () => {
+        if (
+          this.gitMutation ||
+          this.closingThreads.size ||
+          [...this.live.values()].some((thread) => thread.busy || thread.waiting)
+        )
+          throw new Error(
+            "Wait for every pi turn, queued prompt, dialog and Git action to finish before updating.",
+          );
+        if (this.store.threads().some((row) => this.terminals.has(row.id)))
+          throw new Error("Close all integrated terminals before updating pi or its packages.");
+        await Promise.all([...this.live.values()].map((thread) => this.letGo(thread)));
+      });
+      updated = true;
+      this.toast(
+        "info",
+        "Updated. The visible thread resumes with the new pi and packages; other threads resume when opened.",
+      );
+    } catch (error) {
+      this.piUpdates.failed(error);
+      throw error;
+    } finally {
+      try {
+        await this.rediscoverPi();
+        if (updated) {
+          const cwd = this.visibleId ? this.checkout(this.row(this.visibleId)) : null;
+          await this.piUpdates.check(await this.supervisor.maintenanceContext(cwd), true);
+        }
+      } catch (error) {
+        this.piUpdates.failed(error);
+      } finally {
+        this.piUpdating = false;
+        if (this.visibleId && this.store.thread(this.visibleId)) this.openThread(this.visibleId);
+        this.piUpdates.setUpdating(false);
+        this.checkPool();
+      }
     }
   }
 

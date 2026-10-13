@@ -59,6 +59,7 @@ describe("findPi", () => {
       command: path.join(bin, "pi"),
       node: path.join(bin, "node"),
       cli: cliIn(path.join(root, "node")),
+      packageDir: path.join(root, "node/lib/node_modules/@earendil-works/pi-coding-agent"),
       version: "0.87.1",
     });
   });
@@ -85,6 +86,10 @@ describe("findPi", () => {
       command: path.join(asdf, "installs/nodejs/24.16.0/bin/pi"),
       node: path.join(asdf, "installs/nodejs/24.16.0/bin/node"),
       cli: cliIn(path.join(asdf, "installs/nodejs/24.16.0")),
+      packageDir: path.join(
+        asdf,
+        "installs/nodejs/24.16.0/lib/node_modules/@earendil-works/pi-coding-agent",
+      ),
       version: "0.88.2",
     });
   });

@@ -7,6 +7,7 @@ import type { HostConfig, PiDiscovery, SettingsFile, TrustInfo } from "../shared
 import type { SettingsPatch } from "../shared/settings";
 import { readPiAccounts, type PiAccounts } from "./accounts";
 import { findPi, PiNotFoundError } from "./findPi";
+import type { PiMaintenanceContext } from "./piUpdateProbe";
 import type { TerminalKind } from "../shared/terminal";
 import type { TerminalLaunch } from "./terminals";
 import { captureLoginEnv } from "./loginEnv";
@@ -229,6 +230,24 @@ export class Supervisor {
     const env = piEnv(await this.captureLoginEnv(), this.config);
     const home = env.HOME || os.homedir();
     return readPiAccounts(piAgentDir(home, env, home));
+  }
+
+  /** Maintenance uses the same installation and profile as threads, without loading extensions. */
+  async maintenanceContext(cwd: string | null): Promise<PiMaintenanceContext> {
+    const env = piEnv(await this.captureLoginEnv(), this.config);
+    const home = env.HOME || os.homedir();
+    const workingDir = cwd ?? this.config.userData;
+    const trust = cwd === null ? null : await this.trustInfo(cwd);
+    const projectTrusted =
+      trust !== null && (trust.decidedBy === "nothing" || trust.trusted === true);
+    return {
+      pi: findPi(env, this.readableSettings().settings.piPath),
+      agentDir: piAgentDir(workingDir, env, home),
+      cwd: workingDir,
+      projectTrusted,
+      env,
+      offline: !!env.PI_OFFLINE || this.config.piArgs.includes("--offline"),
+    };
   }
 
   /** Tondo's settings.json. */

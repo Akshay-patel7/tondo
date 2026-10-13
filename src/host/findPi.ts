@@ -25,6 +25,7 @@ export interface PiInstall {
   node: string;
   /** The realpath of pi's cli.js. */
   cli: string;
+  packageDir: string;
   version: string;
 }
 
@@ -96,7 +97,7 @@ function installAt(command: string): PiInstall {
   if (bin === undefined) throw invalid(`${path.join(dir, "package.json")} names no pi command`);
   const node = path.join(path.dirname(command), "node");
   if (!isExecutableFile(node)) throw invalid(`${command} has no node next to it at ${node}`);
-  return { command, node, cli: realpathSync(path.join(dir, bin)), version };
+  return { command, node, cli: realpathSync(path.join(dir, bin)), packageDir: dir, version };
 }
 
 function invalid(message: string): PiNotFoundError {

@@ -189,6 +189,43 @@ test("completed turns survive a reopen; unfinished turns stay unavailable and nu
   expect(readFileSync(path.join(root, "file.txt"), "utf8")).toBe("third\n");
 });
 
+test("latest line counts load without reading patches, persist, and follow subsequent turns", async () => {
+  git("init", "-q");
+  write("before\n");
+  await turns.prepare();
+  turns.started();
+  expect((await turns.list())[0]?.stats).toBeUndefined();
+  write("after\nextra\n");
+  turns.settled();
+  await turns.drain();
+  const first = { added: 2, removed: 1, error: null };
+  expect((await turns.list())[0]?.stats).toEqual(first);
+  expect(store.checkpoints(id)[0]?.stats).toEqual(first);
+  turns = new TurnCheckpoints(store, id, root, changed);
+  expect(turns.turns[0]?.stats).toEqual(first);
+  await turns.prepare();
+  turns.started();
+  expect((await turns.list()).at(-1)?.stats).toBeUndefined();
+  turns.settled();
+  await turns.drain();
+  expect((await turns.list()).at(-1)?.stats).toEqual({ added: 0, removed: 0, error: null });
+});
+
+test("a summary failure is an error, never a zero-line change", async () => {
+  git("init", "-q");
+  write("before\n");
+  await turns.prepare();
+  turns.started();
+  write("after\n");
+  turns.settled();
+  await turns.drain();
+  git("update-ref", "-d", checkpointRef(id, 0));
+  const latest = (await turns.list()).at(-1);
+  expect(latest?.state).toBe("ready");
+  expect(latest?.stats?.error).toBeTruthy();
+  expect(latest?.stats).not.toHaveProperty("added");
+});
+
 test("a removed ref reports an error rather than silently comparing against HEAD", async () => {
   git("init", "-q");
   write("initial\n");

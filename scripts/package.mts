@@ -218,7 +218,7 @@ const config: Configuration = {
   directories: { buildResources: "build", output },
   files: appFiles,
   asar: true,
-  asarUnpack: ["node_modules/node-pty/**"],
+  asarUnpack: ["node_modules/node-pty/**", "out/main/piUpdateProbe.js"],
   npmRebuild: false,
   // The default (legacy) AppImage runtime needs libz.so and libfuse2, which stock Ubuntu 24.04
   // lacks, and its .desktop entry launches with --no-sandbox. The static runtime has neither.

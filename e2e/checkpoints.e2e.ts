@@ -89,10 +89,14 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   await bringToFront(tondo);
   await addProject(tondo, project);
   await waitForPi(page);
-  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  const changes = page.getByRole("button", { name: "Changes", exact: true });
   const panel = page.getByRole("complementary", { name: "Turn changes" });
-  await expect(panel).toContainText("No turn checkpoints yet");
+  await expect(panel).toHaveCount(0);
   await send(page, "Correct the answer and add notes.");
+  await expect(changes).toContainText("+4 −1");
+  await expect(changes).toHaveAccessibleDescription("Latest turn: 4 added, 1 removed");
+  await page.screenshot({ path: test.info().outputPath("counts-before-panel.png") });
+  await changes.click();
   await expect(panel.getByRole("button", { name: "Show diff for src/answer.ts" })).toBeVisible();
   await panel.getByRole("button", { name: "Show diff for src/answer.ts" }).click();
   const code = panel.locator("diffs-container");
@@ -116,13 +120,18 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   await panel.locator("summary").filter({ hasText: "src/" }).press("Enter");
   await expect(panel.getByRole("button", { name: "Show diff for src/answer.ts" })).toBeVisible();
 
+  await panel.getByRole("button", { name: "Close changes" }).click();
   await send(page, "Change it once more.");
   await expect(page.getByText("Second turn finished.")).toBeVisible();
+  await expect(changes).toContainText("+1 −1");
+  await expect(changes).toHaveAccessibleDescription("Latest turn: 1 added, 1 removed");
+  await changes.click();
   await expect(code).toContainText("export const answer = 43;");
   await pickOption(panel, "Checkpoint turn", "Turn 1");
   await panel.getByRole("button", { name: "Show diff for src/answer.ts" }).click();
   await expect(code).toContainText("export const answer = 41;");
   await expect(code).not.toContainText("export const answer = 43;");
+  await expect(changes).toContainText("+1 −1");
   expect(readFileSync(path.join(project, ".git/index"))).toEqual(index);
   // The chosen turn lives in the diffs store: it survives closing and reopening
   // the panel, and a turn summary's View diff opens the panel on its own turn.
@@ -151,7 +160,9 @@ test("faux pi edits files, the panel switches files and turns, and checkpoints s
   await expect(code).toContainText("export const answer = 43;");
   await page.reload();
   await waitForPi(page);
-  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(changes).toContainText("+1 −1");
+  await expect(panel).toHaveCount(0);
+  await changes.click();
   await expect.poll(() => pickerOptions(panel, "Checkpoint turn")).toHaveLength(3);
   await expect(code).toContainText("export const answer = 43;");
   await panel.getByRole("button", { name: "Close changes" }).click();

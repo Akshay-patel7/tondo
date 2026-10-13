@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
 import type { GitAction, GitStatus } from "../shared/git";
+import { NO_PI_UPDATES, type PiUpdates } from "../shared/piUpdates";
 import type { CheckpointDiff, CheckpointTurn } from "../shared/checkpoints";
 import {
   IMAGE_COUNT,
@@ -118,6 +119,16 @@ export const useCheckpoints = create<{
 export const useGit = create<{ status: GitStatus | null; error: string | null; busy: boolean }>()(
   () => ({ status: null, error: null, busy: false }),
 );
+export const usePiUpdates = create<PiUpdates>()(() => NO_PI_UPDATES);
+
+export function checkPiUpdates(manual = true): void {
+  send({ v, type: "check-pi-updates", manual });
+}
+
+export function applyPiUpdate(id: string): void {
+  send({ v, type: "apply-pi-update", id });
+}
+
 let gitRequest = 0;
 const gitRequests = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
 
@@ -390,6 +401,9 @@ function receive(message: HostMessage): void {
     return;
   }
   switch (message.type) {
+    case "pi-updates":
+      usePiUpdates.setState(message.updates, true);
+      break;
     case "git-status":
       if (message.threadId === shownId())
         useGit.setState({ status: message.status, error: message.error });

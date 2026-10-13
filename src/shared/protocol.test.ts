@@ -11,6 +11,18 @@ function rejection(data: unknown): string {
 }
 
 describe("parseClientMessage", () => {
+  it("update requests accept only a host-offered id, never commands, sources or force flags", () => {
+    const id = "0199c5e0-4a2b-7c3d-9e8f-1a2b3c4d5e6f";
+    for (const message of [
+      { v, type: "check-pi-updates", manual: "yes" },
+      { v, type: "apply-pi-update", id: "npm:test-plugin" },
+      { v, type: "apply-pi-update", id, command: "npm install" },
+      { v, type: "apply-pi-update", id, source: "npm:test-plugin" },
+      { v, type: "apply-pi-update", id, force: true },
+    ])
+      expect(parseClientMessage(message).ok).toBe(false);
+  });
+
   it("rejects nonboolean draft input provenance", () => {
     expect(
       parseClientMessage({
@@ -31,6 +43,9 @@ describe("parseClientMessage", () => {
       { v, type: "set-collapsed", projectId: 1, collapsed: true },
       { v, type: "new-thread", projectId: 2 },
       { v, type: "get-project-git", projectId: 2 },
+      { v, type: "check-pi-updates", manual: false },
+      { v, type: "check-pi-updates", manual: true },
+      { v, type: "apply-pi-update", id: threadId },
       { v, type: "open-thread", threadId },
       { v, type: "rename-thread", threadId, name: "Parser fix" },
       { v, type: "pin-thread", threadId, pinned: true },

@@ -87,10 +87,11 @@ function start(): void {
   let gitGroups: readonly number[] = [];
   let terminalGroups: readonly number[] = [];
   let actionGroups: readonly number[] = [];
+  let maintenanceGroups: readonly number[] = [];
   const reportGroups = () =>
     tellMain({
       type: "process-groups",
-      pgids: [...piGroups, ...gitGroups, ...terminalGroups, ...actionGroups],
+      pgids: [...piGroups, ...gitGroups, ...terminalGroups, ...actionGroups, ...maintenanceGroups],
     });
   watchCheckpointGroups((pgids) => {
     gitGroups = pgids;
@@ -104,6 +105,10 @@ function start(): void {
     userData: config.userData,
     gitGroups: (pgids) => {
       actionGroups = pgids;
+      reportGroups();
+    },
+    maintenanceGroups: (pgids) => {
+      maintenanceGroups = pgids;
       reportGroups();
     },
     store,
