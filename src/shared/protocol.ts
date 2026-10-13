@@ -29,7 +29,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -904,13 +904,14 @@ const MAX_PATH = 4096;
 function parsePatch(patch: unknown): SettingsPatch | string {
   if (!isRecord(patch)) return `patch must be an object, not ${describe(patch)}`;
   const extra = Object.keys(patch).find(
-    (key) => !["theme", "palette", "pool", "shortcuts", "piPath"].includes(key),
+    (key) => !["theme", "palette", "expandThinking", "pool", "shortcuts", "piPath"].includes(key),
   );
   if (extra !== undefined) return `patch has an unexpected field ${describe(extra)}`;
-  const { theme, palette, pool, shortcuts, piPath } = patch;
+  const { theme, palette, expandThinking, pool, shortcuts, piPath } = patch;
   const parsed: {
     theme?: ThemeSetting;
     palette?: PaletteSetting;
+    expandThinking?: boolean;
     pool?: Partial<PoolSettings>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
@@ -924,6 +925,11 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     if (!isPaletteSetting(palette))
       return `palette must be "default", "slate", "ocean" or "rose", not ${describe(palette)}`;
     parsed.palette = palette;
+  }
+  if (expandThinking !== undefined) {
+    if (typeof expandThinking !== "boolean")
+      return `expandThinking must be true or false, not ${describe(expandThinking)}`;
+    parsed.expandThinking = expandThinking;
   }
   if (pool !== undefined) {
     if (!isRecord(pool)) return `pool must be an object, not ${describe(pool)}`;

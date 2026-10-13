@@ -36,6 +36,7 @@ describe("readSettings", () => {
       piPath: null,
       theme: "system",
       palette: "default",
+      expandThinking: false,
       pool: { maxLive: 4, idleMinutes: 10 },
       shortcuts: {},
       projectTrust: {},
@@ -49,6 +50,7 @@ describe("readSettings", () => {
         piPath: "/opt/pi/bin/pi",
         theme: "dark",
         palette: "ocean",
+        expandThinking: true,
         pool: { maxLive: 12, idleMinutes: 240 },
         shortcuts: { palette: "mod+shift+p", settings: null },
         projectTrust: { "/work/a": true, "/work/b": false },
@@ -59,6 +61,7 @@ describe("readSettings", () => {
       piPath: "/opt/pi/bin/pi",
       theme: "dark",
       palette: "ocean",
+      expandThinking: true,
       pool: { maxLive: 12, idleMinutes: 240 },
       shortcuts: { palette: "mod+shift+p", settings: null },
       projectTrust: { "/work/a": true, "/work/b": false },
@@ -83,6 +86,8 @@ describe("readSettings", () => {
     ['{"theme":"blue"}', `has a theme that isn't system, light or dark: "blue"`],
     ['{"palette":"teal"}', `has a palette that isn't default, slate, ocean or rose: "teal"`],
     ['{"palette":null}', "has a palette that isn't default, slate, ocean or rose: null"],
+    ['{"expandThinking":"true"}', 'has an expandThinking that isn\'t true or false: "true"'],
+    ['{"expandThinking":null}', "has an expandThinking that isn't true or false: null"],
     ['{"pool":4}', "has a pool that isn't an object"],
     ['{"pool":{"maxLive":0}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 0"],
     ['{"pool":{"maxLive":13}}', "has a pool.maxLive that isn't a whole number from 1 to 12: 13"],
@@ -155,6 +160,7 @@ describe("readSettingsLeniently", () => {
         piPath: "/opt/pi/bin/pi",
         theme: "system",
         palette: "default",
+        expandThinking: false,
         pool: { maxLive: 4, idleMinutes: 30 },
         shortcuts: { settings: "mod+j" },
         projectTrust: { "/work/a": true },
@@ -189,6 +195,27 @@ describe("newShortcutProblems", () => {
 });
 
 describe("updateSettings", () => {
+  it("saves and disables expanded thinking without changing other settings", () => {
+    writeFileSync(file, JSON.stringify({ theme: "dark", later: 1 }));
+    expect(readSettings(file).expandThinking).toBe(false);
+    expect(updateSettings(file, { expandThinking: true }).expandThinking).toBe(true);
+    expect(readSettings(file).expandThinking).toBe(true);
+    expect(updateSettings(file, { expandThinking: false }).expandThinking).toBe(false);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      theme: "dark",
+      later: 1,
+      expandThinking: false,
+    });
+  });
+
+  it("reports invalid expanded thinking and defaults it on a lenient read", () => {
+    writeFileSync(file, JSON.stringify({ expandThinking: 1, theme: "dark" }));
+    expect(readSettingsLeniently(file)).toEqual({
+      settings: { ...DEFAULTS, theme: "dark" },
+      problem: `Tondo's settings file ${file} has an expandThinking that isn't true or false: 1`,
+    });
+  });
+
   it("keeps keys it doesn't know and your trust answers", () => {
     writeFileSync(
       file,

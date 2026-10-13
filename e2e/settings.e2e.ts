@@ -100,6 +100,134 @@ test("the theme follows the setting, stays after a relaunch, and goes back to th
   await expect(settings).toBeHidden();
 });
 
+test("expanded thinking applies to every section, preserves individual toggles during streaming, and survives a relaunch", async () => {
+  const profileDir = path.join(workDir, "profile");
+  const project = path.join(workDir, "project");
+  mkdirSync(profileDir);
+  mkdirSync(project);
+  const first = {
+    ...reply("First reply."),
+    content: [
+      { type: "thinking" as const, thinking: "First thought." },
+      { type: "text" as const, text: "First reply." },
+      { type: "thinking" as const, thinking: "Second thought." },
+      { type: "text" as const, text: "Second reply." },
+    ],
+  };
+  const streaming = {
+    ...reply("Streaming finished."),
+    content: [
+      { type: "thinking" as const, thinking: "Thinking while streaming. ".repeat(50) },
+      { type: "text" as const, text: "Streaming finished." },
+    ],
+  };
+  tondo = await launchWithPi({
+    workDir,
+    profileDir,
+    settings: { theme: "light" },
+    script: { tokensPerSecond: 120, responses: [first, streaming] },
+  });
+  let { page } = tondo;
+  await page.emulateMedia({ colorScheme: null });
+  const errors: string[] = [];
+  const watchErrors = (current: Page) => {
+    current.on("pageerror", (error) => errors.push(error.message));
+    current.on("console", (message) => {
+      if (message.type() === "error") errors.push(message.text());
+    });
+  };
+  watchErrors(page);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Think twice");
+  await expect(page.getByText("Second reply.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  let thoughts = page
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: "Thought" }) });
+  await expect(thoughts).toHaveCount(2);
+  expect(
+    await thoughts.evaluateAll((nodes) =>
+      nodes.every((node) => !(node as HTMLDetailsElement).open),
+    ),
+  ).toBe(true);
+
+  let settings = await openSettings(page);
+  let toggle = settings.getByRole("switch", { name: "Expand thinking sections", exact: true });
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect.poll(() => saved(profileDir).expandThinking).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("expanded-thinking-settings-light.png"),
+    animations: "disabled",
+  });
+  await settings.getByRole("button", { name: "Dark", exact: true }).click();
+  await expect.poll(() => prefersDark(page)).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("expanded-thinking-settings-dark.png"),
+    animations: "disabled",
+  });
+  await back(page).click();
+  await expect(thoughts).toHaveCount(2);
+  await expect
+    .poll(() =>
+      thoughts.evaluateAll((nodes) => nodes.every((node) => (node as HTMLDetailsElement).open)),
+    )
+    .toBe(true);
+  await expect(page.getByText("First thought.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Second thought.", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("expanded-thinking-transcript.png"),
+    animations: "disabled",
+  });
+  await thoughts.first().locator("summary").click();
+  await expect(thoughts.first()).not.toHaveAttribute("open");
+  await expect(thoughts.last()).toHaveAttribute("open");
+  await thoughts.first().locator("summary").press("Enter");
+  await expect(thoughts.first()).toHaveAttribute("open");
+
+  await send(page, "Think while streaming");
+  await expect(thoughts).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
+  await expect(thoughts.last()).toHaveAttribute("open");
+  await thoughts.last().locator("summary").click();
+  await expect(thoughts.last()).not.toHaveAttribute("open");
+  await expect(page.getByText("Streaming finished.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  await expect(thoughts.last()).not.toHaveAttribute("open");
+
+  await tondo.close();
+  tondo = await launchTondo({ profileDir });
+  ({ page } = tondo);
+  watchErrors(page);
+  await waitForPi(page);
+  thoughts = page
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: "Thought" }) });
+  await expect(thoughts).toHaveCount(3);
+  await expect
+    .poll(() =>
+      thoughts.evaluateAll((nodes) => nodes.every((node) => (node as HTMLDetailsElement).open)),
+    )
+    .toBe(true);
+  settings = await openSettings(page);
+  toggle = settings.getByRole("switch", { name: "Expand thinking sections", exact: true });
+  await expect(toggle).toBeChecked();
+  await toggle.press("Space");
+  await expect(toggle).not.toBeChecked();
+  await expect.poll(() => saved(profileDir).expandThinking).toBe(false);
+  await back(page).click();
+  await expect
+    .poll(() =>
+      thoughts.evaluateAll((nodes) => nodes.every((node) => !(node as HTMLDetailsElement).open)),
+    )
+    .toBe(true);
+  await thoughts.first().locator("summary").click();
+  await expect(page.getByText("First thought.", { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("each palette colors the window in light and dark, stays after a relaunch, and leaves the theme alone", async () => {
   const profileDir = path.join(workDir, "profile");
   mkdirSync(profileDir);
@@ -487,6 +615,7 @@ function section(settings: Locator, name: string): Locator {
 function saved(profileDir: string): {
   theme?: string;
   palette?: string;
+  expandThinking?: boolean;
   piPath?: string | null;
   pool?: { maxLive?: number };
   shortcuts?: Record<string, string | null>;

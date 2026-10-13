@@ -57,6 +57,8 @@ export interface AppSettings {
   readonly piPath: string | null;
   readonly theme: ThemeSetting;
   readonly palette: PaletteSetting;
+  /** Whether thinking sections start expanded. Each section can still be toggled. */
+  readonly expandThinking: boolean;
   readonly pool: PoolSettings;
   /** Chord text by command. null disables a shortcut, and a missing command keeps its default. */
   readonly shortcuts: Readonly<Partial<Record<ShortcutCommand, string | null>>>;
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   // The warm palette Tondo had before there were others.
   palette: "default",
+  expandThinking: false,
   pool: { maxLive: 4, idleMinutes: 10 },
   shortcuts: {},
 };
@@ -75,6 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export interface SettingsPatch {
   readonly theme?: ThemeSetting;
   readonly palette?: PaletteSetting;
+  readonly expandThinking?: boolean;
   readonly pool?: Partial<PoolSettings>;
   /** "default" removes your binding, so the command gets its default again. */
   readonly shortcuts?: Partial<Record<ShortcutCommand, string | null | "default">>;

@@ -537,12 +537,12 @@ export class Workspace {
     const { settings, problem } = this.supervisor.readableSettings();
     // The page may offer to show a broken file in Finder.
     if (problem !== null) this.offered.add(this.supervisor.settingsFile);
-    const { piPath, theme, palette, pool, shortcuts } = settings;
+    const { piPath, theme, palette, expandThinking, pool, shortcuts } = settings;
     this.send({
       v,
       type: "settings",
       // The page applies the same saved palette that main receives for its window.
-      settings: { piPath, theme, palette, pool, shortcuts },
+      settings: { piPath, theme, palette, expandThinking, pool, shortcuts },
       error,
       fileProblem:
         problem === null ? null : { path: this.supervisor.settingsFile, message: problem },

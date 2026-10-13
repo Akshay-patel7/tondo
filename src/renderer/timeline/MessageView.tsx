@@ -2,7 +2,7 @@ import { ChevronRight, GitCompareArrows } from "lucide-react";
 import { useId } from "react";
 import { Streamdown, type LinkSafetyConfig } from "streamdown";
 import type { AssistantMessage, ToolResultMessage } from "../../shared/thread";
-import { useCheckpoints } from "../connection";
+import { useCheckpoints, useHost } from "../connection";
 import { ImagePreview } from "../composer/ImagePreview";
 import { showTurnChanges } from "../diffs/store";
 import { useThread } from "../thread/store";
@@ -165,8 +165,11 @@ function StackItemView({ item }: { item: StackItem }) {
 
 /** The thinking behind a reply, behind a chevron. pi's messages carry no stamp for it, so no duration. */
 function Thought({ text, active }: { text: string; active: boolean }) {
+  const expanded = useHost((host) => host.settings?.expandThinking ?? false);
   return (
-    <details className="group text-xs text-faint-foreground">
+    // React updates open when the preference changes, but leaves native toggles
+    // alone while the preference stays the same, including during streaming.
+    <details open={expanded} className="group text-xs text-faint-foreground">
       <summary className="-mx-1 flex w-fit cursor-default items-center gap-1 rounded-control px-1 outline-none select-none hover:text-foreground focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
         <ChevronRight aria-hidden className="size-3 group-open:rotate-90" />
         <span className={active ? "motion-safe:animate-pulse" : undefined}>Thought</span>

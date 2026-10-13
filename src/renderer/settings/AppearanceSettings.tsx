@@ -1,5 +1,4 @@
-// The Appearance section: the theme, and the palette, picked from tiles that
-// preview each one.
+// The Appearance section: the theme, palette and thinking sections.
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useId } from "react";
 import { PALETTE_SETTINGS, type PaletteSetting } from "../../shared/settings";
@@ -12,6 +11,7 @@ import {
   CardGroupRowTitle,
 } from "../ui/card-group";
 import { Segmented, SegmentedItem } from "../ui/segmented";
+import { Switch } from "../ui/switch";
 import { ToggleGroup } from "../ui/toggle-group";
 import { PaletteTile } from "../ui/palette-tile";
 import { Loading, SettingsRow } from "./rows";
@@ -26,6 +26,8 @@ const PALETTE_TITLES: Readonly<Record<PaletteSetting, string>> = {
 export function AppearanceSettings() {
   const theme = useHost((host) => host.settings?.theme);
   const palette = useHost((host) => host.settings?.palette);
+  const expandThinking = useHost((host) => host.settings?.expandThinking);
+  const thinkingId = useId();
   const themeLabelId = useId();
   const paletteLabelId = useId();
   if (theme === undefined || palette === undefined) return <Loading>Loading settings…</Loading>;
@@ -80,6 +82,19 @@ export function AppearanceSettings() {
           ))}
         </ToggleGroup>
       </CardGroupRow>
+      <SettingsRow
+        title={<label htmlFor={thinkingId}>Expand thinking sections</label>}
+        description="Show the thinking behind replies by default. You can still collapse each section."
+        descriptionId={`${thinkingId}-description`}
+        control={
+          <Switch
+            id={thinkingId}
+            aria-describedby={`${thinkingId}-description`}
+            checked={expandThinking ?? false}
+            onCheckedChange={(checked) => updateSettings({ expandThinking: checked })}
+          />
+        }
+      />
     </CardGroup>
   );
 }
