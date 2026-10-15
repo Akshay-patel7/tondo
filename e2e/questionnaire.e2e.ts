@@ -58,14 +58,14 @@ test.afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-async function start(theme: "light" | "dark" = "light") {
+async function start(theme: "light" | "dark" = "light", items = questions) {
   tondo = await launchWithPi({
     workDir,
     settings: { theme },
     piArgs: ["-e", EXTENSION],
     script: {
       responses: [
-        toolCalls({ name: "ask_user_question", arguments: { questions } }),
+        toolCalls({ name: "ask_user_question", arguments: { questions: items } }),
         reply("Received answers."),
       ],
     },
@@ -103,6 +103,8 @@ for (const theme of ["light", "dark"] as const) {
     await expect(form.getByRole("button", { name: "Submit answers" })).toBeDisabled();
     await form.getByRole("button", { name: "Question 1: Hosting" }).click();
     await form.getByRole("button", { name: /^Cloud/ }).click();
+    await expect(form.getByRole("heading", { name: "Which checks should run?" })).toBeFocused();
+    await form.getByRole("button", { name: "Back", exact: true }).click();
     await expect(form.getByText("host: cloud\nreplicas: 2", { exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("options.png"), animations: "disabled" });
     await form.getByRole("button", { name: "Next", exact: true }).click();
@@ -111,6 +113,14 @@ for (const theme of ["light", "dark"] as const) {
     await form.getByRole("textbox", { name: "Your answer" }).fill("Also security; and docs");
     await page.screenshot({ path: test.info().outputPath("multi.png"), animations: "disabled" });
     await form.getByRole("button", { name: "Next", exact: true }).click();
+    await form.getByRole("button", { name: /^Alpha/ }).focus();
+    await page.keyboard.press("Enter");
+    await expect(form.getByRole("heading", { name: "Any extra checks?" })).toBeFocused();
+    await form.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(form.getByRole("button", { name: /^Alpha/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await form.getByRole("textbox", { name: "Your answer" }).fill("2");
     await form.getByRole("button", { name: "Next", exact: true }).click();
     await expect(form.getByRole("button", { name: "Submit answers" })).toBeEnabled();
@@ -135,6 +145,7 @@ for (const theme of ["light", "dark"] as const) {
       "true",
     );
     await form.getByRole("button", { name: /^Local/ }).click();
+    await form.getByRole("button", { name: "Back", exact: true }).click();
     await expect(form.getByRole("textbox", { name: "Your answer" })).toHaveValue("");
     await form.getByRole("textbox", { name: "Your answer" }).fill("My own host");
     await expect(form.getByRole("button", { name: /^Local/ })).toHaveAttribute(
@@ -142,6 +153,7 @@ for (const theme of ["light", "dark"] as const) {
       "false",
     );
     await form.getByRole("button", { name: /^Local/ }).click();
+    await form.getByRole("button", { name: "Back", exact: true }).click();
     await expect(form.getByRole("textbox", { name: "Your answer" })).toHaveValue("");
     await form.getByRole("button", { name: "Question 4: Extras" }).click();
     await page.setViewportSize({ width: 900, height: 700 });
@@ -167,6 +179,23 @@ for (const theme of ["light", "dark"] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+test("selecting the last single-choice answer still waits for Submit", async () => {
+  const page = await start("light", questions.slice(0, 1));
+  const form = page.getByRole("dialog", { name: "Questions", exact: true });
+  await form.getByRole("button", { name: /^Local/ }).click();
+  await expect(form.getByRole("heading", { name: "Where should this run?" })).toBeVisible();
+  await expect(form.getByRole("button", { name: /^Local/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(existsSync(path.join(project, "question-answers.jsonl"))).toBe(false);
+  await form.getByRole("button", { name: "Submit answers" }).click();
+  await expect(page.getByText("Received answers.", { exact: true })).toBeVisible();
+  expect(readFileSync(path.join(project, "question-answers.jsonl"), "utf8").trim()).toBe(
+    '{"option":"Local"}',
+  );
+});
 
 test("Escape cancels the whole questionnaire without sending draft answers", async () => {
   const page = await start();

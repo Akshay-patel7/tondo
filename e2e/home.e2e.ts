@@ -4,11 +4,13 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Tondo } from "./launch";
+import { IMAGE_FIXTURE } from "../src/shared/imageFixture";
 import {
   addProject,
   composer,
   expectDraft,
   launchWithPi,
+  pickFiles,
   PI_START_TIMEOUT_MS,
   reply,
   THREAD_ROW,
@@ -94,15 +96,15 @@ test("the first send from home starts a thread in the project you pick, and pi a
   await expect(page.getByRole("heading", { name: "What should pi work on?" })).toBeHidden();
 });
 
-test("home sends selected original file paths in its first prompt", async () => {
+test("home sends images and original file paths from one picker in its first prompt", async () => {
   const page = await openHome([folder("alpha")]);
   const file = path.join(dir, "outside-project.csv");
   writeFileSync(file, "name,value\ncanary,42\n");
   await composer(page).fill("Review this file");
-  await tondo!.app.evaluate(({ dialog }, chosen) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
-  }, file);
-  await page.getByRole("button", { name: "Attach files", exact: true }).click();
+  const image = path.join(dir, IMAGE_FIXTURE.name);
+  writeFileSync(image, Buffer.from(IMAGE_FIXTURE.data, "base64"));
+  await pickFiles(tondo!, [image, file]);
+  await expect(page.getByLabel("Attached images", { exact: true }).locator("img")).toHaveCount(1);
   await expectDraft(page, `Review this file\n\nRead these local files:\n- ${JSON.stringify(file)}`);
   await page.screenshot({
     path: test.info().outputPath("home-file-path.png"),
@@ -113,6 +115,9 @@ test("home sends selected original file paths in its first prompt", async () => 
     timeout: PI_START_TIMEOUT_MS,
   });
   await expect(page.locator('[data-index="0"]')).toContainText(file);
+  await expect(
+    page.locator('[data-index="0"]').getByRole("button", { name: "Preview Image 1", exact: true }),
+  ).toBeVisible();
 });
 
 test("New worktree on a Git project starts the thread in a managed worktree", async () => {

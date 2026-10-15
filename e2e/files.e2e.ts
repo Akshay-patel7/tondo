@@ -179,6 +179,8 @@ test("file paths survive thread switches and a cold restart, and remain editable
 test("a selection returned after a thread switch never changes the new thread's draft", async () => {
   const page = await start();
   await composer(page).fill("Original thread");
+  const originalFile = path.join(dir, "original-thread-only.txt");
+  writeFileSync(originalFile, "Original thread only");
   await tondo!.app.evaluate(({ dialog }) => {
     const pending = {
       resolve: undefined as
@@ -205,14 +207,14 @@ test("a selection returned after a thread switch never changes the new thread's 
   await page.keyboard.press("ControlOrMeta+n");
   await expectDraft(page, "");
   await composer(page).fill("New thread");
-  await tondo!.app.evaluate(() => {
+  await tondo!.app.evaluate((_electron, file) => {
     const pending = (
       globalThis as typeof globalThis & {
         tondoFilesPicker: { resolve: (result: { canceled: boolean; filePaths: string[] }) => void };
       }
     ).tondoFilesPicker;
-    pending.resolve({ canceled: false, filePaths: ["/original-thread-only.txt"] });
-  });
+    pending.resolve({ canceled: false, filePaths: [file] });
+  }, originalFile);
   await expect(
     page.getByText("Files weren't attached because you switched threads. Choose them again.", {
       exact: true,

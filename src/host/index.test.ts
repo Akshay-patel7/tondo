@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION } from "../shared/protocol";
+import { IMAGE_FIXTURE } from "../shared/imageFixture";
+import { readPickedFiles } from "./attachments";
+
+vi.mock("./attachments", () => ({ readPickedFiles: vi.fn() }));
 
 type FakeWorkspace = Record<
   | "handle"
@@ -80,6 +84,9 @@ function workspace(): FakeWorkspace {
 
 beforeEach(async () => {
   vi.resetModules();
+  vi.mocked(readPickedFiles)
+    .mockReset()
+    .mockImplementation(async (paths) => ({ paths, images: [] }));
   vi.spyOn(console, "error").mockImplementation(() => {});
   parentPort.removeAllListeners();
   parentPort.postMessage.mockClear();
@@ -171,8 +178,13 @@ it("routes main's messages to the workspace", async () => {
   expect(parentPort.postMessage).toHaveBeenLastCalledWith({ type: "terminals-stopped" });
 });
 
-it("relays native file selections to the page without reading their contents", () => {
+it("prepares native file selections in the host and sends images alongside original paths", async () => {
+  vi.mocked(readPickedFiles).mockResolvedValue({
+    paths: ["/outside/file.csv"],
+    images: [IMAGE_FIXTURE],
+  });
   const page = connect();
+  const answered = new Promise((resolve) => page.postMessage.mockImplementation(resolve));
   const result = {
     type: "files-chosen",
     id: "request-1",
@@ -180,7 +192,46 @@ it("relays native file selections to the page without reading their contents", (
     error: null,
   };
   fromMain(result);
-  expect(page.postMessage).toHaveBeenLastCalledWith({ v: PROTOCOL_VERSION, ...result });
+  await expect(answered).resolves.toEqual({
+    v: PROTOCOL_VERSION,
+    ...result,
+    images: [IMAGE_FIXTURE],
+  });
+  expect(readPickedFiles).toHaveBeenCalledWith(result.paths);
+});
+
+it("reports file reading errors without a partial selection", async () => {
+  vi.mocked(readPickedFiles).mockRejectedValue(new Error("Each image must be 5 MiB or smaller."));
+  const page = connect();
+  const answered = new Promise((resolve) => page.postMessage.mockImplementation(resolve));
+  fromMain({
+    type: "files-chosen",
+    id: "request-1",
+    paths: ["/huge.png", "/notes.txt"],
+    error: null,
+  });
+  await expect(answered).resolves.toEqual({
+    v: PROTOCOL_VERSION,
+    type: "files-chosen",
+    id: "request-1",
+    images: [],
+    paths: [],
+    error: "Each image must be 5 MiB or smaller.",
+  });
+});
+
+it("passes picker failures through without reading any paths", () => {
+  const page = connect();
+  fromMain({ type: "files-chosen", id: "request-1", paths: [], error: "No window" });
+  expect(readPickedFiles).not.toHaveBeenCalled();
+  expect(page.postMessage).toHaveBeenLastCalledWith({
+    v: PROTOCOL_VERSION,
+    type: "files-chosen",
+    id: "request-1",
+    images: [],
+    paths: [],
+    error: "No window",
+  });
 });
 
 it("routes file picker requests to main", () => {

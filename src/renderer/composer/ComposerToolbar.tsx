@@ -1,8 +1,8 @@
 // The send and stop buttons follow T3 Code's
 // apps/web/src/components/chat/ComposerPrimaryActions.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { ArrowUp, Paperclip, Plus, Square } from "lucide-react";
-import { useRef, type ReactNode } from "react";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
+import type { ReactNode } from "react";
 import type { PiStatus } from "../../shared/protocol";
 import { chordLabel } from "../../shared/shortcuts";
 import { isMac } from "../platform";
@@ -16,62 +16,28 @@ const ENTER = chordLabel({ key: "enter", mod: false, shift: false, alt: false },
 
 export interface AttachProps {
   readonly disabled?: boolean;
-  readonly onFiles: (files: readonly File[]) => void;
-  readonly localFiles?: { readonly disabled?: boolean; readonly onPick: () => void };
+  readonly onPick: () => void;
 }
 
-/** Image bytes use the page picker; local file paths use the native dialog. */
-export function AttachButton({ disabled = false, onFiles, localFiles }: AttachProps) {
-  const input = useRef<HTMLInputElement>(null);
+/** One native picker for image attachments and original local file paths. */
+export function AttachButton({ disabled = false, onPick }: AttachProps) {
   return (
-    <>
-      <input
-        ref={input}
-        type="file"
-        aria-label="Choose images"
-        accept="image/png,image/jpeg,image/gif,image/webp"
-        multiple
-        hidden
-        onChange={(event) => {
-          onFiles([...(event.currentTarget.files ?? [])]);
-          event.currentTarget.value = "";
-        }}
-      />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Attach images"
-              disabled={disabled}
-              onClick={() => input.current?.click()}
-            />
-          }
-        >
-          <Plus aria-hidden />
-        </TooltipTrigger>
-        <TooltipContent>Attach PNG, JPEG, GIF or WebP images</TooltipContent>
-      </Tooltip>
-      {localFiles ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Attach files"
-                disabled={localFiles.disabled}
-                onClick={localFiles.onPick}
-              />
-            }
-          >
-            <Paperclip aria-hidden />
-          </TooltipTrigger>
-          <TooltipContent>Add original local file paths. Files are not copied.</TooltipContent>
-        </Tooltip>
-      ) : null}
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Attach files"
+            disabled={disabled}
+            onClick={onPick}
+          />
+        }
+      >
+        <Paperclip aria-hidden />
+      </TooltipTrigger>
+      <TooltipContent>Attach images or add original local file paths</TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -31,6 +31,7 @@ export function QuestionnairePanel({
         : [...answer.selected, optionIndex];
     }
     update({ selected, text: question.multiSelect ? answer.text : "" });
+    if (!question.multiSelect && index < questions.length - 1) setIndex(index + 1);
   };
 
   useLayoutEffect(() => document.getElementById(`${titleId}-${index}`)?.focus(), [titleId, index]);

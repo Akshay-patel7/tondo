@@ -9,6 +9,7 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import type { PickedFiles } from "./attachments";
 import { readQuestionAnswers, type Question, type QuestionAnswer } from "./questionnaire";
 import { isGitAction, type GitCommand, type GitEvent } from "./git";
 import type { TerminalCommand, TerminalEvent } from "./terminal";
@@ -33,7 +34,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -346,7 +347,7 @@ export type ClientMessage = Versioned<
   | { type: "set-settings"; patch: SettingsPatch }
   /** Show a file dialog to choose the pi to run. */
   | { type: "choose-pi-path" }
-  /** Ask the native picker for original local file paths. No file contents cross the port. */
+  /** Choose files natively. The host reads bounded image bytes and keeps other files as paths. */
   | { type: "choose-files"; id: string }
   /** Show a folder dialog for the parent directory of new worktrees. */
   | { type: "choose-worktree-directory" }
@@ -366,7 +367,7 @@ export type ClientMessage = Versioned<
 
 /** What the host sends the page. */
 export type HostMessage = Versioned<
-  | { type: "files-chosen"; id: string; paths: readonly string[]; error: string | null }
+  | ({ type: "files-chosen"; id: string; error: string | null } & PickedFiles)
   | GitEvent
   | TerminalEvent
   /**

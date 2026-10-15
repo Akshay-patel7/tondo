@@ -44,6 +44,11 @@ function matchesType(data: string, type: string): boolean {
   }
 }
 
+/** Detect supported raster formats by their bytes, including files without an extension. */
+export function imageType(data: string): string | null {
+  return IMAGE_TYPES.find((type) => matchesType(data, type)) ?? null;
+}
+
 /** A readable boundary error, or null. Check lengths before scanning the base64. */
 export function imagesError(value: unknown): string | null {
   if (!Array.isArray(value)) return "Images must be an array.";

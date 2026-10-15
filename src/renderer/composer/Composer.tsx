@@ -3,6 +3,7 @@ import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/pro
 import { builtinIn } from "../../shared/slashCommands";
 import {
   attachImages,
+  appendImages,
   chooseLocalFiles,
   dequeue,
   editDraft,
@@ -17,7 +18,7 @@ import {
   useImageSends,
   usePiUpdates,
 } from "../connection";
-import { IMAGE_COUNT, type DraftImage } from "../../shared/images";
+import type { DraftImage } from "../../shared/images";
 import { addToast } from "../toasts/store";
 import { ImagePreview } from "./ImagePreview";
 import { appendFilePaths } from "./filePaths";
@@ -172,14 +173,16 @@ export function Composer({ hidden }: { hidden: boolean }) {
   const send = (streamingBehavior: StreamingBehavior) => submitText(draft, streamingBehavior);
 
   const pickLocalFiles = () => {
+    setLoadingImages((count) => count + 1);
     void chooseLocalFiles()
-      .then((chosenPaths) => {
-        if (chosenPaths.length === 0) return;
+      .then(({ paths: chosenPaths, images: pickedImages }) => {
+        if (chosenPaths.length === 0 && pickedImages.length === 0) return;
         if (useHost.getState().thread?.id !== threadId)
           throw new Error(
             "Files weren't attached because you switched threads. Choose them again.",
           );
-        editDraft(appendFilePaths(useDraft.getState(), chosenPaths));
+        if (pickedImages.length > 0) appendImages(threadId, pickedImages);
+        if (chosenPaths.length > 0) editDraft(appendFilePaths(useDraft.getState(), chosenPaths));
         editor.current?.focus();
       })
       .catch((error: unknown) =>
@@ -187,7 +190,8 @@ export function Composer({ hidden }: { hidden: boolean }) {
           level: "error",
           message: error instanceof Error ? error.message : String(error),
         }),
-      );
+      )
+      .finally(() => setLoadingImages((count) => count - 1));
   };
 
   const attach = (files: readonly File[]) => {
@@ -350,7 +354,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
       ) : null}
       {loadingImages > 0 ? (
         <p role="status" className="px-4 pt-2 text-xs text-muted-foreground">
-          Reading images…
+          Reading attachments…
         </p>
       ) : null}
       {images.length > 0 && (working || queued) ? (
@@ -374,14 +378,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
       />
       <ComposerToolbar
         pi={pi}
-        attach={{
-          disabled: locked || images.length >= IMAGE_COUNT,
-          onFiles: attach,
-          localFiles: {
-            disabled: locked || connection !== "connected",
-            onPick: pickLocalFiles,
-          },
-        }}
+        attach={{ disabled: locked || connection !== "connected", onPick: pickLocalFiles }}
       >
         {working ? <StopButton onClick={stop} /> : null}
         {working && text === "" && images.length === 0 ? null : (

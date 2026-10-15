@@ -122,6 +122,14 @@ export function answerFolderDialog(app: ElectronApplication, folder: string): Pr
   }, folder);
 }
 
+/** Selects original paths through the composer's single native attachment picker. */
+export async function pickFiles({ app, page }: Tondo, files: readonly string[]): Promise<void> {
+  await app.evaluate(({ dialog }, paths) => {
+    dialog.showOpenDialog = async () => ({ canceled: paths.length === 0, filePaths: [...paths] });
+  }, files);
+  await page.getByRole("button", { name: "Attach files", exact: true }).click();
+}
+
 /** Adds `folder` with the sidebar's Add project button. Tondo opens a new thread in it. */
 export async function addProject({ app, page }: Tondo, folder: string): Promise<void> {
   await answerFolderDialog(app, folder);

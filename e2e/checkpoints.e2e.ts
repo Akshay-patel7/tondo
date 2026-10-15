@@ -19,6 +19,7 @@ import {
   composer,
   expectDraft,
   launchWithPi,
+  pickFiles,
   reply,
   send,
   toolCalls,
@@ -290,11 +291,9 @@ test("an image prompt waits for a stopped turn's completion checkpoint", async (
   try {
     await expect.poll(() => existsSync(marker)).toBe(true);
     await waitForIdle(page);
-    await page.getByLabel("Choose images").setInputFiles({
-      name: IMAGE_FIXTURE.name,
-      mimeType: IMAGE_FIXTURE.mimeType,
-      buffer: Buffer.from(IMAGE_FIXTURE.data, "base64"),
-    });
+    const file = path.join(workDir, IMAGE_FIXTURE.name);
+    writeFileSync(file, Buffer.from(IMAGE_FIXTURE.data, "base64"));
+    await pickFiles(tondo, [file]);
     await expect(page.getByLabel("Attached images", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     // Host-side prompt preparation holds the image until the old capture ends.

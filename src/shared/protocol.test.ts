@@ -461,8 +461,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 22, which adds the native local-file picker", () => {
-    expect(PROTOCOL_VERSION).toBe(22);
+  it("speaks version 23, which combines image and local-file selections", () => {
+    expect(PROTOCOL_VERSION).toBe(23);
   });
 
   it.each([

@@ -23,6 +23,7 @@ import {
   composer,
   expectDraft,
   launchWithPi,
+  pickFiles,
   recordStatuses,
   reply,
   send,
@@ -613,15 +614,9 @@ test("an image attachment reveals an otherwise empty draft", async () => {
   await addProject(tondo!, project);
   await waitForPi(page);
   await expect(threadRows(page)).toHaveCount(0);
-  const choosing = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Attach images", exact: true }).click();
-  await (
-    await choosing
-  ).setFiles({
-    name: IMAGE_FIXTURE.name,
-    mimeType: IMAGE_FIXTURE.mimeType,
-    buffer: Buffer.from(IMAGE_FIXTURE.data, "base64"),
-  });
+  const file = path.join(workDir, IMAGE_FIXTURE.name);
+  writeFileSync(file, Buffer.from(IMAGE_FIXTURE.data, "base64"));
+  await pickFiles(tondo!, [file]);
   await expect(page.getByLabel("Attached images", { exact: true })).toBeVisible();
   await expect(threadRows(page)).toHaveCount(1);
   await expectDraft(page, "");

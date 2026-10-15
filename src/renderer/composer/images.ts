@@ -20,6 +20,29 @@ function base64(file: File): Promise<string> {
   });
 }
 
+async function checkDimensions(blob: Blob, name: string): Promise<void> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(blob);
+  } catch {
+    throw new Error(`Couldn't decode ${name}.`);
+  }
+  const pixels = bitmap.width * bitmap.height;
+  bitmap.close();
+  if (pixels > 16_000_000) throw new Error("Each image must have 16 million pixels or fewer.");
+}
+
+/** Native selections pass the same signature, size and pixel checks as pasted images. */
+export async function validatePickedImages(images: readonly DraftImage[]): Promise<void> {
+  const error = imagesError(images);
+  if (error) throw new Error(error);
+  for (const image of images) {
+    const bytes = Uint8Array.from(atob(image.data), (char) => char.charCodeAt(0));
+    // oxlint-disable-next-line eslint/no-await-in-loop -- Decode only one image at a time.
+    await checkDimensions(new Blob([bytes], { type: image.mimeType }), image.name);
+  }
+}
+
 /** All-or-nothing so a failed paste can't leave a partially attached selection. */
 export async function readImages(files: readonly File[]): Promise<DraftImage[]> {
   if (files.length > IMAGE_COUNT) throw new Error(`Attach at most ${IMAGE_COUNT} images.`);
@@ -32,16 +55,8 @@ export async function readImages(files: readonly File[]): Promise<DraftImage[]> 
         "Use Attach files to add local paths for non-image files. Images must be PNG, JPEG, GIF or WebP.",
       );
     if (file.size > IMAGE_BYTES) throw new Error("Each image must be 5 MiB or smaller.");
-    let bitmap: ImageBitmap;
-    try {
-      // oxlint-disable-next-line eslint/no-await-in-loop -- Decode one image at a time to bound peak memory.
-      bitmap = await createImageBitmap(file);
-    } catch {
-      throw new Error(`Couldn't decode ${file.name}.`);
-    }
-    const pixels = bitmap.width * bitmap.height;
-    bitmap.close();
-    if (pixels > 16_000_000) throw new Error("Each image must have 16 million pixels or fewer.");
+    // oxlint-disable-next-line eslint/no-await-in-loop -- Decode one image at a time to bound peak memory.
+    await checkDimensions(file, file.name);
     const image = {
       id: crypto.randomUUID(),
       name: (file.name || "Pasted image").slice(0, 255),

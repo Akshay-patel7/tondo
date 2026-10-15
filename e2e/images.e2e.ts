@@ -11,6 +11,7 @@ import {
   composer,
   expectDraft,
   launchWithPi,
+  pickFiles,
   reply,
   send,
   threadRows,
@@ -65,9 +66,9 @@ async function start(slow = false): Promise<Page> {
 }
 const attachments = (page: Page) => page.getByLabel("Attached images", { exact: true });
 async function pickImage(page: Page) {
-  const choosing = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Attach images", exact: true }).click();
-  await (await choosing).setFiles(fixture);
+  const file = path.join(workDir, fixture.name);
+  writeFileSync(file, fixture.buffer);
+  await pickFiles(tondo!, [file]);
   await expect(
     attachments(page).getByRole("button", { name: `Preview ${fixture.name}`, exact: true }),
   ).toBeVisible();
@@ -154,16 +155,20 @@ test("paste a real clipboard image, preview it, and send its pixels to pi", asyn
 
 test("images and original file paths reach pi together", async () => {
   const page = await start();
-  await pickImage(page);
+  const imageFile = path.join(workDir, fixture.name);
+  writeFileSync(imageFile, fixture.buffer);
   const file = path.join(workDir, "notes.txt");
   writeFileSync(file, "Notes for the image");
-  await tondo!.app.evaluate(({ dialog }, chosen) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
-  }, file);
-  await page.getByRole("button", { name: "Attach files", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Attach files", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Attach images", exact: true })).toHaveCount(0);
+  await pickFiles(tondo!, [imageFile, file]);
   const text = `Read these local files:\n- ${JSON.stringify(file)}`;
   await expectDraft(page, text);
   await expect(attachments(page).locator("img")).toHaveCount(1);
+  await page.screenshot({
+    path: test.info().outputPath("combined-picker.png"),
+    animations: "disabled",
+  });
   await composer(page).press("Enter");
   await expect(page.getByText("Saw the image.", { exact: true })).toBeVisible();
   await waitForIdle(page);
@@ -176,6 +181,62 @@ test("images and original file paths reach pi together", async () => {
       expect.objectContaining({ type: "image", mimeType: "image/png" }),
     ]),
   );
+});
+
+test("the combined picker allows file paths at the image limit and rejects mixed selections atomically", async () => {
+  const page = await start();
+  const images = Array.from({ length: 4 }, (_, i) => {
+    const file = path.join(workDir, `image-${i}.png`);
+    writeFileSync(file, fixture.buffer);
+    return file;
+  });
+  await pickFiles(tondo!, images);
+  await expect(attachments(page).locator("img")).toHaveCount(4);
+  await expect(page.getByRole("button", { name: "Attach files", exact: true })).toBeEnabled();
+  const file = path.join(workDir, "notes.csv");
+  writeFileSync(file, "name,value\nnotes,1\n");
+  await pickFiles(tondo!, [file]);
+  const text = `Read these local files:\n- ${JSON.stringify(file)}`;
+  await expectDraft(page, text);
+  const extra = path.join(workDir, "extra.txt");
+  writeFileSync(extra, "extra");
+  await pickFiles(tondo!, [images[0]!, extra]);
+  await expect(page.getByText("Attach at most 4 images.", { exact: true })).toBeVisible();
+  await expect(attachments(page).locator("img")).toHaveCount(4);
+  await expectDraft(page, text);
+});
+
+test("a mixed selection containing an undecodable image leaves the draft unchanged", async () => {
+  const page = await start();
+  await composer(page).fill("Keep this draft");
+  const image = path.join(workDir, fixture.name);
+  writeFileSync(image, fixture.buffer);
+  const broken = path.join(workDir, "broken.png");
+  writeFileSync(broken, fixture.buffer.subarray(0, 16));
+  const file = path.join(workDir, "notes.txt");
+  writeFileSync(file, "notes");
+  await pickFiles(tondo!, [image, file, broken]);
+  await expect(page.getByText("Couldn't decode broken.png.", { exact: true })).toBeVisible();
+  await expect(attachments(page)).toBeHidden();
+  await expectDraft(page, "Keep this draft");
+});
+
+test("picked images retain the pixel limit before anything enters the draft", async () => {
+  const page = await start();
+  const pixels = await page.evaluate(async () => {
+    const canvas = new OffscreenCanvas(4096, 4096);
+    canvas.getContext("2d")!.fillRect(0, 0, 1, 1);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return [...new Uint8Array(await blob.arrayBuffer())];
+  });
+  const file = path.join(workDir, "too-many-pixels.png");
+  writeFileSync(file, Buffer.from(pixels));
+  await pickFiles(tondo!, [file]);
+  await expect(
+    page.getByText("Each image must have 16 million pixels or fewer.", { exact: true }),
+  ).toBeVisible();
+  await expect(attachments(page)).toBeHidden();
+  await expectDraft(page, "");
 });
 
 test("drop, remove and reject unsupported or oversized images", async () => {
@@ -200,27 +261,34 @@ test("drop, remove and reject unsupported or oversized images", async () => {
     .getByRole("button", { name: `Remove ${fixture.name}`, exact: true })
     .click();
   await expect(attachments(page)).toBeHidden();
-  await page.getByLabel("Choose images", { exact: true }).setInputFiles({
-    name: "no.svg",
-    mimeType: "image/svg+xml",
-    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+  const unsupported = await page.evaluateHandle(() => {
+    const data = new DataTransfer();
+    data.items.add(
+      new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], "no.svg", { type: "image/svg+xml" }),
+    );
+    return data;
   });
+  try {
+    await composer(page).dispatchEvent("drop", { dataTransfer: unsupported });
+  } finally {
+    await unsupported.dispose();
+  }
   await expect(
     page.getByText(
       "Use Attach files to add local paths for non-image files. Images must be PNG, JPEG, GIF or WebP.",
       { exact: true },
     ),
   ).toBeVisible();
-  await page
-    .getByLabel("Choose images", { exact: true })
-    .setInputFiles({ ...fixture, buffer: Buffer.alloc(6 * 1024 * 1024) });
+  const oversized = path.join(workDir, "oversized.png");
+  writeFileSync(oversized, Buffer.alloc(6 * 1024 * 1024));
+  await pickFiles(tondo!, [oversized]);
   await expect(
     page.getByText("Each image must be 5 MiB or smaller.", { exact: true }),
   ).toBeVisible();
-  await page
-    .getByLabel("Choose images", { exact: true })
-    .setInputFiles({ ...fixture, buffer: Buffer.from("broken") });
-  await expect(page.getByText(`Couldn't decode ${fixture.name}.`, { exact: true })).toBeVisible();
+  const broken = path.join(workDir, "broken.png");
+  writeFileSync(broken, fixture.buffer.subarray(0, 16));
+  await pickFiles(tondo!, [broken]);
+  await expect(page.getByText("Couldn't decode broken.png.", { exact: true })).toBeVisible();
   await expect(attachments(page)).toBeHidden();
 });
 

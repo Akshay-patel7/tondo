@@ -17,6 +17,7 @@ import { watchCheckpointGroups } from "./checkpoints";
 import { Store } from "./store";
 import { Supervisor } from "./supervisor";
 import { Workspace } from "./workspace";
+import { readPickedFiles } from "./attachments";
 
 /** The port of the page on screen. A new page load replaces it. */
 let page: MessagePortMain | undefined;
@@ -138,7 +139,29 @@ function start(): void {
         break;
       }
       case "files-chosen":
-        send({ v: PROTOCOL_VERSION, ...message });
+        if (message.error !== null) {
+          send({ v: PROTOCOL_VERSION, ...message, images: [] });
+          break;
+        }
+        void readPickedFiles(message.paths).then(
+          (picked) =>
+            send({
+              v: PROTOCOL_VERSION,
+              type: "files-chosen",
+              id: message.id,
+              ...picked,
+              error: null,
+            }),
+          (error: unknown) =>
+            send({
+              v: PROTOCOL_VERSION,
+              type: "files-chosen",
+              id: message.id,
+              paths: [],
+              images: [],
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        );
         break;
       case "project-chosen":
         workspace.projectChosen(message.folder);

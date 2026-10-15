@@ -1,5 +1,5 @@
 import { Folder, GitBranch } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { imagesError, type DraftImage } from "../../shared/images";
 import type { PiStatus, SidebarProject } from "../../shared/protocol";
@@ -79,6 +79,7 @@ export function Home() {
     projectId === undefined ? undefined : known.get(projectId),
   );
   const editor = useRef<PromptEditorHandle>(null);
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     if (connected && projectId !== undefined) requestProjectGit(projectId);
@@ -89,9 +90,14 @@ export function Home() {
   }, []);
 
   const pickLocalFiles = () => {
+    setPicking(true);
     void chooseLocalFiles()
-      .then((paths) => {
-        useHome.setState({ text: appendFilePaths(useHome.getState().text, paths) });
+      .then((picked) => {
+        const home = useHome.getState();
+        const next = [...home.images, ...picked.images];
+        const error = imagesError(next);
+        if (error) throw new Error(error);
+        useHome.setState({ text: appendFilePaths(home.text, picked.paths), images: next });
         editor.current?.focus();
       })
       .catch((error: unknown) =>
@@ -99,13 +105,15 @@ export function Home() {
           level: "error",
           message: error instanceof Error ? error.message : String(error),
         }),
-      );
+      )
+      .finally(() => setPicking(false));
   };
 
   const isGit = git?.git === true;
   const worktree = checkout === "worktree" && isGit;
   const message = text.trim();
-  const canSend = connected && project !== undefined && (message !== "" || images.length > 0);
+  const canSend =
+    !picking && connected && project !== undefined && (message !== "" || images.length > 0);
 
   const send = () => {
     if (!canSend) return;
@@ -184,10 +192,7 @@ export function Home() {
           <ComposerToolbar
             pi={NO_PI}
             contextRing={false}
-            attach={{
-              onFiles: attach,
-              localFiles: { disabled: !connected, onPick: pickLocalFiles },
-            }}
+            attach={{ disabled: !connected || picking, onPick: pickLocalFiles }}
           >
             <SendButton disabled={!canSend} onClick={send} />
           </ComposerToolbar>

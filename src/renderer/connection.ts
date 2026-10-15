@@ -4,6 +4,7 @@
 // only what changes.
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
+import type { PickedFiles } from "../shared/attachments";
 import type { GitAction, GitStatus } from "../shared/git";
 import { NO_PI_UPDATES, type PiUpdates } from "../shared/piUpdates";
 import type { CheckpointDiff, CheckpointTurn } from "../shared/checkpoints";
@@ -14,7 +15,7 @@ import {
   imagesError,
   type DraftImage,
 } from "../shared/images";
-import { readImages } from "./composer/images";
+import { readImages, validatePickedImages } from "./composer/images";
 import {
   PORT_MESSAGE,
   PROTOCOL_VERSION,
@@ -309,7 +310,7 @@ let port: MessagePort | undefined;
 const filePickers = new Map<
   string,
   {
-    resolve: (paths: readonly string[]) => void;
+    resolve: (picked: PickedFiles) => void;
     reject: (error: Error) => void;
   }
 >();
@@ -320,10 +321,10 @@ function disconnectFilePickers(): void {
   filePickers.clear();
 }
 
-/** Only a native, user-confirmed selection supplies paths. Files are never copied. */
-export function chooseLocalFiles(): Promise<readonly string[]> {
+/** Only a native, user-confirmed selection supplies paths. Non-images are never copied. */
+export async function chooseLocalFiles(): Promise<PickedFiles> {
   const id = crypto.randomUUID();
-  return new Promise((resolve, reject) => {
+  const picked = await new Promise<PickedFiles>((resolve, reject) => {
     filePickers.set(id, { resolve, reject });
     try {
       send({ v, type: "choose-files", id });
@@ -332,6 +333,8 @@ export function chooseLocalFiles(): Promise<readonly string[]> {
       reject(error);
     }
   });
+  await validatePickedImages(picked.images);
+  return picked;
 }
 
 /** The thread whose trust answer the host hasn't taken yet. */
@@ -432,7 +435,7 @@ function receive(message: HostMessage): void {
       const pending = filePickers.get(message.id);
       filePickers.delete(message.id);
       if (message.error !== null) pending?.reject(new Error(message.error));
-      else pending?.resolve(message.paths);
+      else pending?.resolve({ paths: message.paths, images: message.images });
       break;
     }
     case "pi-updates":
@@ -761,11 +764,14 @@ export async function attachImages(
   )
     throw new Error("Images must total 10 MiB or less.");
   const added = await readImages(files);
+  appendImages(threadId, added);
+}
+
+/** Merge against the current draft after decoding, never an earlier snapshot. */
+export function appendImages(threadId: string | undefined, added: readonly DraftImage[]): void {
   if (shownId() !== threadId)
-    throw new Error(
-      "Images weren't attached because you switched threads. Paste or drop them again.",
-    );
-  if (useImageSends.getState().has(threadId))
+    throw new Error("Files weren't attached because you switched threads. Choose them again.");
+  if (threadId === undefined || useImageSends.getState().has(threadId))
     throw new Error("Wait for pi to accept these images before changing attachments.");
   const next = [...useDraftImages.getState(), ...added];
   const error = imagesError(next);
