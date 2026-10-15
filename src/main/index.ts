@@ -71,6 +71,17 @@ if (!app.requestSingleInstanceLock()) {
       : await dialog.showOpenDialog(options);
     return canceled ? null : (filePaths[0] ?? null);
   };
+  const chooseFiles = async (): Promise<string[]> => {
+    const options: OpenDialogOptions = {
+      title: "Attach local files",
+      properties: ["openFile", "multiSelections", "showHiddenFiles"],
+    };
+    const window = mainWindow?.isDestroyed() === false ? mainWindow : undefined;
+    const { canceled, filePaths } = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return canceled ? [] : filePaths;
+  };
   /** Set once the host and every process group it reported are gone. */
   let hostStopped = false;
   const openMainWindow = () => {
@@ -159,6 +170,7 @@ if (!app.requestSingleInstanceLock()) {
         config: { userData, ...piOptions({ isPackaged: app.isPackaged, userData, piArgs, pool }) },
         chooseFolder,
         choosePiFile,
+        chooseFiles,
         attention: notify,
         // The page is denied the clipboard, so /copy goes through main.
         copy: (text) => clipboard.writeText(text),

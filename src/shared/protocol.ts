@@ -33,7 +33,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -346,6 +346,8 @@ export type ClientMessage = Versioned<
   | { type: "set-settings"; patch: SettingsPatch }
   /** Show a file dialog to choose the pi to run. */
   | { type: "choose-pi-path" }
+  /** Ask the native picker for original local file paths. No file contents cross the port. */
+  | { type: "choose-files"; id: string }
   /** Show a folder dialog for the parent directory of new worktrees. */
   | { type: "choose-worktree-directory" }
   /** Look for pi again, and start again every thread whose pi Tondo couldn't find. */
@@ -364,6 +366,7 @@ export type ClientMessage = Versioned<
 
 /** What the host sends the page. */
 export type HostMessage = Versioned<
+  | { type: "files-chosen"; id: string; paths: readonly string[]; error: string | null }
   | GitEvent
   | TerminalEvent
   /**
@@ -444,6 +447,7 @@ export type HostMessage = Versioned<
  * port. Main and the host come from the same build, so these aren't versioned.
  */
 export type MainToHostMessage =
+  | { type: "files-chosen"; id: string; paths: readonly string[]; error: string | null }
   | { type: "connect" }
   | { type: "collect-garbage" }
   | { type: "stop-terminals" }
@@ -490,6 +494,7 @@ export type HostToMainMessage =
   | { type: "choose-worktree-directory" }
   /** Show the file dialog for pi and answer with pi-chosen. */
   | { type: "choose-pi" }
+  | { type: "choose-files"; id: string }
   /** The theme your settings ask for, which main applies to the window. */
   | { type: "theme"; theme: ThemeSetting; palette: PaletteSetting }
   /**
@@ -842,6 +847,12 @@ export function parseClientMessage(data: unknown): ParseResult {
       const patch = parsePatch(message.patch);
       if (typeof patch === "string") return invalid(`set-settings: ${patch}`);
       return exactly(message, { v, type, patch });
+    }
+    case "choose-files": {
+      const { id } = message;
+      if (typeof id !== "string" || !/^[\w-]{1,100}$/.test(id))
+        return invalid("choose-files: id must be 1 to 100 letters, digits, underscores or hyphens");
+      return exactly(message, { v, type, id });
     }
     case "choose-pi-path":
     case "choose-worktree-directory":

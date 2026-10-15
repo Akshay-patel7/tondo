@@ -71,6 +71,7 @@ export interface WorkspaceOptions {
   readonly chooseFolder: (purpose: "project" | "worktree") => void;
   /** Asks main to show the file dialog for pi. Main answers through piChosen. */
   readonly choosePi: () => void;
+  readonly chooseFiles: (id: string) => void;
   /** Tells main the theme the settings ask for. */
   readonly setTheme: (theme: ThemeSetting, palette: PaletteSetting) => void;
   /** Asks main to raise a notification about a thread. */
@@ -90,6 +91,7 @@ export class Workspace {
   private readonly send: (message: HostMessage) => void;
   private readonly chooseFolder: WorkspaceOptions["chooseFolder"];
   private readonly choosePi: () => void;
+  private readonly chooseFiles: (id: string) => void;
   private readonly setTheme: (theme: ThemeSetting, palette: PaletteSetting) => void;
   /** The theme main last heard, which an outside edit to settings.json doesn't change. */
   private theme: ThemeSetting | null = null;
@@ -146,6 +148,7 @@ export class Workspace {
     this.send = options.send;
     this.chooseFolder = options.chooseFolder;
     this.choosePi = options.choosePi;
+    this.chooseFiles = options.chooseFiles;
     this.setTheme = options.setTheme;
     this.attention = options.attention;
     this.copy = options.copy;
@@ -260,6 +263,7 @@ export class Workspace {
         "stop",
         "set-draft",
         "set-draft-images",
+        "choose-files",
         "set-sidebar-hidden",
         "prompt",
         "list-files",
@@ -368,6 +372,9 @@ export class Workspace {
         break;
       case "delete-thread":
         this.run(() => this.deleteThread(message.threadId));
+        break;
+      case "choose-files":
+        this.chooseFiles(message.id);
         break;
       case "set-draft":
         this.run(() => this.setDraft(message.threadId, message.text, message.userInput));

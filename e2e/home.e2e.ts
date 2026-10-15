@@ -7,6 +7,7 @@ import type { Tondo } from "./launch";
 import {
   addProject,
   composer,
+  expectDraft,
   launchWithPi,
   PI_START_TIMEOUT_MS,
   reply,
@@ -91,6 +92,27 @@ test("the first send from home starts a thread in the project you pick, and pi a
   await expect(projectSection(page, "beta").locator(THREAD_ROW)).toHaveCount(1);
   await expect(projectSection(page, "alpha").locator(THREAD_ROW)).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "What should pi work on?" })).toBeHidden();
+});
+
+test("home sends selected original file paths in its first prompt", async () => {
+  const page = await openHome([folder("alpha")]);
+  const file = path.join(dir, "outside-project.csv");
+  writeFileSync(file, "name,value\ncanary,42\n");
+  await composer(page).fill("Review this file");
+  await tondo!.app.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
+  }, file);
+  await page.getByRole("button", { name: "Attach files", exact: true }).click();
+  await expectDraft(page, `Review this file\n\nRead these local files:\n- ${JSON.stringify(file)}`);
+  await page.screenshot({
+    path: test.info().outputPath("home-file-path.png"),
+    animations: "disabled",
+  });
+  await composer(page).press("Enter");
+  await expect(page.getByText("Home reply from pi.", { exact: true })).toBeVisible({
+    timeout: PI_START_TIMEOUT_MS,
+  });
+  await expect(page.locator('[data-index="0"]')).toContainText(file);
 });
 
 test("New worktree on a Git project starts the thread in a managed worktree", async () => {

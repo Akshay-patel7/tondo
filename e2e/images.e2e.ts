@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -152,6 +152,32 @@ test("paste a real clipboard image, preview it, and send its pixels to pi", asyn
   await page.screenshot({ path: test.info().outputPath("sent.png"), animations: "disabled" });
 });
 
+test("images and original file paths reach pi together", async () => {
+  const page = await start();
+  await pickImage(page);
+  const file = path.join(workDir, "notes.txt");
+  writeFileSync(file, "Notes for the image");
+  await tondo!.app.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
+  }, file);
+  await page.getByRole("button", { name: "Attach files", exact: true }).click();
+  const text = `Read these local files:\n- ${JSON.stringify(file)}`;
+  await expectDraft(page, text);
+  await expect(attachments(page).locator("img")).toHaveCount(1);
+  await composer(page).press("Enter");
+  await expect(page.getByText("Saw the image.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  const recorded = JSON.parse(
+    readFileSync(path.join(workDir, "provider-input.json"), "utf8"),
+  ) as UserMessage[];
+  expect(recorded[0]!.content).toEqual(
+    expect.arrayContaining([
+      { type: "text", text },
+      expect.objectContaining({ type: "image", mimeType: "image/png" }),
+    ]),
+  );
+});
+
 test("drop, remove and reject unsupported or oversized images", async () => {
   const page = await start();
   const transfer = await page.evaluateHandle((image) => {
@@ -179,7 +205,12 @@ test("drop, remove and reject unsupported or oversized images", async () => {
     mimeType: "image/svg+xml",
     buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
   });
-  await expect(page.getByText("Use PNG, JPEG, GIF or WebP images.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Use Attach files to add local paths for non-image files. Images must be PNG, JPEG, GIF or WebP.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await page
     .getByLabel("Choose images", { exact: true })
     .setInputFiles({ ...fixture, buffer: Buffer.alloc(6 * 1024 * 1024) });

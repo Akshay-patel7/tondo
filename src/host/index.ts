@@ -118,6 +118,7 @@ function start(): void {
     chooseFolder: (purpose) =>
       tellMain({ type: purpose === "project" ? "choose-project" : "choose-worktree-directory" }),
     choosePi: () => tellMain({ type: "choose-pi" }),
+    chooseFiles: (id) => tellMain({ type: "choose-files", id }),
     setTheme: (theme, palette) => tellMain({ type: "theme", theme, palette }),
     attention: (attention) => tellMain({ type: "attention", ...attention }),
     copy: (text) => tellMain({ type: "copy", text }),
@@ -136,6 +137,9 @@ function start(): void {
         serve(port, workspace);
         break;
       }
+      case "files-chosen":
+        send({ v: PROTOCOL_VERSION, ...message });
+        break;
       case "project-chosen":
         workspace.projectChosen(message.folder);
         break;

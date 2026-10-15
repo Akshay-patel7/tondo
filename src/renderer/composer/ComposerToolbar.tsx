@@ -1,7 +1,7 @@
 // The send and stop buttons follow T3 Code's
 // apps/web/src/components/chat/ComposerPrimaryActions.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { ArrowUp, Plus, Square } from "lucide-react";
+import { ArrowUp, Paperclip, Plus, Square } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 import type { PiStatus } from "../../shared/protocol";
 import { chordLabel } from "../../shared/shortcuts";
@@ -17,10 +17,11 @@ const ENTER = chordLabel({ key: "enter", mod: false, shift: false, alt: false },
 export interface AttachProps {
   readonly disabled?: boolean;
   readonly onFiles: (files: readonly File[]) => void;
+  readonly localFiles?: { readonly disabled?: boolean; readonly onPick: () => void };
 }
 
-/** The Attach (+) button, 28px, with the hidden file input behind it. */
-export function AttachButton({ disabled = false, onFiles }: AttachProps) {
+/** Image bytes use the page picker; local file paths use the native dialog. */
+export function AttachButton({ disabled = false, onFiles, localFiles }: AttachProps) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -52,6 +53,24 @@ export function AttachButton({ disabled = false, onFiles }: AttachProps) {
         </TooltipTrigger>
         <TooltipContent>Attach PNG, JPEG, GIF or WebP images</TooltipContent>
       </Tooltip>
+      {localFiles ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Attach files"
+                disabled={localFiles.disabled}
+                onClick={localFiles.onPick}
+              />
+            }
+          >
+            <Paperclip aria-hidden />
+          </TooltipTrigger>
+          <TooltipContent>Add original local file paths. Files are not copied.</TooltipContent>
+        </Tooltip>
+      ) : null}
     </>
   );
 }

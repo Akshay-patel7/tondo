@@ -306,6 +306,33 @@ export function usePi(): PiStatus {
 
 const v = PROTOCOL_VERSION;
 let port: MessagePort | undefined;
+const filePickers = new Map<
+  string,
+  {
+    resolve: (paths: readonly string[]) => void;
+    reject: (error: Error) => void;
+  }
+>();
+
+function disconnectFilePickers(): void {
+  for (const pending of filePickers.values())
+    pending.reject(new Error("The host disconnected. Choose the files again."));
+  filePickers.clear();
+}
+
+/** Only a native, user-confirmed selection supplies paths. Files are never copied. */
+export function chooseLocalFiles(): Promise<readonly string[]> {
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    filePickers.set(id, { resolve, reject });
+    try {
+      send({ v, type: "choose-files", id });
+    } catch (error) {
+      filePickers.delete(id);
+      reject(error);
+    }
+  });
+}
 
 /** The thread whose trust answer the host hasn't taken yet. */
 let answeringTrust: string | undefined;
@@ -401,6 +428,13 @@ function receive(message: HostMessage): void {
     return;
   }
   switch (message.type) {
+    case "files-chosen": {
+      const pending = filePickers.get(message.id);
+      filePickers.delete(message.id);
+      if (message.error !== null) pending?.reject(new Error(message.error));
+      else pending?.resolve(message.paths);
+      break;
+    }
     case "pi-updates":
       usePiUpdates.setState(message.updates, true);
       break;
@@ -555,6 +589,7 @@ function receive(message: HostMessage): void {
 }
 
 function accept(next: MessagePort): void {
+  disconnectFilePickers();
   answeringTrust = undefined;
   // A new host may not have made the thread; what you wrote stays in its draft if it did.
   firstSend = undefined;
@@ -577,6 +612,7 @@ function accept(next: MessagePort): void {
     if (port === next) {
       useHost.setState({ connection: "reconnecting" });
       disconnectGit();
+      disconnectFilePickers();
     }
   });
   next.start();

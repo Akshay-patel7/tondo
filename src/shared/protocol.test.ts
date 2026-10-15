@@ -39,6 +39,7 @@ describe("parseClientMessage", () => {
     const threadId = "0199c5e0-4a2b-7c3d-9e8f-1a2b3c4d5e6f";
     for (const message of [
       { v, type: "add-project" },
+      { v, type: "choose-files", id: "request-1" },
       { v, type: "remove-project", projectId: 1 },
       { v, type: "set-collapsed", projectId: 1, collapsed: true },
       { v, type: "new-thread", projectId: 2 },
@@ -460,8 +461,19 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 21, which adds reviewable questionnaires", () => {
-    expect(PROTOCOL_VERSION).toBe(21);
+  it("speaks version 22, which adds the native local-file picker", () => {
+    expect(PROTOCOL_VERSION).toBe(22);
+  });
+
+  it.each([
+    {},
+    { id: "" },
+    { id: 1 },
+    { id: "x".repeat(101) },
+    { id: "../file" },
+    { id: "request-1", paths: ["/not-a-user-selection"] },
+  ])("rejects malformed or path-injecting picker requests: %j", (fields) => {
+    expect(parseClientMessage({ v, type: "choose-files", ...fields }).ok).toBe(false);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {

@@ -28,7 +28,9 @@ export async function readImages(files: readonly File[]): Promise<DraftImage[]> 
   const images: DraftImage[] = [];
   for (const file of files) {
     if (!(IMAGE_TYPES as readonly string[]).includes(file.type))
-      throw new Error("Use PNG, JPEG, GIF or WebP images.");
+      throw new Error(
+        "Use Attach files to add local paths for non-image files. Images must be PNG, JPEG, GIF or WebP.",
+      );
     if (file.size > IMAGE_BYTES) throw new Error("Each image must be 5 MiB or smaller.");
     let bitmap: ImageBitmap;
     try {

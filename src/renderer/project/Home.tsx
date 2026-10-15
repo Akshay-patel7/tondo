@@ -7,9 +7,16 @@ import { ComposerCard } from "../composer/ComposerCard";
 import { ComposerToolbar, SendButton } from "../composer/ComposerToolbar";
 import { ImagePreview } from "../composer/ImagePreview";
 import { readImages } from "../composer/images";
+import { appendFilePaths } from "../composer/filePaths";
 import { composerAction } from "../composer/keys";
 import { PromptEditor, type PromptEditorHandle } from "../composer/PromptEditor";
-import { requestProjectGit, startThread, useHost, useProjectGit } from "../connection";
+import {
+  chooseLocalFiles,
+  requestProjectGit,
+  startThread,
+  useHost,
+  useProjectGit,
+} from "../connection";
 import { StatusRow } from "../extensionUi/Widgets";
 import { folderName } from "../format";
 import { addToast } from "../toasts/store";
@@ -80,6 +87,20 @@ export function Home() {
   useEffect(() => {
     editor.current?.focus();
   }, []);
+
+  const pickLocalFiles = () => {
+    void chooseLocalFiles()
+      .then((paths) => {
+        useHome.setState({ text: appendFilePaths(useHome.getState().text, paths) });
+        editor.current?.focus();
+      })
+      .catch((error: unknown) =>
+        addToast({
+          level: "error",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+  };
 
   const isGit = git?.git === true;
   const worktree = checkout === "worktree" && isGit;
@@ -160,7 +181,14 @@ export function Home() {
               return true;
             }}
           />
-          <ComposerToolbar pi={NO_PI} contextRing={false} attach={{ onFiles: attach }}>
+          <ComposerToolbar
+            pi={NO_PI}
+            contextRing={false}
+            attach={{
+              onFiles: attach,
+              localFiles: { disabled: !connected, onPick: pickLocalFiles },
+            }}
+          >
             <SendButton disabled={!canSend} onClick={send} />
           </ComposerToolbar>
         </ComposerCard>

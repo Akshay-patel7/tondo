@@ -34,6 +34,8 @@ export interface HostOptions {
   chooseFolder: () => Promise<string | null>;
   /** Shows the file dialog for pi. Resolves with the file, or null if you cancel. */
   choosePiFile: () => Promise<string | null>;
+  /** Original paths selected for a prompt, or an empty list on cancellation. */
+  chooseFiles: () => Promise<string[]>;
   /** Raises a notification about a thread that needs you. */
   attention: (attention: Attention) => void;
   /** Puts text on the clipboard. */
@@ -152,6 +154,27 @@ export function startHost(options: HostOptions): Host {
             if (child !== current) return;
             current.postMessage({ type: "pi-chosen", file } satisfies MainToHostMessage);
           });
+      } else if (message.type === "choose-files") {
+        void options.chooseFiles().then(
+          (paths) => {
+            if (child !== current) return;
+            current.postMessage({
+              type: "files-chosen",
+              id: message.id,
+              paths,
+              error: null,
+            } satisfies MainToHostMessage);
+          },
+          (error: unknown) => {
+            if (child !== current) return;
+            current.postMessage({
+              type: "files-chosen",
+              id: message.id,
+              paths: [],
+              error: `Couldn't choose files: ${error instanceof Error ? error.message : String(error)}`,
+            } satisfies MainToHostMessage);
+          },
+        );
       } else if (message.type === "theme") {
         // Electron then sets prefers-color-scheme in the page and tells the window.
         nativeTheme.themeSource = message.theme;

@@ -3,6 +3,7 @@ import type { PiStatus, SlashCommand, StreamingBehavior } from "../../shared/pro
 import { builtinIn } from "../../shared/slashCommands";
 import {
   attachImages,
+  chooseLocalFiles,
   dequeue,
   editDraft,
   editImages,
@@ -19,6 +20,7 @@ import {
 import { IMAGE_COUNT, type DraftImage } from "../../shared/images";
 import { addToast } from "../toasts/store";
 import { ImagePreview } from "./ImagePreview";
+import { appendFilePaths } from "./filePaths";
 import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
 import { slashOptionId, SlashMenu } from "../slash/SlashMenu";
@@ -168,6 +170,25 @@ export function Composer({ hidden }: { hidden: boolean }) {
     submit(source, behavior, pi, images);
   };
   const send = (streamingBehavior: StreamingBehavior) => submitText(draft, streamingBehavior);
+
+  const pickLocalFiles = () => {
+    void chooseLocalFiles()
+      .then((chosenPaths) => {
+        if (chosenPaths.length === 0) return;
+        if (useHost.getState().thread?.id !== threadId)
+          throw new Error(
+            "Files weren't attached because you switched threads. Choose them again.",
+          );
+        editDraft(appendFilePaths(useDraft.getState(), chosenPaths));
+        editor.current?.focus();
+      })
+      .catch((error: unknown) =>
+        addToast({
+          level: "error",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+  };
 
   const attach = (files: readonly File[]) => {
     if (files.length === 0) return;
@@ -353,7 +374,14 @@ export function Composer({ hidden }: { hidden: boolean }) {
       />
       <ComposerToolbar
         pi={pi}
-        attach={{ disabled: locked || images.length >= IMAGE_COUNT, onFiles: attach }}
+        attach={{
+          disabled: locked || images.length >= IMAGE_COUNT,
+          onFiles: attach,
+          localFiles: {
+            disabled: locked || connection !== "connected",
+            onPick: pickLocalFiles,
+          },
+        }}
       >
         {working ? <StopButton onClick={stop} /> : null}
         {working && text === "" && images.length === 0 ? null : (

@@ -55,6 +55,7 @@ describe("startHost", () => {
       config,
       chooseFolder: vi.fn().mockResolvedValue(null),
       choosePiFile: vi.fn().mockResolvedValue(null),
+      chooseFiles: vi.fn().mockResolvedValue([]),
       attention: vi.fn(),
       copy: vi.fn(),
       reveal: vi.fn(),
@@ -287,6 +288,53 @@ describe("startHost", () => {
     latest().emit("message", { type: "theme", theme: "light", palette: "rose" });
     expect(electron.nativeTheme.themeSource).toBe("light");
     expect(setWindowPalette).toHaveBeenLastCalledWith("rose");
+  });
+
+  it.each([{ paths: [] }, { paths: ["/outside/report.pdf", "/outside/data.csv"] }])(
+    "returns original file paths, correlated to the picker request: $paths",
+    async ({ paths }) => {
+      options.chooseFiles = vi.fn().mockResolvedValue(paths);
+      startHost(options);
+      latest().ready();
+      const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+      latest().emit("message", { type: "choose-files", id: "request-1" });
+      await expect(answered).resolves.toEqual({
+        type: "files-chosen",
+        id: "request-1",
+        paths,
+        error: null,
+      });
+    },
+  );
+
+  it("reports a failed file picker instead of leaving its request pending", async () => {
+    options.chooseFiles = vi.fn().mockRejectedValue(new Error("No window"));
+    startHost(options);
+    latest().ready();
+    const answered = new Promise((resolve) => latest().postMessage.mockImplementation(resolve));
+    latest().emit("message", { type: "choose-files", id: "request-2" });
+    await expect(answered).resolves.toEqual({
+      type: "files-chosen",
+      id: "request-2",
+      paths: [],
+      error: "Couldn't choose files: No window",
+    });
+  });
+
+  it("doesn't pass an old host's file selection to its replacement", async () => {
+    const picked = Promise.withResolvers<string[]>();
+    options.chooseFiles = vi.fn(() => picked.promise);
+    startHost(options);
+    const old = latest();
+    old.ready();
+    old.emit("message", { type: "choose-files", id: "old-request" });
+    old.emit("exit", 1);
+    await vi.advanceTimersByTimeAsync(500);
+    latest().ready();
+    picked.resolve(["/old.csv"]);
+    await picked.promise;
+    expect(latest().postMessage).not.toHaveBeenCalled();
+    expect(old.postMessage).not.toHaveBeenCalled();
   });
 
   it("raises notifications, copies and shows files in Finder for the host", () => {

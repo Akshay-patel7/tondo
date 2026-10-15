@@ -143,6 +143,7 @@ beforeEach(() => {
     },
     chooseFolder: () => {},
     choosePi: () => {},
+    chooseFiles: () => {},
     setTheme,
     attention: () => {},
     copy: () => {},

@@ -171,6 +171,26 @@ it("routes main's messages to the workspace", async () => {
   expect(parentPort.postMessage).toHaveBeenLastCalledWith({ type: "terminals-stopped" });
 });
 
+it("relays native file selections to the page without reading their contents", () => {
+  const page = connect();
+  const result = {
+    type: "files-chosen",
+    id: "request-1",
+    paths: ["/outside/file.csv"],
+    error: null,
+  };
+  fromMain(result);
+  expect(page.postMessage).toHaveBeenLastCalledWith({ v: PROTOCOL_VERSION, ...result });
+});
+
+it("routes file picker requests to main", () => {
+  host.workspaceOptions?.chooseFiles?.("request-1" as never);
+  expect(parentPort.postMessage).toHaveBeenLastCalledWith({
+    type: "choose-files",
+    id: "request-1",
+  });
+});
+
 it("reports every process group it owns to main as one list", () => {
   host.supervisorGroups?.([1]);
   host.checkpointGroups?.([2]);
