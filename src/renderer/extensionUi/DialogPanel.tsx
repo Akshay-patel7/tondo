@@ -13,7 +13,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import type { DialogAnswer, ExtensionDialog } from "../../shared/protocol";
+import type { DialogAnswer, PrimitiveDialog } from "../../shared/protocol";
 import { answerDialog } from "../connection";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -21,17 +21,21 @@ import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
 import { Textarea } from "../ui/textarea";
 import { useExtensionUi } from "./store";
+import { QuestionnairePanel } from "./QuestionnairePanel";
 
 /** The oldest dialog waiting for an answer, or nothing. */
 export function DialogPanel() {
   const dialogs = useExtensionUi((ui) => ui.dialogs);
   const dialog = dialogs[0];
   if (!dialog) return null;
+  if (dialog.method === "questionnaire") {
+    return <QuestionnairePanel key={dialog.id} id={dialog.id} questions={dialog.questions} />;
+  }
   // A new dialog starts with its own highlight, text and countdown.
   return <Dialog key={dialog.id} dialog={dialog} waiting={dialogs.length} />;
 }
 
-function Dialog({ dialog, waiting }: { dialog: ExtensionDialog; waiting: number }) {
+function Dialog({ dialog, waiting }: { dialog: PrimitiveDialog; waiting: number }) {
   const titleId = useId();
   const messageId = useId();
   const secondsLeft = useSecondsLeft(dialog.expiresAt);

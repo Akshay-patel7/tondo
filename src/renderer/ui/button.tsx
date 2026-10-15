@@ -53,6 +53,8 @@ const buttonVariants = cva(
         send: "bg-foreground/10 font-medium text-muted-foreground enabled:bg-primary enabled:text-primary-foreground enabled:hover:bg-[color-mix(in_oklab,var(--primary)_90%,var(--foreground))] disabled:opacity-100",
       },
       size: {
+        question:
+          "min-h-10 justify-start gap-2 rounded-control px-3 py-2 text-left text-sm whitespace-normal",
         default:
           "h-7 gap-1.5 rounded-control px-2.5 text-sm has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg:not([class*='size-'])]:size-3.5",
         // The sidebar's primary buttons: 16px icons, 8px apart from the label.

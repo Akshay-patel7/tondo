@@ -21,6 +21,8 @@ import {
   type TrustInfo,
 } from "../shared/protocol";
 import { builtinIn } from "../shared/slashCommands";
+import { readQuestions } from "../shared/questionnaire";
+import { Questionnaire } from "./questionnaire";
 import type { DraftImage } from "../shared/images";
 import {
   afterPiExit,
@@ -136,6 +138,8 @@ export class LiveThread {
   private extensionUi: ExtensionUi = NO_EXTENSION_UI;
   /** pi's own options for each open select, which an answer repeats exactly. */
   private readonly selectOptions = new Map<string, readonly string[]>();
+  private readonly questionnaires = new Map<string, Questionnaire>();
+  private readonly questionCalls = new Set<string>();
   /** Closes each timed dialog when pi answers it for you. */
   private readonly dialogTimers = new Map<string, NodeJS.Timeout>();
   /** Sends status, widget and title changes at most once a frame, since extensions can animate them. */
@@ -389,7 +393,15 @@ export class LiveThread {
     const dialog = this.extensionUi.dialogs.find((open) => open.id === dialogId);
     // pi answered it for you when it timed out, or it went with its pi.
     if (!dialog || !this.pi) return;
-    this.pi.rpc.send(responseTo(dialog, answer, this.selectOptions.get(dialogId)));
+    const questionnaire = [...this.questionnaires.values()].find(
+      (form) => form.dialogId === dialogId,
+    );
+    const response =
+      dialog.method === "questionnaire"
+        ? questionnaire?.submit(answer)
+        : responseTo(dialog, answer, this.selectOptions.get(dialogId));
+    if (!response) throw new Error("This questionnaire is no longer available.");
+    this.pi.rpc.send(response);
     this.closeDialog(dialogId);
   }
 
@@ -590,6 +602,45 @@ export class LiveThread {
       );
       return;
     }
+    if (
+      record.type === "tool_execution_start" &&
+      record.toolName === "ask_user_question" &&
+      typeof record.toolCallId === "string"
+    ) {
+      this.questionCalls.add(record.toolCallId);
+      if (this.questionCalls.size === 1) {
+        const questions = readQuestions(record.args);
+        if (questions) this.questionnaires.set(record.toolCallId, new Questionnaire(questions));
+      } else {
+        // RPC dialogs carry no tool-call id. Never replay answers into an
+        // ambiguous parallel question tool, even if its titles happen to match.
+        for (const form of this.questionnaires.values()) {
+          const original = form.pendingDialog;
+          if (!original) continue;
+          this.extensionUi = {
+            ...this.extensionUi,
+            dialogs: this.extensionUi.dialogs.map((dialog) =>
+              dialog.id === original.id ? original : dialog,
+            ),
+          };
+          this.uiChanged(true);
+        }
+        this.questionnaires.clear();
+      }
+    }
+    if (record.type === "tool_execution_end" && typeof record.toolCallId === "string") {
+      const form = this.questionnaires.get(record.toolCallId);
+      if (form?.dialogId) this.closeDialog(form.dialogId);
+      this.questionnaires.delete(record.toolCallId);
+      this.questionCalls.delete(record.toolCallId);
+    }
+    if (record.type === "agent_settled") {
+      for (const form of this.questionnaires.values()) {
+        if (form.dialogId) this.closeDialog(form.dialogId);
+      }
+      this.questionnaires.clear();
+      this.questionCalls.clear();
+    }
     const event = record as PiEvent;
     if (event.type === "agent_start") this.checkpoints.started();
     if (event.type === "agent_settled") this.checkpoints.settled();
@@ -638,7 +689,18 @@ export class LiveThread {
           this.pi?.rpc.send({ type: "extension_ui_response", id: dialog.id, cancelled: true });
           break;
         }
-        this.extensionUi = applyUiRequest(this.extensionUi, request);
+        let shown: ExtensionDialog = dialog;
+        for (const form of this.questionnaires.values()) {
+          const result = form.receive(dialog);
+          if (!result) continue;
+          if ("type" in result) {
+            this.pi?.rpc.send(result);
+            return;
+          }
+          shown = result;
+          break;
+        }
+        this.extensionUi = { ...this.extensionUi, dialogs: [...this.extensionUi.dialogs, shown] };
         if (options) this.selectOptions.set(dialog.id, options);
         if (dialog.expiresAt !== null) {
           const timer = setTimeout(
@@ -648,7 +710,7 @@ export class LiveThread {
           this.dialogTimers.set(dialog.id, timer);
         }
         this.uiChanged(true);
-        if (!this.closed) this.listener.asked(dialog);
+        if (!this.closed) this.listener.asked(shown);
         break;
       }
       case "bad-dialog":
@@ -696,6 +758,8 @@ export class LiveThread {
     for (const timer of this.dialogTimers.values()) clearTimeout(timer);
     this.dialogTimers.clear();
     this.selectOptions.clear();
+    this.questionnaires.clear();
+    this.questionCalls.clear();
     const shown = this.extensionUi !== NO_EXTENSION_UI;
     this.extensionUi = NO_EXTENSION_UI;
     if (shown) this.uiChanged(true);

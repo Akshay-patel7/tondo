@@ -460,8 +460,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 20, which adds branch parents and sidebar worktree markers", () => {
-    expect(PROTOCOL_VERSION).toBe(20);
+  it("speaks version 21, which adds reviewable questionnaires", () => {
+    expect(PROTOCOL_VERSION).toBe(21);
   });
 
   it("takes find-files with a thread, a request id and a short query", () => {

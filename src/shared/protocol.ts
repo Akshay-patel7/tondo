@@ -9,6 +9,7 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import { readQuestionAnswers, type Question, type QuestionAnswer } from "./questionnaire";
 import { isGitAction, type GitCommand, type GitEvent } from "./git";
 import type { TerminalCommand, TerminalEvent } from "./terminal";
 import type { CheckpointDiff, CheckpointTurn } from "./checkpoints";
@@ -32,7 +33,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -145,16 +146,24 @@ interface DialogBase {
 }
 
 /** An extension's dialog, waiting for your answer. */
-export type ExtensionDialog =
+export type PrimitiveDialog =
   | (DialogBase & { readonly method: "select"; readonly options: readonly string[] })
   | (DialogBase & { readonly method: "confirm"; readonly message: string })
   | (DialogBase & { readonly method: "input"; readonly placeholder: string })
   | (DialogBase & { readonly method: "editor"; readonly prefill: string });
 
+export type ExtensionDialog =
+  | PrimitiveDialog
+  | (DialogBase & {
+      readonly method: "questionnaire";
+      readonly questions: readonly Question[];
+    });
+
 /** Your answer to a dialog: the option or text, yes or no, or no answer. */
 export type DialogAnswer =
   | { readonly value: string }
   | { readonly confirmed: boolean }
+  | { readonly answers: readonly QuestionAnswer[] }
   | { readonly cancelled: true };
 
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
@@ -913,7 +922,11 @@ function parseAnswer(answer: unknown): DialogAnswer | undefined {
   if (typeof answer !== "object" || answer === null || Array.isArray(answer)) return undefined;
   const fields = Object.keys(answer);
   if (fields.length !== 1) return undefined;
-  const { value, confirmed, cancelled } = answer as Record<string, unknown>;
+  const { value, confirmed, cancelled, answers } = answer as Record<string, unknown>;
+  if (fields[0] === "answers") {
+    const parsed = readQuestionAnswers(answers);
+    return parsed ? { answers: parsed } : undefined;
+  }
   if (fields[0] === "value" && typeof value === "string") return { value };
   if (fields[0] === "confirmed" && typeof confirmed === "boolean") return { confirmed };
   if (fields[0] === "cancelled" && cancelled === true) return { cancelled };

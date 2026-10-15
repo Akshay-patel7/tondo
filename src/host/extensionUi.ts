@@ -6,7 +6,7 @@
 import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 import type {
   DialogAnswer,
-  ExtensionDialog,
+  PrimitiveDialog,
   ExtensionUi,
   NotifyLevel,
   WidgetPlacement,
@@ -16,7 +16,7 @@ import type { PiRecord } from "./piRpc";
 /** What one extension UI request asks for. */
 export type UiRequest =
   /** `options` are pi's own select options, which an answer has to repeat exactly. */
-  | { kind: "dialog"; dialog: ExtensionDialog; options: readonly string[] | null }
+  | { kind: "dialog"; dialog: PrimitiveDialog; options: readonly string[] | null }
   /** A dialog Tondo can't show. The host cancels it so the extension doesn't wait for ever. */
   | { kind: "bad-dialog"; id: string }
   | { kind: "status"; key: string; text: string | null }
@@ -80,7 +80,7 @@ export function readUiRequest(record: PiRecord, now: number): UiRequest {
 
 function readDialog(
   id: string,
-  method: ExtensionDialog["method"],
+  method: PrimitiveDialog["method"],
   record: PiRecord,
   now: number,
 ): UiRequest | undefined {
@@ -161,7 +161,7 @@ export function applyUiRequest(ui: ExtensionUi, request: UiRequest): ExtensionUi
  * hold color codes. Throws if the answer doesn't fit the dialog.
  */
 export function responseTo(
-  dialog: ExtensionDialog,
+  dialog: PrimitiveDialog,
   answer: DialogAnswer,
   options: readonly string[] | undefined,
 ): RpcExtensionUIResponse {

@@ -235,6 +235,146 @@ describe("extension dialogs", () => {
   });
 });
 
+describe("questionnaire lifecycle", () => {
+  const questions = [
+    {
+      header: "First",
+      question: "Pick first?",
+      options: [
+        { label: "A", description: "a" },
+        { label: "B", description: "b" },
+      ],
+    },
+    {
+      header: "Second",
+      question: "Pick second?",
+      options: [
+        { label: "C", description: "c" },
+        { label: "D", description: "d" },
+      ],
+    },
+  ];
+  const start = (id = "tool") =>
+    emit({
+      type: "tool_execution_start",
+      toolName: "ask_user_question",
+      toolCallId: id,
+      args: { questions },
+    });
+  const select = (id = "d1", second = false): PiRecord => {
+    const question = questions[second ? 1 : 0]!;
+    return {
+      type: "extension_ui_request",
+      id,
+      method: "select",
+      title: `[${question.header}] ${question.question}`,
+      options: [
+        ...question.options.map(
+          (option, index) => `${index + 1}. ${option.label} — ${option.description}`,
+        ),
+        "3. Type something.",
+      ],
+    };
+  };
+  beforeEach(() => thread.open());
+
+  it("holds the first RPC request, then replays only the submitted answers", () => {
+    start();
+    emit(select());
+    expect(thread.ui.dialogs[0]?.method).toBe("questionnaire");
+    expect(pi.pi.rpc.send).not.toHaveBeenCalled();
+    expect(() => thread.answer("d1", { answers: [{ selected: [], text: "" }] })).toThrow(
+      "Answer every question",
+    );
+    expect(thread.waiting).toBe(true);
+    thread.answer("d1", {
+      answers: [
+        { selected: [1], text: "" },
+        { selected: [0], text: "" },
+      ],
+    });
+    expect(pi.pi.rpc.send).toHaveBeenLastCalledWith({
+      type: "extension_ui_response",
+      id: "d1",
+      value: "2. B — b",
+    });
+    emit(select("d2", true));
+    expect(thread.ui.dialogs).toEqual([]);
+    expect(pi.pi.rpc.send).toHaveBeenLastCalledWith({
+      type: "extension_ui_response",
+      id: "d2",
+      value: "1. C — c",
+    });
+  });
+
+  it("keeps non-questionnaire selects unchanged", () => {
+    emit(select());
+    expect(thread.ui.dialogs[0]?.method).toBe("select");
+    thread.answer("d1", { value: "2. B — b" });
+    expect(pi.pi.rpc.send).toHaveBeenLastCalledWith({
+      type: "extension_ui_response",
+      id: "d1",
+      value: "2. B — b",
+    });
+  });
+
+  it.each(["tool_execution_end", "agent_settled"])("clears pending forms on %s", (type) => {
+    start();
+    emit(select());
+    emit({
+      type,
+      toolCallId: "tool",
+      toolName: "ask_user_question",
+      result: { content: [] },
+      isError: false,
+    });
+    expect(thread.waiting).toBe(false);
+    thread.answer("d1", { cancelled: true });
+    expect(pi.pi.rpc.send).not.toHaveBeenCalled();
+    emit(select("after"));
+    expect(thread.ui.dialogs[0]?.method).toBe("select");
+  });
+
+  it("clears submitted adapter state when pi is reloaded", async () => {
+    start();
+    emit(select());
+    thread.answer("d1", {
+      answers: [
+        { selected: [0], text: "" },
+        { selected: [1], text: "" },
+      ],
+    });
+    pi = fakePi();
+    await thread.reload();
+    expect(thread.ui.dialogs).toEqual([]);
+    emit(select("after"));
+    expect(thread.ui.dialogs[0]?.method).toBe("select");
+  });
+
+  it("removes a pending questionnaire when pi exits", async () => {
+    start();
+    emit(select());
+    pi.exit({ code: 1, signal: null, stderrTail: "" });
+    await pi.process.exited;
+    expect(thread.ui.dialogs).toEqual([]);
+    thread.answer("d1", { cancelled: true });
+    expect(pi.pi.rpc.send).not.toHaveBeenCalled();
+  });
+
+  it("falls back to ordinary dialogs for parallel question tools rather than mixing their answers", () => {
+    start();
+    emit(select());
+    start("parallel");
+    expect(thread.ui.dialogs[0]?.method).toBe("select");
+    emit(select("parallel-dialog"));
+    expect(thread.ui.dialogs.map((dialog) => dialog.method)).toEqual(["select", "select"]);
+    thread.answer("d1", { value: "1. A — a" });
+    emit(select("d2", true));
+    expect(thread.ui.dialogs.map((dialog) => dialog.method)).toEqual(["select", "select"]);
+    expect(pi.pi.rpc.send).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("prompt", () => {
   beforeEach(() => thread.open());
 
