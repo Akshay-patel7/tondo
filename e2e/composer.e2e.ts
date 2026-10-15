@@ -55,6 +55,60 @@ async function start(): Promise<Page> {
   return tondo.page;
 }
 
+test("right-click spelling suggestions correct the draft and can be undone", async () => {
+  // macOS has an OS dictionary. Linux needs a downloaded Hunspell dictionary,
+  // so its offline coverage is in the context-menu unit tests.
+  test.skip(process.platform !== "darwin", "Needs the native macOS spelling dictionary");
+  const page = await start();
+  await tondo!.app.evaluate(({ Menu }) => {
+    // Playwright cannot drive native menu items. Capture the real menu built
+    // by the right-click handler and invoke its item below.
+    const state = globalThis as typeof globalThis & { spellingMenu?: Electron.Menu };
+    Menu.prototype.popup = function () {
+      state.spellingMenu = this;
+    };
+  });
+  await expect
+    .poll(async () => {
+      await composer(page).press("ControlOrMeta+a");
+      await page.keyboard.type("This is mispelled. ");
+      // Blur and refocus to trigger Chromium's full check after the dictionary starts up.
+      await page.getByRole("heading", { name: "New thread", exact: true }).click();
+      await composer(page).focus();
+      const point = await composer(page).evaluate((element) => {
+        const text = element.querySelector("p")!.firstChild!;
+        const range = document.createRange();
+        range.setStart(text, 8);
+        range.setEnd(text, 17);
+        const rect = range.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      });
+      await page.mouse.click(point.x, point.y, { button: "right" });
+      return tondo!.app.evaluate(() => {
+        const state = globalThis as typeof globalThis & { spellingMenu?: Electron.Menu };
+        return state.spellingMenu?.items.map((item) => item.label);
+      });
+    })
+    .toContain("misspelled");
+  await tondo!.app.evaluate(({ BrowserWindow }) => {
+    const state = globalThis as typeof globalThis & { spellingMenu?: Electron.Menu };
+    const suggestion = state.spellingMenu!.items.find((item) => item.label === "misspelled")!;
+    suggestion.click(undefined, BrowserWindow.getAllWindows()[0], {});
+  });
+  await expectDraft(page, "This is misspelled. ");
+  await page.screenshot({
+    path: test.info().outputPath("spelling-corrected.png"),
+    animations: "disabled",
+  });
+  await composer(page).press("ControlOrMeta+z");
+  await expectDraft(page, "This is mispelled. ");
+  await composer(page).press("ControlOrMeta+Shift+z");
+  await expectDraft(page, "This is misspelled. ");
+  await composer(page).press("Enter");
+  await expect(page.getByText("First reply.", { exact: true })).toBeVisible();
+  expect(await page.locator('[data-index="0"]').textContent()).toBe("This is misspelled.");
+});
+
 test("IME Enter does not send or split, and Shift+Enter adds one literal newline", async () => {
   const page = await start();
   await composer(page).fill("你好");

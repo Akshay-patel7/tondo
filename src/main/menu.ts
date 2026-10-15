@@ -1,4 +1,4 @@
-import { Menu, type MenuItemConstructorOptions } from "electron";
+import { Menu, type ContextMenuParams, type MenuItemConstructorOptions } from "electron";
 
 export interface MenuOptions {
   isPackaged: boolean;
@@ -37,6 +37,44 @@ export function menuTemplate({ isPackaged, platform }: MenuOptions): MenuItemCon
     },
     { role: "windowMenu" },
   ];
+}
+
+/** Native text editing and spelling suggestions, without replacing app-owned menus. */
+export function editingContextMenuTemplate(
+  {
+    isEditable,
+    misspelledWord,
+    dictionarySuggestions,
+    editFlags,
+  }: Pick<
+    ContextMenuParams,
+    "isEditable" | "misspelledWord" | "dictionarySuggestions" | "editFlags"
+  >,
+  replaceMisspelling: (word: string) => void,
+): MenuItemConstructorOptions[] {
+  if (!isEditable) return [];
+
+  const items: MenuItemConstructorOptions[] = [];
+  if (misspelledWord) {
+    for (const suggestion of dictionarySuggestions) {
+      items.push({ label: suggestion, click: () => replaceMisspelling(suggestion) });
+    }
+    if (dictionarySuggestions.length === 0) {
+      items.push({ label: "No spelling suggestions", enabled: false });
+    }
+    items.push({ type: "separator" });
+  }
+  items.push(
+    { role: "undo", enabled: editFlags.canUndo },
+    { role: "redo", enabled: editFlags.canRedo },
+    { type: "separator" },
+    { role: "cut", enabled: editFlags.canCut },
+    { role: "copy", enabled: editFlags.canCopy },
+    { role: "paste", enabled: editFlags.canPaste },
+    { type: "separator" },
+    { role: "selectAll", enabled: editFlags.canSelectAll },
+  );
+  return items;
 }
 
 export function installAppMenu(options: MenuOptions): void {

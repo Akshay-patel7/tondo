@@ -1,5 +1,6 @@
-import { BrowserWindow, nativeTheme, type BrowserWindowConstructorOptions } from "electron";
+import { BrowserWindow, Menu, nativeTheme, type BrowserWindowConstructorOptions } from "electron";
 import type { PaletteSetting } from "../shared/settings";
+import { editingContextMenuTemplate } from "./menu";
 
 // Matches the renderer's title bar: h-11 is 44px. Colors are --background and
 // --foreground from index.css converted from OKLCH to sRGB. Change them together.
@@ -81,6 +82,13 @@ export function createMainWindow(url: string, preloadPath: string): BrowserWindo
       nodeIntegration: false,
       webviewTag: false,
     },
+  });
+
+  window.webContents.on("context-menu", (_event, params) => {
+    const template = editingContextMenuTemplate(params, (word) =>
+      window.webContents.replaceMisspelling(word),
+    );
+    if (template.length > 0) Menu.buildFromTemplate(template).popup({ window });
   });
 
   window.once("ready-to-show", () => window.show());
