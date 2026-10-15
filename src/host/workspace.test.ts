@@ -447,7 +447,23 @@ describe("draft visibility", () => {
     expect(store.thread(id)).toMatchObject({ visible: true, draft: "Worktree thought" });
     expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
       projects: [
-        { threads: expect.arrayContaining([expect.objectContaining({ id, hasDraft: true })]) },
+        {
+          threads: expect.arrayContaining([
+            expect.objectContaining({ id, hasDraft: true, worktree: true }),
+          ]),
+        },
+      ],
+    });
+    await openThread("local");
+    await workspace.refresh();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        {
+          threads: expect.arrayContaining([
+            expect.objectContaining({ id, worktree: true }),
+            expect.objectContaining({ id: "local", worktree: false }),
+          ]),
+        },
       ],
     });
     workspace.handle({ v, type: "set-draft", threadId: id, text: "" });
@@ -673,7 +689,7 @@ describe("worktree creation alongside a busy checkout", () => {
         threadId: "new-local",
         id: 2,
         expectedBranch: "main",
-        action: { kind: "create-branch", branch: "unsafe" },
+        action: { kind: "create-branch", branch: "unsafe", base: "main" },
       });
       expect(await refused).toMatchObject({
         error: expect.stringContaining("pi is starting or working"),

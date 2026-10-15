@@ -189,7 +189,7 @@ it("keeps uncommitted changes that a pull would overwrite", async () => {
 });
 
 it("refuses to pull without a branch or an upstream", async () => {
-  await git.act(cwd, { kind: "create-branch", branch: "topic" }, "main");
+  await git.act(cwd, { kind: "create-branch", branch: "topic", base: "main" }, "main");
   await expect(git.act(cwd, { kind: "pull" }, "topic")).rejects.toThrow(
     "topic has no upstream to pull from. Push it to set one.",
   );
@@ -227,7 +227,7 @@ it("reads status without writing the index, and handles non-repos and detached H
 });
 
 it("creates/switches branches, commits all changes with the literal message and pushes only when asked", async () => {
-  await git.act(cwd, { kind: "create-branch", branch: "topic/test" }, "main");
+  await git.act(cwd, { kind: "create-branch", branch: "topic/test", base: "main" }, "main");
   writeFileSync(path.join(cwd, "new\nfile"), "new");
   await git.act(cwd, { kind: "commit", message: "fix: literal $(touch nope)" }, "topic/test");
   expect(native("log", "-1", "--format=%s")).toBe("fix: literal $(touch nope)");
@@ -240,13 +240,60 @@ it("creates/switches branches, commits all changes with the literal message and 
   expect((await git.status(cwd)).branch).toBe("main");
 });
 
+it("creates a branch at the chosen parent rather than the current HEAD", async () => {
+  native("switch", "-c", "parent");
+  writeFileSync(path.join(cwd, "parent-only"), "parent");
+  native("add", ".");
+  native("commit", "-m", "parent");
+  const parent = native("rev-parse", "HEAD");
+  native("switch", "main");
+  // A tag with the same name must not override the selected local branch.
+  native("tag", "parent", "main");
+  await git.act(cwd, { kind: "create-branch", branch: "child", base: "parent" }, "main");
+  expect(native("rev-parse", "HEAD")).toBe(parent);
+  expect(readFileSync(path.join(cwd, "parent-only"), "utf8")).toBe("parent");
+});
+
+it("creates from detached HEAD and from a branch with no commits", async () => {
+  native("switch", "--detach", "main");
+  const head = native("rev-parse", "HEAD");
+  await git.act(cwd, { kind: "create-branch", branch: "attached", base: "HEAD" }, null);
+  expect(native("branch", "--show-current")).toBe("attached");
+  expect(native("rev-parse", "HEAD")).toBe(head);
+  const empty = path.join(dir, "unborn");
+  native("init", "-b", "main", empty);
+  await git.act(empty, { kind: "create-branch", branch: "first", base: "main" }, "main");
+  expect((await git.status(empty, false)).branch).toBe("first");
+});
+
+it("keeps the checkout unchanged when a selected parent is missing, unsafe or conflicts with edits", async () => {
+  native("switch", "-c", "parent");
+  writeFileSync(path.join(cwd, "a"), "parent");
+  native("commit", "-am", "parent");
+  native("switch", "main");
+  writeFileSync(path.join(cwd, "a"), "uncommitted");
+  const head = native("rev-parse", "HEAD");
+  for (const base of ["missing", "--force", "@{-1}", "main~1", "parent"]) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- test each refused parent.
+    await expect(
+      git.act(cwd, { kind: "create-branch", branch: "child", base }, "main"),
+    ).rejects.toThrow();
+    expect(native("branch", "--list", "child")).toBe("");
+    expect(native("branch", "--show-current")).toBe("main");
+    expect(native("rev-parse", "HEAD")).toBe(head);
+    expect(readFileSync(path.join(cwd, "a"), "utf8")).toBe("uncommitted");
+  }
+});
+
 it("rejects stale branch actions, revision expressions and option-like branch names", async () => {
   await expect(git.act(cwd, { kind: "commit", message: "wrong" }, "stale")).rejects.toThrow(
     "branch changed",
   );
   for (const branch of ["--force", "@{-1}", "a..b"]) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- test each rejected input.
-    await expect(git.act(cwd, { kind: "create-branch", branch }, "main")).rejects.toThrow();
+    await expect(
+      git.act(cwd, { kind: "create-branch", branch, base: "main" }, "main"),
+    ).rejects.toThrow();
   }
   expect(native("branch", "--show-current")).toBe("main");
 });
@@ -263,7 +310,7 @@ it("preserves conflicting dirty changes rather than forcing a checkout", async (
 
 it("uses the remote's Enterprise host, requires a push, and creates/reads a PR through gh", async () => {
   stubGh();
-  await git.act(cwd, { kind: "create-branch", branch: "topic" }, "main");
+  await git.act(cwd, { kind: "create-branch", branch: "topic", base: "main" }, "main");
   const action = {
     kind: "create-pr",
     remote: "origin",
@@ -304,7 +351,7 @@ it("uses the remote's Enterprise host, requires a push, and creates/reads a PR t
 
 it("shows gh's own reason when creating a pull request fails", async () => {
   stubGh();
-  await git.act(cwd, { kind: "create-branch", branch: "topic" }, "main");
+  await git.act(cwd, { kind: "create-branch", branch: "topic", base: "main" }, "main");
   await git.act(cwd, { kind: "push", remote: "origin" }, "topic");
   env.GH_TEST_CREATE_FAILS = "1";
   await expect(

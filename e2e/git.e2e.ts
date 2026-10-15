@@ -30,7 +30,6 @@ import {
   waitForPi,
   waitForFileCommand,
 } from "./pi";
-import { pickOption } from "./ui";
 
 let dir: string;
 let project: string;
@@ -143,8 +142,29 @@ async function expectGitAction(page: Page, name: string, enabled: boolean): Prom
 async function pickBranch(page: Page, name: string): Promise<Locator> {
   await gitAction(page, "Switch branch");
   const dialog = page.getByRole("alertdialog");
-  await pickOption(dialog, "Git branch", name);
+  await chooseBranch(dialog, "Git branch", name);
   return dialog;
+}
+
+async function chooseBranch(dialog: Locator, label: string, name: string): Promise<void> {
+  await dialog.getByLabel(label, { exact: true }).click();
+  const page = dialog.page();
+  await page.getByRole("combobox", { name: "Search branches", exact: true }).fill(name);
+  await page.getByRole("option", { name, exact: true }).click();
+  await expect(page.getByRole("listbox")).toBeHidden();
+}
+
+async function captureThemes(page: Page, name: string): Promise<void> {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({
+    path: test.info().outputPath(`${name}-light.png`),
+    animations: "disabled",
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: test.info().outputPath(`${name}-dark.png`),
+    animations: "disabled",
+  });
 }
 
 async function submit(name: string) {
@@ -179,6 +199,111 @@ function worktreePath(): string {
   if (!field) throw new Error("No linked worktree");
   return field.slice(9);
 }
+
+test("branch pickers search and create branches and worktrees from the chosen parent", async () => {
+  git(project, "switch", "-c", "feature/parent");
+  writeFileSync(path.join(project, "parent.txt"), "Only on the parent\n");
+  git(project, "add", ".");
+  git(project, "commit", "-m", "parent commit");
+  const parent = git(project, "rev-parse", "HEAD");
+  git(project, "switch", "main");
+  const main = git(project, "rev-parse", "HEAD");
+  const { page } = await start([reply("Ready.")]);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await gitAction(page, "Switch branch");
+  const confirmation = page.getByRole("alertdialog");
+  await confirmation.getByLabel("Git branch", { exact: true }).click();
+  const search = page.getByRole("combobox", { name: "Search branches", exact: true });
+  await expect(search).toBeFocused();
+  await search.fill("no-such-branch");
+  await expect(page.getByText("No branches found.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await search.fill("PARENT");
+  await expect(page.getByRole("option")).toHaveText(["feature/parent"]);
+  await captureThemes(page, "branch-search");
+  await search.press("ArrowDown");
+  await search.press("Enter");
+  await expect(page.getByRole("listbox")).toBeHidden();
+  expect(git(project, "branch", "--show-current")).toBe("main");
+  await submit("Switch branch");
+  await expectBranch(page, "feature/parent");
+  await pickBranch(page, "main");
+  await submit("Switch branch");
+  await expectBranch(page, "main");
+
+  await gitAction(page, "New branch");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Parent branch", { exact: true })).toHaveText("main");
+  await dialog.getByLabel("Branch name", { exact: true }).fill("feature/child");
+  await chooseBranch(dialog, "Parent branch", "feature/parent");
+  await captureThemes(page, "new-branch");
+  await submit("Create branch");
+  await expectBranch(page, "feature/child");
+  expect(git(project, "rev-parse", "HEAD")).toBe(parent);
+  expect(readFileSync(path.join(project, "parent.txt"), "utf8")).toContain("Only on the parent");
+
+  await gitAction(page, "New worktree");
+  await expect(dialog.getByLabel("Base branch", { exact: true })).toHaveText("feature/child");
+  await dialog.getByLabel("Branch name", { exact: true }).fill("feature/worktree");
+  await chooseBranch(dialog, "Base branch", "main");
+  await captureThemes(page, "worktree-base");
+  await submit("Create worktree thread");
+  await expectBranch(page, "feature/worktree");
+  const checkout = worktreePath();
+  expect(git(checkout, "rev-parse", "HEAD")).toBe(main);
+  expect(existsSync(path.join(checkout, "parent.txt"))).toBe(false);
+  expect(git(project, "branch", "--show-current")).toBe("feature/child");
+  expect(errors).toEqual([]);
+});
+
+test("worktree sidebar markers remain on inactive threads after reload and restart", async () => {
+  const first = await start([reply("Ready.")]);
+  let { page } = first;
+  await composer(page).fill("Local draft");
+  await expect(threadRows(page)).toHaveCount(1);
+  const localId = await threadRows(page).first().getAttribute("data-thread-id");
+  await gitAction(page, "New worktree");
+  await page.getByLabel("Branch name", { exact: true }).fill("feature/marked");
+  await submit("Create worktree thread");
+  await expectBranch(page, "feature/marked");
+  await composer(page).fill("Worktree draft");
+  await expect(threadRows(page)).toHaveCount(2);
+  const marked = threadRows(page).filter({
+    has: page.getByRole("img", { name: "Worktree", exact: true }),
+  });
+  await expect(marked).toHaveCount(1);
+  const worktreeId = await marked.getAttribute("data-thread-id");
+  const expectMarkers = async () => {
+    await expect(
+      page
+        .locator(`button[data-thread-id="${worktreeId}"]`)
+        .getByRole("img", { name: "Worktree", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .locator(`button[data-thread-id="${localId}"]`)
+        .getByRole("img", { name: "Worktree", exact: true }),
+    ).toHaveCount(0);
+  };
+  await page.locator(`button[data-thread-id="${localId}"]`).click();
+  await expectBranch(page, "main");
+  await expectMarkers();
+  await page.reload();
+  await waitForPi(page);
+  await expectMarkers();
+  await first.close();
+  tondo = await launchTondo({ profileDir: first.profileDir, env });
+  page = tondo.page;
+  await bringToFront(tondo);
+  await waitForPi(page);
+  await expectBranch(page, "main");
+  await expectMarkers();
+  await captureThemes(page, "inactive-worktree");
+});
 
 test("status labels and the PR link update without opening Git actions or Changes", async () => {
   writeFileSync(path.join(dir, "created"), "yes");

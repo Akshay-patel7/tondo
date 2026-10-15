@@ -273,7 +273,6 @@ export function Sidebar() {
   const size = usePanelSize("sidebar");
   const projects = useHost((host) => host.projects);
   const openId = useHost((host) => host.thread?.id);
-  const openWorktree = useHost((host) => host.thread?.worktree === true);
   // Home: projects, but no thread on screen. The page there is a new thread,
   // so the New thread button shows pressed.
   const home = useHost((host) => host.thread === null) && projects.length > 0;
@@ -392,7 +391,6 @@ export function Sidebar() {
               key={project.id}
               project={project}
               openId={openId}
-              openWorktree={openWorktree}
               now={now}
               tabFallback={index === 0 && !openListed}
               onRemove={askToRemove}
@@ -433,7 +431,6 @@ export function Sidebar() {
 function ProjectGroup({
   project,
   openId,
-  openWorktree,
   now,
   tabFallback,
   onRemove,
@@ -441,8 +438,6 @@ function ProjectGroup({
 }: {
   project: SidebarProject;
   openId: string | undefined;
-  /** Whether the open thread runs in a checkout of its own. */
-  openWorktree: boolean;
   now: number;
   /** Whether the header is the Tab stop until you focus a row. */
   tabFallback: boolean;
@@ -558,7 +553,6 @@ function ProjectGroup({
               key={thread.id}
               thread={thread}
               open={thread.id === openId}
-              worktree={thread.id === openId && openWorktree}
               now={now}
               onDelete={onDelete}
             />
@@ -723,14 +717,11 @@ function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: b
 function ThreadRow({
   thread,
   open,
-  worktree,
   now,
   onDelete,
 }: {
   thread: SidebarThread;
   open: boolean;
-  /** Whether the thread runs in a checkout of its own, which the host says only of the open thread. */
-  worktree: boolean;
   now: number;
   onDelete: (thread: SidebarThread) => void;
 }) {
@@ -819,7 +810,7 @@ function ThreadRow({
                   <Pin aria-hidden className="size-3" />
                 </span>
               ) : null}
-              {worktree ? (
+              {thread.worktree ? (
                 <span
                   role="img"
                   aria-label="Worktree"

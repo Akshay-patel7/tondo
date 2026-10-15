@@ -5,7 +5,7 @@ import { parseClientMessage, PROTOCOL_VERSION as v } from "./protocol";
 it("accepts only bounded literal Git actions and exact request fields", () => {
   const actions: GitAction[] = [
     { kind: "switch", branch: "main" },
-    { kind: "create-branch", branch: "feature" },
+    { kind: "create-branch", branch: "feature", base: "main" },
     { kind: "new-worktree", branch: "feature", base: "main" },
     { kind: "remove-worktree", force: false },
     { kind: "commit", message: "fix: issue" },
@@ -35,6 +35,10 @@ it("rejects malformed actions and identities before they cross into the host", (
     [],
     {},
     { kind: "push", remote: "" },
+    { kind: "create-branch", branch: "child" },
+    { kind: "create-branch", branch: "child", base: "" },
+    { kind: "create-branch", branch: "child", base: "a".repeat(251) },
+    { kind: "create-branch", branch: "child", base: "a\0b" },
     // The host pulls from the branch's upstream, so a pull names nothing.
     { kind: "pull", remote: "origin" },
     { kind: "commit", message: "a\0b" },

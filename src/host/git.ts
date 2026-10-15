@@ -307,7 +307,16 @@ export class Git {
         break;
       case "create-branch":
         await this.branchName(cwd, action.branch);
-        await this.run(cwd, ["switch", "-c", action.branch]);
+        if (action.base !== "HEAD") await this.branchName(cwd, action.base);
+        // Omit the start point for the current checkout, including an unborn branch.
+        await this.run(cwd, [
+          "switch",
+          "-c",
+          action.branch,
+          ...(action.base === "HEAD" || action.base === status.branch
+            ? []
+            : ["--", `refs/heads/${action.base}`]),
+        ]);
         break;
       case "commit":
         if (!status.branch) throw new Error("Create or switch to a branch before committing.");

@@ -1,7 +1,7 @@
 /** Git actions accept names, never shell commands, repository paths or executable paths. */
 export type GitAction =
   | { kind: "switch"; branch: string }
-  | { kind: "create-branch"; branch: string }
+  | { kind: "create-branch"; branch: string; base: string }
   | { kind: "new-worktree"; branch: string; base: string }
   | { kind: "remove-worktree"; force: boolean }
   | { kind: "commit"; message: string }
@@ -93,10 +93,10 @@ export function isGitAction(value: unknown): value is GitAction {
   let fields: string[];
   switch (action.kind) {
     case "switch":
-    case "create-branch":
       if (!text(action.branch, 250)) return false;
       fields = ["kind", "branch"];
       break;
+    case "create-branch":
     case "new-worktree":
       if (!text(action.branch, 250) || !text(action.base, 250)) return false;
       fields = ["kind", "branch", "base"];

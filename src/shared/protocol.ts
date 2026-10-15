@@ -32,7 +32,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -239,6 +239,8 @@ export interface SidebarThread {
   readonly hasDraft: boolean;
   /** pi saves a thread's name only once the thread has a reply, so you can rename it from then on. */
   readonly canRename: boolean;
+  /** A checkout owned by this thread, even when it is not open or running. */
+  readonly worktree: boolean;
 }
 
 export interface SidebarProject {

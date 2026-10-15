@@ -1,6 +1,6 @@
 // The confirmations behind the header's Git menu. Each action asks in a
 // dialog before the host runs it, and shows the host's refusal in place.
-import { CircleAlert, GitBranch } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { GitAction, GitStatus } from "../../shared/git";
 import { performGit, useGit } from "../connection";
@@ -28,9 +28,9 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
+import { BranchPicker } from "./BranchPicker";
 import { FAILURES, TITLES } from "./labels";
 
 /** A Git action waiting for its dialog, with the status it was opened on. `next` chains a push after a commit. */
@@ -57,7 +57,7 @@ function describe({ kind, status }: Action, worktree: boolean, branch: string): 
     case "switch":
       return `Switch to ${branch || "another branch"}? ${worktree ? "This changes this worktree." : "All local threads share this checkout."} Conflicting changes will not be discarded.`;
     case "create-branch":
-      return "Create and switch from the current HEAD. Local threads share the checkout.";
+      return `Create and switch from the selected parent branch. ${worktree ? "This changes this worktree." : "Local threads share the checkout."} Conflicting changes will not be discarded.`;
     case "new-worktree":
       return "Start a new thread in a separate checkout. Uncommitted changes are not copied. This thread stays where it is.";
     case "commit":
@@ -192,10 +192,9 @@ export function ActionDialog({
   // while the dialog is open shows once Git is read again.
   const [branch, setBranch] = useState(status.branch ?? "");
   const branches = useGit((git) => git.status?.branches ?? status.branches);
-  const base =
-    kind === "new-worktree"
-      ? (status.branch ?? "HEAD")
-      : (["main", "master"].find((name) => status.branches.includes(name)) ?? "");
+  const [base, setBase] = useState(status.branch ?? "HEAD");
+  const baseBranches = status.branch === null ? ["HEAD", ...branches] : branches;
+  const prBase = ["main", "master"].find((name) => status.branches.includes(name)) ?? "";
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -212,10 +211,8 @@ export function ActionDialog({
         gitAction = { kind, branch };
         break;
       case "create-branch":
-        gitAction = { kind, branch: value("branch") };
-        break;
       case "new-worktree":
-        gitAction = { kind, branch: value("branch"), base: value("base") };
+        gitAction = { kind, branch: value("branch"), base };
         break;
       case "remove-worktree":
         gitAction = { kind, force };
@@ -268,31 +265,18 @@ export function ActionDialog({
       {cwd} · {status.branch ?? "Detached HEAD"}
     </p>
   );
-  const branchItems = branches.map((name) => ({ value: name, label: name }));
   const fields = (
     <>
       {kind === "switch" ? (
         <Field id={`${id}-switch`} label="Branch">
-          <Select
-            items={branchItems}
+          <BranchPicker
+            id={`${id}-switch`}
+            label="Git branch"
+            branches={branches}
             value={branch}
             disabled={pending}
-            onValueChange={(chosen) => {
-              if (chosen !== null) setBranch(chosen);
-            }}
-          >
-            <SelectTrigger id={`${id}-switch`} aria-label="Git branch" className="w-full">
-              <GitBranch aria-hidden />
-              <SelectValue placeholder="Choose a branch" />
-            </SelectTrigger>
-            <SelectContent>
-              {branchItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onValueChange={setBranch}
+          />
         </Field>
       ) : null}
       {kind === "create-branch" || kind === "new-worktree" ? (
@@ -333,14 +317,27 @@ export function ActionDialog({
           </Field>
         </>
       ) : null}
-      {kind === "new-worktree" || kind === "create-pr" ? (
+      {kind === "create-branch" || kind === "new-worktree" ? (
+        <Field id={`${id}-base`} label={kind === "create-branch" ? "Parent branch" : "Base branch"}>
+          <BranchPicker
+            id={`${id}-base`}
+            label={kind === "create-branch" ? "Parent branch" : "Base branch"}
+            name="base"
+            branches={baseBranches}
+            value={base}
+            disabled={pending}
+            onValueChange={setBase}
+          />
+        </Field>
+      ) : null}
+      {kind === "create-pr" ? (
         <Field id={`${id}-base`} label="Base branch">
           <Input
             id={`${id}-base`}
             name="base"
             required
             maxLength={250}
-            defaultValue={base}
+            defaultValue={prBase}
             autoComplete="off"
             spellCheck={false}
             disabled={pending}

@@ -1588,6 +1588,7 @@ export class Workspace {
       activity: activityOf(thread),
       unread: this.unread.has(id),
       hasDraft: (row?.draft.trim() ?? "") !== "" || (row?.hasImages ?? false),
+      worktree: this.worktrees.forThread(id) !== undefined,
       // pi saves a name in the session file, which it writes with the first reply.
       canRename:
         summary !== undefined ||

@@ -13,6 +13,7 @@ function thread(id: string, extra: Partial<SidebarThread> = {}): SidebarThread {
     unread: false,
     hasDraft: false,
     canRename: true,
+    worktree: false,
     ...extra,
   };
 }
@@ -33,6 +34,13 @@ describe("keepUnchanged", () => {
     expect(next[0]!.threads[1]).not.toBe(previous[0]!.threads[1]);
     expect(next[0]!.threads[1]!.activity).toBe("working");
     expect(next[1]).toBe(previous[1]);
+  });
+
+  test("replaces a row when its worktree ownership changes", () => {
+    const previous = [project(1, [thread("a", { worktree: true })])];
+    const next = keepUnchanged(previous, [project(1, [thread("a")])]);
+    expect(next[0]!.threads[0]).not.toBe(previous[0]!.threads[0]);
+    expect(next[0]!.threads[0]!.worktree).toBe(false);
   });
 
   test("replaces a project whose threads moved, or that collapsed", () => {

@@ -15,6 +15,7 @@ function thread(id: string, updatedAt: number, extra: Partial<SidebarThread> = {
     unread: false,
     hasDraft: false,
     canRename: true,
+    worktree: false,
     ...extra,
   };
 }
