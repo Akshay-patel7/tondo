@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TERMINAL_HISTORY_BYTES, TERMINAL_HISTORY_LINES } from "../shared/terminal";
 import { HistoryFilter, TerminalHistory } from "./terminalHistory";
 
 describe("terminal replay", () => {
@@ -51,8 +52,31 @@ describe("bounded terminal history", () => {
     expect(history.tail(512)).toHaveLength(512);
   });
 
-  it("keeps at most 5000 lines including an unfinished last line", () => {
+  it("retains large command output with the default limits", () => {
     const history = new TerminalHistory();
+    const text = Array.from({ length: 12_000 }, (_, i) => `${i}: ${"x".repeat(90)}\n`).join("");
+    history.append(text);
+    expect(history.tail(Infinity).length).toBe(text.length);
+    expect(history.tail(Infinity).startsWith("0: ")).toBe(true);
+  });
+
+  it("bounds the default history by bytes even without newlines", () => {
+    const history = new TerminalHistory();
+    for (let i = 0; i < TERMINAL_HISTORY_BYTES / 4_096 + 1; i++) history.append("x".repeat(4_096));
+    expect(history.tail(Infinity)).toHaveLength(TERMINAL_HISTORY_BYTES);
+  });
+
+  it("bounds the default history by lines", () => {
+    const history = new TerminalHistory();
+    for (let i = 0; i < TERMINAL_HISTORY_LINES + 1_000; i++) history.append(`line ${i}\n`);
+    const text = history.tail(Infinity);
+    expect(text.split("\n").length).toBeLessThanOrEqual(TERMINAL_HISTORY_LINES);
+    expect(text.endsWith(`line ${TERMINAL_HISTORY_LINES + 999}\n`)).toBe(true);
+    expect(text.startsWith("line 0\n")).toBe(false);
+  });
+
+  it("honors a custom line limit including an unfinished last line", () => {
+    const history = new TerminalHistory(Infinity, 5_000);
     for (let i = 0; i < 10_000; i++) history.append(`line ${i}\n`);
     history.append("tail");
     const text = history.tail(Infinity);

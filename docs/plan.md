@@ -649,7 +649,7 @@ Verify first:
 Build:
 - Pty sessions in the host with the captured environment, the thread's folder as cwd, and `TERM=xterm-256color`.
 - xterm 6 in a resizable drawer.
-- History caps like T3's: 5,000 lines or 8 MiB in the host, 512 KiB in the renderer. Terminal query and response traffic gets stripped from kept history.
+- Shared history caps of 50,000 lines or 32 MiB for host retention and renderer replay. xterm also bounds scrollback by line count and a four-byte-cell text budget. Terminal query and response traffic gets stripped from kept history.
 - Closing a terminal kills its process group.
 - "Sign in to a provider" opens a terminal running pi, where you run `/login`.
 

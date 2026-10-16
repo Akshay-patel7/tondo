@@ -7,7 +7,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import {
-  RENDERER_HISTORY_BYTES,
+  TERMINAL_HISTORY_BYTES,
+  TERMINAL_HISTORY_LINES,
   type TerminalEvent,
   type TerminalState,
 } from "../../shared/terminal";
@@ -309,7 +310,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       cursorBlink: false,
       fontSize: 13,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-      scrollback: 1_000,
+      scrollback: TERMINAL_HISTORY_LINES,
       screenReaderMode: true,
       // For terminal.unicode, which takes Tondo's grapheme widths.
       allowProposedApi: true,
@@ -372,7 +373,7 @@ function TerminalView({ threadId, terminalId }: { threadId: string; terminalId: 
       // Bound retained text even for wide windows and four-byte characters.
       terminal.options.scrollback = Math.max(
         0,
-        Math.floor(RENDERER_HISTORY_BYTES / (cols * 4)) - rows,
+        Math.min(TERMINAL_HISTORY_LINES, Math.floor(TERMINAL_HISTORY_BYTES / (cols * 4))) - rows,
       );
       if (terminal.cols !== cols || terminal.rows !== rows) terminal.resize(cols, rows);
     };

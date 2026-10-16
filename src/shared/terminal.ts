@@ -1,7 +1,6 @@
-/** Raw history retained by the host; the page replays at most RENDERER_HISTORY_BYTES. */
-export const TERMINAL_HISTORY_BYTES = 8 * 1024 * 1024;
-export const TERMINAL_HISTORY_LINES = 5_000;
-export const RENDERER_HISTORY_BYTES = 512 * 1024;
+/** Shared host retention, renderer replay and scrollback limits. */
+export const TERMINAL_HISTORY_BYTES = 32 * 1024 * 1024;
+export const TERMINAL_HISTORY_LINES = 50_000;
 /** Unacknowledged output. The PTY pauses until xterm has parsed it. */
 export const TERMINAL_WINDOW_BYTES = 64 * 1024;
 export const TERMINAL_CHUNK_CHARS = 4_096;

@@ -5,8 +5,8 @@ import { promisify } from "node:util";
 import type { IPty } from "node-pty";
 import { PROTOCOL_VERSION, type HostMessage, type TerminalRequest } from "../shared/protocol";
 import {
-  RENDERER_HISTORY_BYTES,
   TERMINAL_CHUNK_CHARS,
+  TERMINAL_HISTORY_BYTES,
   TERMINAL_WINDOW_BYTES,
   type TerminalKind,
   type TerminalState,
@@ -92,7 +92,7 @@ export class Terminals {
         this.detach(session);
         session.attachment = message.attachment;
         if (!session.exited) session.pty?.resize(message.cols, message.rows);
-        this.enqueue(session, session.history.tail(RENDERER_HISTORY_BYTES));
+        this.enqueue(session, session.history.tail(TERMINAL_HISTORY_BYTES));
         this.pump(session);
         break;
       }

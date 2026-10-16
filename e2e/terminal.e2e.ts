@@ -145,6 +145,111 @@ test("a real shell runs in the thread folder, resizes, survives reload and close
   expect(errors).toEqual([]);
 });
 
+test("large output stays available to copy after resizing, switching threads and reloading", async () => {
+  const { app, page } = tondo;
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  const padding = "x".repeat(64);
+  await command(
+    `awk 'BEGIN { for (i=0; i<12000; i++) printf "TONDO_LINE_%05d ${padding}\\n", i; printf "TONDO_LARGE_%s\\n", "DONE" }'`,
+  );
+  await expect(output()).toContainText("TONDO_LARGE_DONE");
+
+  const scrollToStart = async () => {
+    await page.locator(".xterm-screen").hover();
+    const scrollbar = page.locator(".xterm .scrollbar.vertical");
+    const track = (await scrollbar.boundingBox())!;
+    const thumb = (await scrollbar.locator(".slider").boundingBox())!;
+    await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(thumb.x + thumb.width / 2, track.y, { steps: 5 });
+    await page.mouse.up();
+    await expect(output()).toContainText("TONDO_LINE_00000");
+  };
+  await scrollToStart();
+  await page.screenshot({ path: "test-results/terminal-large-output-top.png" });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1_440, 900));
+  await page.waitForFunction(() => window.innerWidth === 1_440);
+  await scrollToStart();
+
+  await composer(page).fill("Keep terminal history");
+  await composer(page).press("ControlOrMeta+n");
+  await waitForPi(page);
+  await threads(page).locator("li > button[title]:not([aria-label]):not([aria-current])").click();
+  await expect(output()).toContainText("TONDO_LARGE_DONE");
+  await scrollToStart();
+  await page.reload();
+  await expect(output()).toContainText("TONDO_LARGE_DONE");
+  await scrollToStart();
+
+  // xterm has a Select All shortcut on macOS only. Exercise the full
+  // terminal-to-composer clipboard path there; retention is checked on both OSes.
+  if (process.platform !== "darwin") return;
+  await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+    const state = globalThis as typeof globalThis & {
+      terminalClipboard?: Electron.ClipboardItem[];
+    };
+    state.terminalClipboard = await Promise.all(
+      (await clipboard.read())
+        .filter((item) => item.types.length > 0)
+        .map(
+          async (item) =>
+            new ClipboardItem(
+              Object.fromEntries(
+                await Promise.all(item.types.map(async (type) => [type, await item.getType(type)])),
+              ),
+            ),
+        ),
+    );
+    await clipboard.writeText("");
+  });
+  try {
+    const input = page.locator(".xterm-helper-textarea");
+    await input.focus();
+    await input.press("Meta+a");
+    await input.press("Meta+c");
+    await expect
+      .poll(() =>
+        app.evaluate(
+          async ({ clipboard }) =>
+            (await clipboard.readText()).match(/TONDO_LINE_\d{5}/g)?.length ?? 0,
+        ),
+      )
+      .toBe(12_000);
+    expect(
+      await app.evaluate(async ({ clipboard }, linePadding) => {
+        const lines = (await clipboard.readText())
+          .split(/\r?\n/)
+          .filter((line) => /^TONDO_LINE_\d{5} /.test(line));
+        return lines.every(
+          (line, i) => line === `TONDO_LINE_${String(i).padStart(5, "0")} ${linePadding}`,
+        );
+      }, padding),
+    ).toBe(true);
+    await composer(page).fill("");
+    await composer(page).focus();
+    await page.keyboard.press("Meta+v");
+    await expect
+      .poll(() =>
+        composer(page).evaluate(
+          (element) => element.textContent?.match(/TONDO_LINE_\d{5}/g)?.length ?? 0,
+        ),
+      )
+      .toBe(12_000);
+    await expect(composer(page)).toContainText(`TONDO_LINE_00000 ${padding}`);
+    await expect(composer(page)).toContainText(`TONDO_LINE_11999 ${padding}`);
+    await page.screenshot({ path: "test-results/terminal-large-output-pasted.png" });
+  } finally {
+    await app.evaluate(async ({ clipboard }) => {
+      const state = globalThis as typeof globalThis & {
+        terminalClipboard?: Electron.ClipboardItem[];
+      };
+      if (state.terminalClipboard?.length) await clipboard.write(state.terminalClipboard);
+      else clipboard.clear();
+      delete state.terminalClipboard;
+    });
+  }
+});
+
 test("text inserted without a keydown, as by the emoji picker or dictation, reaches the shell", async () => {
   const { page } = tondo;
   await page.getByRole("button", { name: "Terminal", exact: true }).click();

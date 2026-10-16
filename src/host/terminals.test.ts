@@ -119,6 +119,38 @@ describe("terminal sessions", () => {
     await terminals.close(session.threadId);
   });
 
+  it("replays more than 512 KiB without dropping output or bypassing backpressure", async () => {
+    const { terminals, open, messages } = setup();
+    const session = await open();
+    const text = "large command output\r\n".repeat(40_000);
+    fake.data(text);
+    terminals.handle({ type: "terminal-attach", ...session, attachment: "a", cols: 80, rows: 24 });
+    expect(
+      messages.reduce(
+        (bytes, message) =>
+          bytes + (message.type === "terminal-output" ? Buffer.byteLength(message.data) : 0),
+        0,
+      ),
+    ).toBeLessThanOrEqual(TERMINAL_WINDOW_BYTES);
+    const replay: string[] = [];
+    // Acknowledging a chunk appends the next pending output to messages.
+    for (const message of messages) {
+      if (message.type !== "terminal-output") continue;
+      replay.push(message.data);
+      terminals.handle({
+        type: "terminal-ack",
+        ...session,
+        attachment: "a",
+        sequence: message.sequence,
+      });
+    }
+    expect(replay.join("").length).toBe(text.length);
+    expect(replay.join("") === text).toBe(true);
+    expect(fake.pause).toHaveBeenCalledOnce();
+    expect(fake.resume).toHaveBeenCalledOnce();
+    await terminals.close(session.threadId);
+  });
+
   it("keeps ownership and permits retry after cleanup fails", async () => {
     const { terminals, open, messages, groups } = setup();
     const session = await open();
