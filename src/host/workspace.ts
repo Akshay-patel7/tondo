@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { Git } from "./git";
+import { agentCheckout } from "./agentCheckout";
 import { GitCommands } from "./gitCommand";
 import { PiUpdatesService } from "./piUpdates";
 import { inside, missing, Worktrees } from "./worktrees";
@@ -910,7 +911,16 @@ export class Workspace {
     return {
       events: (events) => {
         const thread = current();
-        if (thread?.visible) this.send({ v, type: "events", threadId: thread.id, events });
+        if (thread?.visible) {
+          this.send({ v, type: "events", threadId: thread.id, events });
+          if (
+            events.some(
+              (event) =>
+                event.type === "tool_execution_start" || event.type === "tool_execution_end",
+            )
+          )
+            this.refreshGit();
+        }
       },
       reset: () => {
         const thread = current();
@@ -1070,8 +1080,13 @@ export class Workspace {
     if (generation !== this.gitGeneration || this.gitMutation) return;
     let status = null;
     let error = null;
+    let activity = null;
     try {
-      status = await this.git.status(this.checkout(this.row(id)), true, fresh);
+      const cwd = this.checkout(this.row(id));
+      status = await this.git.status(cwd, true, fresh);
+      const thread = this.live.get(id);
+      if (status.root && thread)
+        activity = await agentCheckout(this.git, cwd, status.root, thread.state);
     } catch (cause) {
       const worktree = this.worktrees.forThread(id);
       error =
@@ -1082,10 +1097,10 @@ export class Workspace {
             : String(cause);
     }
     if (generation !== this.gitGeneration || this.visibleId !== id || !this.gitConnected) return;
-    const json = JSON.stringify({ status, error });
+    const json = JSON.stringify({ status, error, activity });
     if (json !== this.lastGit) {
       this.lastGit = json;
-      this.send({ v, type: "git-status", threadId: id, status, error });
+      this.send({ v, type: "git-status", threadId: id, status, error, agentCheckout: activity });
     }
     this.gitTimer = setTimeout(() => {
       this.gitReading = this.gitReading.then(() => this.pollGit(id, generation, false));

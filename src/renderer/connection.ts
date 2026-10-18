@@ -5,7 +5,7 @@
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
 import type { PickedFiles } from "../shared/attachments";
-import type { GitAction, GitStatus } from "../shared/git";
+import type { AgentCheckout, GitAction, GitStatus } from "../shared/git";
 import { NO_PI_UPDATES, type PiUpdates } from "../shared/piUpdates";
 import type { CheckpointDiff, CheckpointTurn } from "../shared/checkpoints";
 import {
@@ -117,9 +117,12 @@ export const useCheckpoints = create<{
   diff: CheckpointDiff | null;
 }>()(() => ({ turns: [], shared: false, unavailable: null, id: 0, turn: null, diff: null }));
 
-export const useGit = create<{ status: GitStatus | null; error: string | null; busy: boolean }>()(
-  () => ({ status: null, error: null, busy: false }),
-);
+export const useGit = create<{
+  status: GitStatus | null;
+  error: string | null;
+  busy: boolean;
+  agentCheckout: AgentCheckout | null;
+}>()(() => ({ status: null, error: null, busy: false, agentCheckout: null }));
 export const usePiUpdates = create<PiUpdates>()(() => NO_PI_UPDATES);
 
 export function checkPiUpdates(manual = true): void {
@@ -164,7 +167,7 @@ function disconnectGit(): void {
       ),
     );
   gitRequests.clear();
-  useGit.setState({ status: null, error: null, busy: false });
+  useGit.setState({ status: null, error: null, busy: false, agentCheckout: null });
 }
 
 /** Each project folder's checkout as the host last read it, for the home page. */
@@ -443,7 +446,11 @@ function receive(message: HostMessage): void {
       break;
     case "git-status":
       if (message.threadId === shownId())
-        useGit.setState({ status: message.status, error: message.error });
+        useGit.setState({
+          status: message.status,
+          error: message.error,
+          agentCheckout: message.agentCheckout,
+        });
       break;
     case "git-result": {
       const pending = gitRequests.get(message.id);
@@ -465,7 +472,7 @@ function receive(message: HostMessage): void {
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) {
         extensionText = undefined;
-        useGit.setState({ status: null, error: null });
+        useGit.setState({ status: null, error: null, agentCheckout: null });
         setDraft(message.draft);
         useDraftImages.setState(message.images, true);
         closeSheet();

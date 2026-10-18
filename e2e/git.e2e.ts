@@ -200,6 +200,86 @@ function worktreePath(): string {
   return field.slice(9);
 }
 
+test("the header follows agent branch changes and labels external worktree activity without rerouting the thread", async () => {
+  const checkout = path.join(dir, "agent's worktree");
+  const release = path.join(dir, "release-agent");
+  const app = await start([
+    bashCall("git switch -c agent/local"),
+    reply("Local branch ready."),
+    bashCall(`git worktree add -b agent/topic ${JSON.stringify(checkout)}`),
+    bashCall(`cd ${JSON.stringify(checkout)} && pwd && ${waitForFileCommand(release)}`),
+    reply("Agent worktree used."),
+    bashCall(`git -C ${JSON.stringify(checkout)} switch -c agent/next`),
+    reply("Agent branch changed."),
+  ]);
+  let { page } = app;
+  const badge = () => page.locator("header").getByText(/^Agent worktree:/);
+  await send(page, "Make a local branch");
+  await expect(page.getByText("Local branch ready.", { exact: true })).toBeVisible();
+  await expectBranch(page, "agent/local");
+  await expect(badge()).toHaveCount(0);
+
+  await send(page, "Use an agent worktree");
+  await expect(badge()).toHaveText("Agent worktree: agent/topic");
+  await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
+  await expectBranch(page, "agent/local");
+  await expect(gitPill(page)).toContainText("Local");
+  await expect(badge().locator("..")).toHaveAttribute(
+    "title",
+    `Agent activity in ${checkout}. Terminal, Changes and Git actions still use ${project}.`,
+  );
+  await captureThemes(page, "agent-worktree-running");
+  writeFileSync(release, "");
+  await expect(page.getByText("Agent worktree used.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  expect(git(project, "branch", "--show-current")).toBe("agent/local");
+
+  await send(page, "Change the agent worktree branch");
+  await expect(page.getByText("Agent branch changed.", { exact: true })).toBeVisible();
+  await expect(badge()).toHaveText("Agent worktree: agent/next");
+  await expectBranch(page, "agent/local");
+  const menu = await gitMenu(page);
+  await expect(menu.getByRole("menuitem", { name: "Remove worktree", exact: true })).toHaveCount(0);
+  await closeGitMenu(page, menu);
+
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  const terminal = page.locator(".xterm-helper-textarea");
+  await expect(page.locator(".xterm-accessibility-tree")).toContainText("$");
+  await terminal.pressSequentially("pwd");
+  await terminal.press("Enter");
+  await expect(page.locator(".xterm-accessibility-tree")).toContainText(project);
+  await page.getByRole("button", { name: "Close terminal", exact: true }).click();
+
+  await page.getByRole("button", { name: "New thread in project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
+  await expect(badge()).toHaveCount(0);
+  await threads(page).locator('button[title="Make a local branch"]').click();
+  await expect(badge()).toHaveText("Agent worktree: agent/next");
+  await page.reload();
+  await waitForPi(page);
+  await expect(badge()).toHaveText("Agent worktree: agent/next");
+  await app.close();
+
+  const restartDir = path.join(dir, "restart");
+  mkdirSync(restartDir);
+  tondo = await launchWithPi({
+    workDir: restartDir,
+    profileDir: app.profileDir,
+    env,
+    script: { responses: [bashCall("pwd"), reply("Back in the thread checkout.")] },
+  });
+  page = tondo.page;
+  await waitForPi(page);
+  await expect(badge()).toHaveText("Agent worktree: agent/next");
+  await expectBranch(page, "agent/local");
+  await captureThemes(page, "agent-worktree-restored");
+  await send(page, "Use the thread checkout");
+  await expect(page.getByText("Back in the thread checkout.", { exact: true })).toBeVisible();
+  await expect(badge()).toHaveCount(0);
+  await expectBranch(page, "agent/local");
+  expect(existsSync(checkout)).toBe(true);
+});
+
 test("branch pickers search and create branches and worktrees from the chosen parent", async () => {
   git(project, "switch", "-c", "feature/parent");
   writeFileSync(path.join(project, "parent.txt"), "Only on the parent\n");

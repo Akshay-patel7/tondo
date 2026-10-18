@@ -1,4 +1,12 @@
-import { ArrowLeft, GitBranch, GitCompareArrows, PanelLeft, Search, Terminal } from "lucide-react";
+import {
+  ArrowLeft,
+  FolderGit2,
+  GitBranch,
+  GitCompareArrows,
+  PanelLeft,
+  Search,
+  Terminal,
+} from "lucide-react";
 import { useEffect, useId, type ReactNode } from "react";
 import type { ShortcutCommand } from "../../shared/settings";
 import {
@@ -150,6 +158,7 @@ function Breadcrumb({ project }: { project: string }) {
   const branch = useGit((git) =>
     git.status?.root ? (git.status.branch ?? "Detached HEAD") : null,
   );
+  const activity = useGit((git) => git.agentCheckout);
   return (
     <>
       <span
@@ -168,6 +177,16 @@ function Breadcrumb({ project }: { project: string }) {
           </span>
         </span>
       )}
+      {activity ? (
+        <Badge
+          variant="outline"
+          className="min-w-0 max-w-64 shrink"
+          title={`Agent activity in ${activity.root}. Terminal, Changes and Git actions still use ${project}.`}
+        >
+          <FolderGit2 aria-hidden />
+          <span className="truncate">Agent worktree: {activity.branch ?? "Detached HEAD"}</span>
+        </Badge>
+      ) : null}
     </>
   );
 }

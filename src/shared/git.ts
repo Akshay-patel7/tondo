@@ -54,8 +54,20 @@ export type GitCommand =
       action: GitAction;
     };
 
+/** A different checkout observed in the agent's tools, never a Git-action target. */
+export interface AgentCheckout {
+  readonly root: string;
+  readonly branch: string | null;
+}
+
 export type GitEvent =
-  | { type: "git-status"; threadId: string; status: GitStatus | null; error: string | null }
+  | {
+      type: "git-status";
+      threadId: string;
+      status: GitStatus | null;
+      error: string | null;
+      agentCheckout: AgentCheckout | null;
+    }
   | { type: "git-result"; threadId: string; id: number; error: string | null };
 
 /**
