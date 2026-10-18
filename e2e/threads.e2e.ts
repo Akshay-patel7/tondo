@@ -198,12 +198,17 @@ test("confirmed deletion removes only the selected JSONL and never returns throu
   await expect(threadRow(page, "Parser rewrite")).toBeVisible();
   expect(existsSync(selectedFile)).toBe(true);
   await threadRow(page, "Parser rewrite").click();
+  // The previous thread's pi is ready too. Wait for selection before the
+  // palette captures the ID of the thread it will delete.
+  await expect(heading(page)).toHaveText("Parser rewrite");
   await waitForPi(page);
   await page.keyboard.press("ControlOrMeta+k");
   const deletePalette = page.getByRole("dialog", { name: "Command palette" });
   await deletePalette.getByRole("combobox", { name: "Search" }).fill("Delete thread");
   await page.keyboard.press("Enter");
-  await expect(confirmation).toBeVisible();
+  await expect(
+    page.getByRole("alertdialog", { name: "Delete Parser rewrite?", exact: true }),
+  ).toBeVisible();
   await confirmation.getByRole("button", { name: "Delete thread", exact: true }).click();
   await expect.poll(() => threadTitles(page)).toEqual(["Second."]);
   expect(existsSync(selectedFile)).toBe(false);

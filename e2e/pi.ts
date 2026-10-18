@@ -66,11 +66,7 @@ export function launchWithPi({
         scriptPath,
       }),
     },
-    env: {
-      ...env,
-      TONDO_PI_ARGS: JSON.stringify([...PI_ARGS, ...piArgs]),
-      TONDO_FAUX_SCRIPT: scriptPath,
-    },
+    env: { ...env, TONDO_PI_ARGS: "[]" },
   });
 }
 
@@ -81,8 +77,9 @@ function shellQuote(value: string): string {
 /**
  * Installs `cli` the way Tondo finds pi: a `pi` command in `bin` with a node
  * beside it. Tondo runs `<that node> <cli.js> ...` and never runs `pi` itself,
- * and a packaged app ignores TONDO_PI_ARGS. So for a packaged app the node is
- * a script that adds the faux arguments and environment, then runs the real node.
+ * so the node is a script that adds the faux arguments and environment, then
+ * runs the real node. Keeping them in the saved install makes cold restarts
+ * offline too, even when launchTondo doesn't receive the original environment.
  */
 function installPi(
   cli: string,
@@ -93,25 +90,23 @@ function installPi(
   const pi = path.join(bin, "pi");
   const node = path.join(bin, "node");
   symlinkSync(cli, pi);
-  if (process.env.TONDO_E2E_EXECUTABLE) {
-    mkdirSync(faux.agentDir, { recursive: true });
-    writeFileSync(
-      node,
-      [
-        "#!/bin/sh",
-        `export PI_CODING_AGENT_DIR=${shellQuote(faux.agentDir)}`,
-        `export TONDO_FAUX_SCRIPT=${shellQuote(faux.scriptPath)}`,
-        'cli="$1"',
-        "shift",
-        `case "$cli" in */piUpdateProbe.js) exec ${shellQuote(process.execPath)} "$cli" "$@";; esac`,
-        `exec ${shellQuote(process.execPath)} "$cli" ${faux.args.map(shellQuote).join(" ")} "$@"`,
-        "",
-      ].join("\n"),
-    );
-    chmodSync(node, 0o755);
-  } else {
-    symlinkSync(process.execPath, node);
-  }
+  const packaged = Boolean(process.env.TONDO_E2E_EXECUTABLE);
+  if (packaged) mkdirSync(faux.agentDir, { recursive: true });
+  writeFileSync(
+    node,
+    [
+      "#!/bin/sh",
+      // Unpackaged pi uses the app profile's agent folder, including seeded sessions/settings.
+      ...(packaged ? [`export PI_CODING_AGENT_DIR=${shellQuote(faux.agentDir)}`] : []),
+      `export TONDO_FAUX_SCRIPT=${shellQuote(faux.scriptPath)}`,
+      'cli="$1"',
+      "shift",
+      `case "$cli" in */piUpdateProbe.js) exec ${shellQuote(process.execPath)} "$cli" "$@";; esac`,
+      `exec ${shellQuote(process.execPath)} "$cli" ${faux.args.map(shellQuote).join(" ")} "$@"`,
+      "",
+    ].join("\n"),
+  );
+  chmodSync(node, 0o755);
   return pi;
 }
 
@@ -138,8 +133,10 @@ export async function addProject({ app, page }: Tondo, folder: string): Promise<
 
 /** Waits until pi has started in the open project and takes prompts. */
 export async function waitForPi(page: Page): Promise<void> {
-  // The pickers show once pi has reported its model.
-  await expect(page.getByLabel("Model")).toBeVisible({ timeout: PI_START_TIMEOUT_MS });
+  // The picker also exists while pi starts or has no usable model.
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeEnabled({
+    timeout: PI_START_TIMEOUT_MS,
+  });
 }
 
 /** The composer's text box. Its label, "Message", is also part of "Send message". */

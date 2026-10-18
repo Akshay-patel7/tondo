@@ -127,11 +127,8 @@ test("keyboard alone reaches every part of a thread", async () => {
     await expectFocusRing(page);
     await shot(page, "03-transcript");
     const jump = page.getByRole("button", { name: "Jump to latest", exact: true });
-    // Chromium on Linux animates PageUp. A jump while that animation runs lands short of the end.
-    const scrolled = await scrollEnd(transcript);
     await page.keyboard.press("PageUp");
     await expect(jump).toBeVisible();
-    await scrolled.evaluate((ended) => ended.done);
     await expectFocused(page, transcript);
     await page.keyboard.press("Tab");
     await expectFocused(page, jump);
@@ -309,6 +306,48 @@ test("keyboard alone reaches every part of a thread", async () => {
     await page.keyboard.press("Enter");
     await expect(drawer).not.toBeAttached();
   });
+});
+
+test("PageUp, PageDown and End do not leave a scroll animation running after a jump", async () => {
+  const { page } = await launch([reply(words(3000))]);
+  // Exercise the compositor/main-thread race seen on slower CI runners.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+  await addProject(tondo!, project);
+  await waitForPi(page);
+  await send(page, "Tell me a long story.");
+  await expect(message(page, 1)).toContainText("word2999");
+  await waitForIdle(page);
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  const jump = page.getByRole("button", { name: "Jump to latest", exact: true });
+  await transcript.focus();
+  /* oxlint-disable eslint/no-await-in-loop -- each jump must complete before the next gesture. */
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.keyboard.press("PageUp");
+    await expect(jump).toBeVisible();
+    await page.keyboard.press("End");
+    await expect
+      .poll(() =>
+        transcript.evaluate((list) => list.scrollHeight - list.scrollTop - list.clientHeight),
+      )
+      .toBeLessThan(2);
+    await expect(jump).toBeHidden();
+  }
+  /* oxlint-enable eslint/no-await-in-loop */
+  await page.keyboard.press("Home");
+  await expect.poll(() => transcript.evaluate((list) => list.scrollTop)).toBe(0);
+  await page.keyboard.press("PageDown");
+  await expect.poll(() => transcript.evaluate((list) => list.scrollTop)).toBeGreaterThan(0);
+  await expect(jump).toBeVisible();
+  await jump.click();
+  await expect(transcript).toBeFocused();
+  await expect
+    .poll(() =>
+      transcript.evaluate((list) => list.scrollHeight - list.scrollTop - list.clientHeight),
+    )
+    .toBeLessThan(2);
+  await expect(jump).toBeHidden();
+  await shot(page, "scroll-jump-settled");
 });
 
 test("every control has an accessible name", async () => {
@@ -535,15 +574,6 @@ async function expectTerminalFocused(drawer: Locator): Promise<void> {
   await expect(drawer.locator(".xterm")).toHaveClass(/(^|\s)focus(\s|$)/);
 }
 
-/** A promise, in the page, that resolves when `scroller`'s next scroll ends. */
-function scrollEnd(scroller: Locator) {
-  return scroller.evaluateHandle((element) => ({
-    done: new Promise<void>((resolve) => {
-      element.addEventListener("scrollend", () => resolve(), { once: true });
-    }),
-  }));
-}
-
 /** Saves the window as test-results/keyboard/<name>.png. */
 async function shot(page: Page, name: string): Promise<void> {
   // Finish transitions first, or a toggle's 150 ms color change shows its old state.
@@ -679,6 +709,17 @@ async function expectListNamed(page: Page, picker: string): Promise<void> {
   await page.getByRole("combobox", { name: picker, exact: true }).click();
   const list = page.getByRole("listbox", { name: picker, exact: true });
   await expect(list).toBeVisible();
+  // Visibility precedes the opening focus transfer. Escape sent to the old
+  // focus can close the parent dialog instead of the picker's popup.
+  await expect
+    .poll(() =>
+      list.evaluate((element) =>
+        element
+          .closest('[data-slot="select-content"], [data-slot="combobox-content"]')
+          ?.contains(document.activeElement),
+      ),
+    )
+    .toBe(true);
   await page.keyboard.press("Escape");
   await expect(list).toBeHidden();
 }

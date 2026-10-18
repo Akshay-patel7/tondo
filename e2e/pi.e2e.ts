@@ -5,14 +5,16 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { hostPid, type Tondo } from "./launch";
+import { bringToFront, hostPid, launchTondo, type Tondo } from "./launch";
 import {
   addProject,
   bashCall,
   composer,
   launchWithPi,
   PI_START_TIMEOUT_MS,
+  reply,
   send,
+  waitForIdle,
   waitForPi,
 } from "./pi";
 import { allProcesses, piGroup, processesIn, reportProcesses } from "./processes";
@@ -33,6 +35,39 @@ test.afterEach(async () => {
   await tondo?.close();
   tondo = undefined;
   rmSync(workDir, { recursive: true, force: true });
+});
+
+test("a cold restart keeps the faux provider for newly created threads", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  tondo = await launchWithPi({
+    workDir,
+    profileDir,
+    script: { responses: [reply("Offline after restart.")] },
+  });
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(tondo.page);
+  await send(tondo.page, "Before restart");
+  await expect(tondo.page.getByText("Offline after restart.", { exact: true })).toBeVisible();
+  await waitForIdle(tondo.page);
+  const settings = readFileSync(path.join(profileDir, "settings.json"), "utf8");
+  await tondo.close();
+
+  // No original launch environment and no rewritten settings. This is how
+  // restart tests launch a saved profile, and it must still run offline.
+  tondo = await launchTondo({ profileDir });
+  await bringToFront(tondo);
+  const { page } = tondo;
+  await waitForPi(page);
+  await page.getByRole("button", { name: "New thread in project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
+  await waitForPi(page);
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveText("Faux 1");
+  await send(page, "After restart");
+  await expect(page.getByText("Offline after restart.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  expect(readFileSync(path.join(profileDir, "settings.json"), "utf8")).toBe(settings);
 });
 
 test("nothing pi started survives a host killed mid-turn", async () => {

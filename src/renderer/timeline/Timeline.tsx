@@ -170,9 +170,17 @@ export function Timeline() {
             event.shiftKey
           )
             return;
-          // Native keyboard scrolling animates through unmeasured rows.
-          // Anchor corrections would interrupt it before the requested end.
-          if (event.key === "Home") {
+          // Native PageUp/PageDown animations race React's anchor corrections
+          // and can keep scrolling after End or Jump to latest. Move one page
+          // without an animation, as Home and End do.
+          if (event.key === "PageUp" || event.key === "PageDown") {
+            event.preventDefault();
+            const node = event.currentTarget;
+            node.scrollBy({
+              top: node.clientHeight * (event.key === "PageUp" ? -1 : 1),
+              behavior: "instant",
+            });
+          } else if (event.key === "Home") {
             event.preventDefault();
             followingNow.current = false;
             setFollowing(false);
