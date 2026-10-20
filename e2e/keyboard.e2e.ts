@@ -294,13 +294,19 @@ test("keyboard alone reaches every part of a thread", async () => {
     expect(await reach(page, close, "Shift+Tab", 4), "Shift+Tab leaves the terminal").toBe(true);
     await expectFocusRing(page);
     await shot(page, "16-close-terminal");
+    const sharing = drawer.getByRole("switch", { name: "Share terminal output with chat" });
+    await page.keyboard.press("Shift+Tab");
+    await expectFocused(page, sharing);
+    await shot(page, "17-share-with-chat");
     const separator = drawer.getByRole("separator", { name: "Resize terminal" });
     await page.keyboard.press("Shift+Tab");
     await expectFocused(page, separator);
     await expect
       .poll(() => separator.locator("span").evaluate((grip) => getComputedStyle(grip).opacity))
       .toBe("1");
-    await shot(page, "17-resize-separator");
+    await shot(page, "18-resize-separator");
+    await page.keyboard.press("Tab");
+    await expectFocused(page, sharing);
     await page.keyboard.press("Tab");
     await expectFocused(page, close);
     await page.keyboard.press("Enter");
