@@ -581,7 +581,9 @@ test("thread search ignores case in ticket identifiers and opens the matching th
   const { page } = await startThread("Fix ENG-4051", "Done.");
   await page.keyboard.press("ControlOrMeta+n");
   await expect(heading(page)).toHaveText("New thread");
-  await threads(page).getByRole("button", { name: /^Search\b/ }).click();
+  await threads(page)
+    .getByRole("button", { name: /^Search\b/ })
+    .click();
   const palette = page.getByRole("dialog", { name: "Command palette" });
   const search = palette.getByRole("combobox", { name: "Search" });
   const result = palette.getByRole("option");
