@@ -388,6 +388,19 @@ describe("prompt", () => {
     expect(listener.restore).not.toHaveBeenCalled();
   });
 
+  it("sends terminal context with the prompt but restores only the user's text on rejection", async () => {
+    await thread.prompt("look", "followUp", [], "\n\nterminal output");
+    expect(pi.pi.rpc.request).toHaveBeenLastCalledWith(
+      { type: "prompt", message: "look\n\nterminal output", streamingBehavior: "followUp" },
+      Number.POSITIVE_INFINITY,
+    );
+    pi.pi.rpc.request.mockRejectedValueOnce(new Error("rejected"));
+    await expect(thread.prompt("retry", "steer", [], "\n\nterminal output")).rejects.toThrow(
+      "rejected",
+    );
+    expect(listener.restore).toHaveBeenCalledExactlyOnceWith("retry");
+  });
+
   it("refuses pi's built-in commands and puts the text back in the composer", async () => {
     await expect(thread.prompt("/name x", "steer")).rejects.toThrow(
       "Tondo doesn't send pi's /name to pi.",

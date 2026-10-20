@@ -14,6 +14,7 @@ import {
 import { LoginTyper } from "./loginTyper";
 import { drainGroup } from "./processGroup";
 import { TerminalHistory } from "./terminalHistory";
+import { TerminalContext, type TerminalContextSend } from "./terminalContext";
 
 export interface TerminalLaunch {
   command: string;
@@ -46,12 +47,14 @@ const exec = promisify(execFile);
 export class Terminals {
   private readonly sessions = new Map<string, Session>();
   private readonly groups = new Set<number>();
+  private readonly contexts = new Map<string, TerminalContext>();
   private stopping = false;
 
   private readonly launch: (threadId: string, kind: TerminalKind) => Promise<TerminalLaunch>;
   private readonly send: (message: HostMessage) => void;
   private readonly reportGroups: (pgids: number[]) => void;
   private readonly ended: ((threadId: string, kind: TerminalKind) => void) | undefined;
+  private readonly readSharing: (threadId: string) => boolean;
 
   /** `ended` hears of each terminal whose process exits, unless Tondo is stopping its terminals. */
   constructor(
@@ -59,11 +62,13 @@ export class Terminals {
     send: (message: HostMessage) => void,
     reportGroups: (pgids: number[]) => void,
     ended?: (threadId: string, kind: TerminalKind) => void,
+    readSharing: (threadId: string) => boolean = () => false,
   ) {
     this.launch = launch;
     this.send = send;
     this.reportGroups = reportGroups;
     this.ended = ended;
+    this.readSharing = readSharing;
   }
 
   has(threadId: string): boolean {
@@ -73,6 +78,44 @@ export class Terminals {
   greet(): void {
     this.detachAll();
     for (const session of this.sessions.values()) this.publish(session);
+    for (const threadId of this.contexts.keys()) this.publishContext(threadId);
+  }
+
+  private context(threadId: string): TerminalContext {
+    let context = this.contexts.get(threadId);
+    if (!context) {
+      context = new TerminalContext(this.readSharing(threadId));
+      this.contexts.set(threadId, context);
+    }
+    return context;
+  }
+
+  publishContext(threadId: string): void {
+    const context = this.context(threadId);
+    this.send({
+      v,
+      type: "terminal-context",
+      threadId,
+      enabled: context.enabled,
+      pending: context.pending,
+    });
+  }
+
+  takeContext(threadId: string): TerminalContextSend | null {
+    const send = this.context(threadId).take();
+    if (send) this.publishContext(threadId);
+    return send;
+  }
+
+  restoreContext(threadId: string, send: TerminalContextSend): void {
+    // Deleted threads must not be resurrected by a late prompt rejection.
+    this.contexts.get(threadId)?.restore(send);
+    if (this.contexts.has(threadId)) this.publishContext(threadId);
+  }
+
+  forgetContext(threadId: string): void {
+    if (this.contexts.delete(threadId))
+      this.send({ v, type: "terminal-context", threadId, enabled: false, pending: false });
   }
 
   detachAll(): void {
@@ -80,6 +123,25 @@ export class Terminals {
   }
 
   handle(message: TerminalRequest): void | Promise<void> {
+    if (message.type === "terminal-sharing") {
+      this.context(message.threadId).setEnabled(message.enabled);
+      this.publishContext(message.threadId);
+      return;
+    }
+    if (message.type === "terminal-discard") {
+      this.context(message.threadId).discard();
+      this.publishContext(message.threadId);
+      return;
+    }
+    if (message.type === "terminal-preview") {
+      this.send({
+        v,
+        type: "terminal-preview",
+        threadId: message.threadId,
+        ...this.context(message.threadId).preview(),
+      });
+      return;
+    }
     if (message.type === "terminal-open")
       return this.open(message.threadId, message.kind, message.provider);
     const session = this.sessions.get(message.threadId);
@@ -143,6 +205,7 @@ export class Terminals {
     if (kind === "login" && provider !== undefined)
       session.typer = new LoginTyper(provider, (data) => session.pty?.write(data));
     this.sessions.set(threadId, session);
+    if (kind === "shell") this.context(threadId).newShell();
     this.publish(session);
     session.started = this.start(session);
     return session.started;
@@ -173,6 +236,13 @@ export class Terminals {
       pty.onData((data) => {
         session.history.append(data);
         session.typer?.output(data);
+        if (session.state.kind === "shell" && this.sessions.get(session.threadId) === session) {
+          const context = this.context(session.threadId);
+          const pending = context.pending;
+          context.append(data);
+          // Only availability changes reach React, never the output stream.
+          if (pending !== context.pending) this.publishContext(session.threadId);
+        }
         if (session.attachment !== null) {
           this.enqueue(session, data);
           this.pump(session);

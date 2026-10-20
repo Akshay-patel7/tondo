@@ -90,6 +90,14 @@ Branch changes are blocked while pi is starting or working in the same checkout,
 
 **Delete thread** asks for confirmation, then removes the thread, its saved draft and its associated pi session files. The session no longer appears in pi's `/resume` picker. Stop active work before deleting. For a managed worktree, use **Remove worktree** first, then delete the retained thread separately; Delete never removes a checkout or branch.
 
+## Sharing terminal output
+
+Turn on **Share with chat** in a thread's terminal header to attach new shell text to your next chat message. Sharing starts off and the choice is saved per thread. It captures only output received while sharing is on, not earlier terminal history. Running commands never sends a message by itself, and chat still works if you run none.
+
+The composer shows a pending attachment with **Preview** and **Discard**. Preview is a snapshot; output arriving before you send is included too. Discard clears the pending text but leaves sharing on. Turning sharing off clears it too. Check for secrets before sending. Tondo strips terminal controls and keeps only the latest 16,384 characters, with a notice when earlier text was omitted. It captures shell text, including prompts, rather than tracking command completion or exit codes.
+
+Only new output accompanies each message. A rejected send returns its attachment for retry. Slash commands leave the attachment pending, and provider sign-in terminals never contribute output. Pending text survives thread switches and page reloads but stays in memory, so quitting the app drops it.
+
 ## Known limits
 
 Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-extension-ui.md)):

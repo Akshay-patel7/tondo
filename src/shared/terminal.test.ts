@@ -4,6 +4,10 @@ import type { TerminalCommand } from "./terminal";
 const v = PROTOCOL_VERSION;
 const session = { threadId: "thread", terminalId: "pty" };
 const commands: TerminalCommand[] = [
+  { type: "terminal-sharing", threadId: "thread", enabled: true },
+  { type: "terminal-sharing", threadId: "thread", enabled: false },
+  { type: "terminal-preview", threadId: "thread" },
+  { type: "terminal-discard", threadId: "thread" },
   { type: "terminal-open", threadId: "thread", kind: "shell" },
   { type: "terminal-open", threadId: "thread", kind: "login" },
   { type: "terminal-close", ...session },
@@ -17,6 +21,11 @@ it.each(commands)("validates $type and rejects extra fields", (command) => {
   expect(parseClientMessage({ v, ...command })).toEqual({ ok: true, message: { v, ...command } });
   expect(parseClientMessage({ v, ...command, cwd: "/tmp" }).ok).toBe(false);
   expect(parseClientMessage({ v, ...command, threadId: null }).ok).toBe(false);
+});
+it.each([null, undefined, "true", 1, {}, []])("rejects invalid sharing flag %s", (enabled) => {
+  expect(parseClientMessage({ v, type: "terminal-sharing", threadId: "thread", enabled }).ok).toBe(
+    false,
+  );
 });
 it.each([0, -1, 1.5, Infinity, NaN, 501, "80"])("rejects unsafe columns %s", (cols) => {
   expect(parseClientMessage({ v, type: "terminal-resize", ...session, cols, rows: 24 }).ok).toBe(

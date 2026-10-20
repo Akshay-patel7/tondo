@@ -463,8 +463,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 24, which lets the page mark a thread unread", () => {
-    expect(PROTOCOL_VERSION).toBe(24);
+  it("speaks version 25, which adds terminal sharing and previews", () => {
+    expect(PROTOCOL_VERSION).toBe(25);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

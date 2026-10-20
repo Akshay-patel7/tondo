@@ -34,7 +34,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -561,6 +561,9 @@ export function parseClientMessage(data: unknown): ParseResult {
         action,
       });
     }
+    case "terminal-sharing":
+    case "terminal-preview":
+    case "terminal-discard":
     case "terminal-open":
     case "terminal-close":
     case "terminal-attach":
@@ -882,6 +885,13 @@ function parseTerminalMessage(
   const bad = badThreadId(type, threadId);
   if (bad) return invalid(bad);
   const base = { v: PROTOCOL_VERSION, threadId: threadId as string } as const;
+  if (type === "terminal-sharing") {
+    if (typeof message.enabled !== "boolean")
+      return invalid("terminal-sharing: enabled must be true or false");
+    return exactly(message, { ...base, type, enabled: message.enabled });
+  }
+  if (type === "terminal-preview" || type === "terminal-discard")
+    return exactly(message, { ...base, type });
   if (type === "terminal-open") {
     if (kind !== "shell" && kind !== "login") return invalid("terminal-open: invalid kind");
     if (provider === undefined) return exactly(message, { ...base, type, kind });

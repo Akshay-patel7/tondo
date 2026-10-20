@@ -56,6 +56,7 @@ export const MIGRATIONS: readonly string[] = [
   `ALTER TABLE threads ADD COLUMN visible INTEGER NOT NULL DEFAULT 1;`,
   // NULL identifies legacy worktrees created under the app data folder.
   `ALTER TABLE worktrees ADD COLUMN root TEXT;`,
+  `ALTER TABLE threads ADD COLUMN share_terminal_output INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 /** Brings `db` up to date with `migrations`, one transaction per migration. */
@@ -107,6 +108,7 @@ export interface StoredThread {
   /** What you were writing in the composer. */
   readonly draft: string;
   readonly hasImages: boolean;
+  readonly shareTerminalOutput: boolean;
   /** Latched once meaningful user input makes a new draft worth listing. */
   readonly visible: boolean;
 }
@@ -150,6 +152,7 @@ interface ThreadRow {
   archived: number;
   draft: string;
   has_images: number;
+  share_terminal_output: number;
   visible: number;
 }
 
@@ -172,6 +175,7 @@ function toThread(row: ThreadRow): StoredThread {
     archived: row.archived === 1,
     draft: row.draft,
     hasImages: row.has_images === 1,
+    shareTerminalOutput: row.share_terminal_output === 1,
     visible: row.visible === 1,
   };
 }
@@ -272,6 +276,10 @@ export class Store {
 
   setPinned(threadId: string, pinned: boolean): void {
     this.update(threadId, "pinned", pinned ? 1 : 0);
+  }
+
+  setTerminalSharing(threadId: string, enabled: boolean): void {
+    this.update(threadId, "share_terminal_output", enabled ? 1 : 0);
   }
 
   /** Legacy metadata compatibility; no renderer action changes this flag. */
@@ -382,7 +390,7 @@ export class Store {
 
   private update(
     threadId: string,
-    column: "session_file" | "pinned" | "archived" | "draft" | "visible",
+    column: "session_file" | "pinned" | "archived" | "draft" | "visible" | "share_terminal_output",
     value: string | number,
   ): void {
     const { changes } = this.db

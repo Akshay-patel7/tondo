@@ -21,6 +21,7 @@ import {
 import type { DraftImage } from "../../shared/images";
 import { addToast } from "../toasts/store";
 import { ImagePreview } from "./ImagePreview";
+import { TerminalAttachment } from "../terminal/TerminalSharing";
 import { appendFilePaths } from "./filePaths";
 import { runBuiltin } from "../slash/builtins";
 import { searchSlash, slashItems, slashQuery, type SlashItem } from "../slash/menu";
@@ -334,6 +335,7 @@ export function Composer({ hidden }: { hidden: boolean }) {
           onPick={pickFile}
         />
       ) : null}
+      {threadId ? <TerminalAttachment key={threadId} threadId={threadId} /> : null}
       {images.length > 0 ? (
         <div role="group" aria-label="Attached images" className="flex flex-wrap gap-3 px-4 pt-3">
           {images.map((image) => (

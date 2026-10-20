@@ -60,6 +60,65 @@ const login = (terminals: Terminals, provider?: string) =>
 const writes = () => fake.write.mock.calls.map(([data]: unknown[]) => data);
 
 describe("terminal sessions", () => {
+  it("captures opted-in shell output without streaming it through React, and keeps it after close", async () => {
+    const { terminals, messages, open } = setup();
+    const session = await open();
+    fake.data("not shared\n");
+    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
+    fake.data("first\n");
+    fake.data("second\n");
+    expect(messages.filter((message) => message.type === "terminal-context")).toEqual([
+      expect.objectContaining({ enabled: true, pending: false }),
+      expect.objectContaining({ enabled: true, pending: true }),
+    ]);
+    terminals.handle({ type: "terminal-preview", threadId: "thread" });
+    expect(messages.at(-1)).toMatchObject({ type: "terminal-preview", text: "first\nsecond\n" });
+    terminals.detachAll();
+    fake.data("detached\n");
+    await terminals.close(session.threadId);
+    const send = terminals.takeContext("thread")!;
+    expect(send.text).toBe("first\nsecond\ndetached\n");
+    expect(terminals.takeContext("thread")).toBeNull();
+    terminals.restoreContext("thread", send);
+    terminals.greet();
+    expect(messages.at(-1)).toMatchObject({
+      type: "terminal-context",
+      enabled: true,
+      pending: true,
+    });
+    terminals.handle({ type: "terminal-discard", threadId: "thread" });
+    expect(terminals.takeContext("thread")).toBeNull();
+  });
+
+  it("never captures sign-in output, even when sharing is on for that thread", async () => {
+    const { terminals, messages } = setup();
+    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
+    await login(terminals);
+    fake.data("SYNTHETIC_LOGIN_SECRET\n");
+    terminals.handle({ type: "terminal-preview", threadId: "thread" });
+    expect(messages.at(-1)).toMatchObject({ type: "terminal-preview", text: "" });
+    expect(terminals.takeContext("thread")).toBeNull();
+    await terminals.close("thread");
+  });
+
+  it("isolates output by thread and reads the saved opt-in when first opened", async () => {
+    const terminals = new Terminals(
+      async () => launch,
+      () => {},
+      vi.fn(),
+      undefined,
+      (id) => id === "shared",
+    );
+    await terminals.handle({ type: "terminal-open", threadId: "shared", kind: "shell" });
+    const sharedOutput = fake.data;
+    await terminals.handle({ type: "terminal-open", threadId: "private", kind: "shell" });
+    fake.data("private\n");
+    sharedOutput("shared\n");
+    expect(terminals.takeContext("private")).toBeNull();
+    expect(terminals.takeContext("shared")?.text).toBe("shared\n");
+    await terminals.closeAll();
+  });
+
   it("launches in the chosen folder and ignores stale terminal writes", async () => {
     const { terminals, open } = setup();
     const session = await open();

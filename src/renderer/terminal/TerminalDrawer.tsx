@@ -18,6 +18,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { readTerminal } from "./store";
 import { GraphemeUnicode } from "./unicode";
+import { TerminalSharing } from "./TerminalSharing";
 
 type ThemeColor = Exclude<keyof ITheme, "extendedAnsi">;
 
@@ -250,6 +251,7 @@ export default function TerminalDrawer({
         <span role="status" className="ml-auto flex shrink-0 items-center">
           {status ? <Badge variant={failed ? "destructive" : "secondary"}>{status}</Badge> : null}
         </span>
+        {session.kind === "shell" ? <TerminalSharing threadId={threadId} /> : null}
         <Tooltip>
           <TooltipTrigger
             render={
