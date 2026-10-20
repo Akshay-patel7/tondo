@@ -34,7 +34,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -243,7 +243,7 @@ export interface SidebarThread {
   /** Deprecated persisted metadata; legacy sessions remain listed for deletion. */
   readonly archived: boolean;
   readonly activity: ThreadActivity;
-  /** Whether pi finished or failed in the thread since you last looked at it. */
+  /** Whether pi finished off screen, or you marked the thread unread, since you last opened it. */
   readonly unread: boolean;
   /** Whether the thread's composer holds text you haven't sent. */
   readonly hasDraft: boolean;
@@ -295,6 +295,7 @@ export type ClientMessage = Versioned<
   | { type: "open-thread"; threadId: string }
   | { type: "rename-thread"; threadId: string; name: string }
   | { type: "pin-thread"; threadId: string; pinned: boolean }
+  | { type: "mark-unread"; threadId: string }
   | { type: "delete-thread"; threadId: string }
   /** What a thread's composer holds, which Tondo keeps across restarts. */
   | { type: "set-draft"; threadId: string; text: string; userInput?: boolean }
@@ -589,6 +590,7 @@ export function parseClientMessage(data: unknown): ParseResult {
       return exactly(message, { v, type, projectId: projectId as number, collapsed });
     }
     case "open-thread":
+    case "mark-unread":
     case "delete-thread":
     case "stop":
     case "dequeue":

@@ -1080,6 +1080,50 @@ describe("delete-thread", () => {
   });
 });
 
+describe("marking threads unread", () => {
+  beforeEach(() => {
+    const { id: projectId } = store.addProject(dir, 1);
+    addThread(projectId, "thread-a");
+    addThread(projectId, "thread-b");
+  });
+
+  it.each(["thread-a", "thread-b"])(
+    "marks %s unread without opening it, then clears the marker when opened",
+    async (id) => {
+      const current = await openThread("thread-a");
+      const marked = next((message) => message.type === "sidebar");
+      workspace.handle({ v, type: "mark-unread", threadId: id });
+      expect(await marked).toMatchObject({
+        projects: [
+          { threads: expect.arrayContaining([expect.objectContaining({ id, unread: true })]) },
+        ],
+      });
+      expect(store.ui().openThread).toBe("thread-a");
+      expect(threads).toHaveLength(1);
+
+      sent.length = 0;
+      const read = next((message) => message.type === "sidebar");
+      workspace.handle({ v, type: "open-thread", threadId: id });
+      expect(await read).toMatchObject({
+        projects: [
+          { threads: expect.arrayContaining([expect.objectContaining({ id, unread: false })]) },
+        ],
+      });
+      if (id === "thread-a") {
+        expect(sent.some((message) => message.type === "snapshot")).toBe(false);
+        expect(current.open).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
+  it("rejects an unknown thread without starting pi", async () => {
+    const error = next(isError);
+    workspace.handle({ v, type: "mark-unread", threadId: "missing" });
+    expect(await error).toMatchObject({ message: "Tondo has no thread missing." });
+    expect(threads).toHaveLength(0);
+  });
+});
+
 describe("editorText from an extension", () => {
   beforeEach(() => {
     const { id: projectId } = store.addProject(dir, 1);

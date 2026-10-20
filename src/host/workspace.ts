@@ -371,6 +371,13 @@ export class Workspace {
           this.sendSidebar();
         });
         break;
+      case "mark-unread":
+        this.run(() => {
+          this.row(message.threadId);
+          this.unread.add(message.threadId);
+          this.sendSidebar();
+        });
+        break;
       case "delete-thread":
         this.run(() => this.deleteThread(message.threadId));
         break;
@@ -832,7 +839,10 @@ export class Workspace {
 
   /** Puts a thread on screen, starting its pi if it isn't running. */
   private open(id: string): void {
-    if (id === this.visibleId && this.live.has(id)) return;
+    if (id === this.visibleId && this.live.has(id)) {
+      if (this.unread.delete(id)) this.sendSidebar();
+      return;
+    }
     // Capture this before startThread registers a replacement for the visible pi.
     // Otherwise reopening that same thread mistakes its replacement for one we left.
     const previous = this.visibleThread();

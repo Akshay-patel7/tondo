@@ -714,7 +714,7 @@ export function newThread(projectId: number): void {
 }
 
 export function openThread(id: string): void {
-  if (id !== shownId()) send({ v, type: "open-thread", threadId: id });
+  send({ v, type: "open-thread", threadId: id });
 }
 
 export function renameThread(id: string, name: string): void {
@@ -723,6 +723,10 @@ export function renameThread(id: string, name: string): void {
 
 export function pinThread(id: string, pinned: boolean): void {
   send({ v, type: "pin-thread", threadId: id, pinned });
+}
+
+export function markThreadUnread(id: string): void {
+  send({ v, type: "mark-unread", threadId: id });
 }
 
 export function deleteThread(id: string): void {

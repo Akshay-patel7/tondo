@@ -7,6 +7,7 @@ import {
   Ellipsis,
   Folder,
   GitBranch,
+  Mail,
   PanelLeft,
   Pen,
   PencilLine,
@@ -34,6 +35,7 @@ import { newThreadHere } from "../commands";
 import {
   addProject,
   deleteThread,
+  markThreadUnread,
   newThread,
   openThread,
   pinThread,
@@ -700,7 +702,7 @@ const ACTIVITY: Record<Exclude<ThreadActivity, "idle">, { label: string; glyph: 
 
 const UNREAD = { label: "Unread", glyph: <StatusDot tone="foreground" /> };
 
-/** What a thread's pi is doing, or that it finished while you were away. It doesn't pulse. */
+/** What a thread's pi is doing, or that the thread is unread. It doesn't pulse. */
 function ActivityDot({ activity, unread }: { activity: ThreadActivity; unread: boolean }) {
   const state = activity !== "idle" ? ACTIVITY[activity] : unread ? UNREAD : null;
   return (
@@ -753,6 +755,10 @@ function ThreadRow({
       <DropdownMenuItem onClick={() => pinThread(thread.id, !thread.pinned)}>
         {thread.pinned ? <PinOff aria-hidden /> : <Pin aria-hidden />}
         {thread.pinned ? "Unpin" : "Pin"}
+      </DropdownMenuItem>
+      <DropdownMenuItem disabled={thread.unread} onClick={() => markThreadUnread(thread.id)}>
+        <Mail aria-hidden />
+        Mark as unread
       </DropdownMenuItem>
       <DropdownMenuItem variant="destructive" onClick={() => onDelete(thread)}>
         <Trash2 aria-hidden />

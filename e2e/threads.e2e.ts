@@ -455,6 +455,48 @@ test("a thread's menu closes on Escape or on a click outside the sidebar", async
   await expect(menu).not.toBeAttached();
 });
 
+test("threads can be marked unread from either menu and read again by opening them", async () => {
+  const { page, profileDir } = await launch({ responses: [] });
+  writeSessions(sessionFolder(profileDir, project), project, 2);
+  await addProject(tondo!, project);
+  const first = threadRow(page, "Question 0");
+  const second = threadRow(page, "Question 1");
+  const firstUnread = first.getByRole("img", { name: "Unread", exact: true });
+  const secondUnread = second.getByRole("img", { name: "Unread", exact: true });
+  const markUnread = page.getByRole("menuitem", { name: "Mark as unread", exact: true });
+  await first.click();
+  await waitForPi(page);
+  await waitForIdle(page);
+
+  await first.hover();
+  await rowActions(page, "Question 0").click();
+  await expect(markUnread).toBeEnabled();
+  await page.screenshot({ path: "test-results/thread-unread/menu.png", animations: "disabled" });
+  await markUnread.click();
+  await expect(firstUnread).toBeVisible();
+  await expect(first).toHaveAttribute("aria-current", "page");
+
+  await first.click({ button: "right" });
+  await expect(markUnread).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await chooseThreadAction(page, "Question 1", "Mark as unread");
+  await expect(secondUnread).toBeVisible();
+  await expect(firstUnread).toBeVisible();
+  await expect(first).toHaveAttribute("aria-current", "page");
+  await expect(markUnread).not.toBeAttached();
+  await page.screenshot({ path: "test-results/thread-unread/marked.png", animations: "disabled" });
+
+  // Clicking the current thread clears its marker without reopening its transcript.
+  await first.click();
+  await expect(firstUnread).not.toBeAttached();
+  await expect(message(page, 1)).toHaveText("Answer 0");
+  await expect(secondUnread).toBeVisible();
+  await second.click();
+  await expect(secondUnread).not.toBeAttached();
+  await expect(second).toHaveAttribute("aria-current", "page");
+  await expect(message(page, 1)).toHaveText("Answer 1");
+});
+
 test("the keyboard moves through the sidebar, opens threads and their menu, and the palette", async () => {
   const { page } = await startThread("Alpha.", "Done.");
   await page.keyboard.press("ControlOrMeta+n");
@@ -533,6 +575,31 @@ test("the keyboard moves through the sidebar, opens threads and their menu, and 
     .click();
   await expect.poll(() => threadTitles(page)).toEqual(["Beta."]);
   await expect(beta).toBeFocused();
+});
+
+test("thread search ignores case in ticket identifiers and opens the matching thread", async () => {
+  const { page } = await startThread("Fix ENG-4051", "Done.");
+  await page.keyboard.press("ControlOrMeta+n");
+  await expect(heading(page)).toHaveText("New thread");
+  await threads(page).getByRole("button", { name: /^Search\b/ }).click();
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  const search = palette.getByRole("combobox", { name: "Search" });
+  const result = palette.getByRole("option");
+
+  await search.fill("ENG-4051");
+  await expect(result).toHaveCount(1);
+  await expect(result).toContainText("Fix ENG-4051");
+  await search.fill("eng-4051");
+  await expect(result).toHaveCount(1);
+  await expect(result).toContainText("Fix ENG-4051");
+  await page.screenshot({ path: "test-results/thread-search/lowercase.png" });
+  await search.fill("Eng-4051");
+  await expect(result).toHaveCount(1);
+  await expect(result).toContainText("Fix ENG-4051");
+  await search.press("Enter");
+  await expect(palette).not.toBeAttached();
+  await expect(heading(page)).toHaveText("Fix ENG-4051");
+  await expect(message(page, 1)).toHaveText("Done.");
 });
 
 test("drafts stay with their threads, and Tondo's store keeps them through a host restart", async () => {

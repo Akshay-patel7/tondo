@@ -50,6 +50,7 @@ describe("parseClientMessage", () => {
       { v, type: "open-thread", threadId },
       { v, type: "rename-thread", threadId, name: "Parser fix" },
       { v, type: "pin-thread", threadId, pinned: true },
+      { v, type: "mark-unread", threadId },
       { v, type: "delete-thread", threadId },
       { v, type: "set-draft", threadId, text: "" },
       { v, type: "set-draft", threadId, text: "half a thought" },
@@ -181,6 +182,7 @@ describe("parseClientMessage", () => {
     ] as const) {
       for (const type of [
         "open-thread",
+        "mark-unread",
         "delete-thread",
         "list-files",
         "stop",
@@ -461,8 +463,14 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 23, which combines image and local-file selections", () => {
-    expect(PROTOCOL_VERSION).toBe(23);
+  it("speaks version 24, which lets the page mark a thread unread", () => {
+    expect(PROTOCOL_VERSION).toBe(24);
+  });
+
+  it("rejects extra fields when marking a thread unread", () => {
+    expect(rejection({ v, type: "mark-unread", threadId: "t", unread: false })).toContain(
+      "unexpected field",
+    );
   });
 
   it.each([

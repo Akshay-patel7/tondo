@@ -154,6 +154,31 @@ describe("filterItems", () => {
     ]);
   });
 
+  test.each(["ENG-4051", "eng-4051", "Eng-4051"])(
+    "finds the same ticket threads for %s regardless of title case",
+    (query) => {
+      const items = paletteItems({
+        projects: [
+          {
+            ...projects[0]!,
+            threads: [
+              thread("upper", 30, { title: "Fix ENG-4051" }),
+              thread("lower", 20, { title: "Review eng-4051" }),
+              thread("other", 10, { title: "Fix ENG-4052" }),
+            ],
+          },
+        ],
+        open: null,
+        sidebarHidden: false,
+        isMac: true,
+      });
+      expect(labels(filterItems(items, query))).toEqual([
+        "Threads: Fix ENG-4051",
+        "Threads: Review eng-4051",
+      ]);
+    },
+  );
+
   test("keeps everything for a blank query, up to the limit in each group", () => {
     expect(filterItems(items, " ")).toEqual(items);
     expect(labels(filterItems(items, "", 1))).toEqual([
