@@ -157,7 +157,7 @@ describe("filterItems", () => {
   test.each(["ENG-4051", "eng-4051", "Eng-4051"])(
     "finds the same ticket threads for %s regardless of title case",
     (query) => {
-      const items = paletteItems({
+      const ticketItems = paletteItems({
         projects: [
           {
             ...projects[0]!,
@@ -172,7 +172,7 @@ describe("filterItems", () => {
         sidebarHidden: false,
         isMac: true,
       });
-      expect(labels(filterItems(items, query))).toEqual([
+      expect(labels(filterItems(ticketItems, query))).toEqual([
         "Threads: Fix ENG-4051",
         "Threads: Review eng-4051",
       ]);
