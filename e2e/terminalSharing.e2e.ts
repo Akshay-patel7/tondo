@@ -112,6 +112,13 @@ test("zero, one and four commands attach only actual new output, without automat
   await command("printf 'FIRST_%s\\n' ONLY", "FIRST_ONLY");
   await expect(attachment()).toBeVisible();
   expect(received()).toHaveLength(callsBefore);
+  // The window opens at 1200x800 where the screen has room. macOS CI runners
+  // fit only 1024x677, and macOS caps a window's height at the screen's, so the
+  // test puts back the size the window opened at.
+  const opened = await tondo.app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.getSize(),
+  );
+  const viewport = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
   await tondo.app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0]!.setSize(840, 620),
   );
@@ -129,10 +136,14 @@ test("zero, one and four commands attach only actual new output, without automat
     path: test.info().outputPath("terminal-sharing-minimum.png"),
     animations: "disabled",
   });
-  await tondo.app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0]!.setSize(1200, 800),
+  await tondo.app.evaluate(
+    ({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size[0]!, size[1]!),
+    opened,
   );
-  await page.waitForFunction(() => window.innerWidth === 1200 && window.innerHeight === 800);
+  await page.waitForFunction(
+    ([width, height]) => window.innerWidth === width && window.innerHeight === height,
+    viewport,
+  );
   const dialog = await preview();
   await expect(dialog.getByLabel("Captured terminal output")).toContainText("FIRST_ONLY");
   await expect(dialog).toContainText("Slash commands don't send this attachment.");
