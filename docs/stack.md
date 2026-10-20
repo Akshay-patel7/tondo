@@ -610,6 +610,56 @@ Packaged smoke, time to ready:
 
 Installing the deb on a minimal Ubuntu 24.04 pulled in 55 new packages, most of them through `xdg-utils`.
 
+### Terminal sharing performance (2026-10-20)
+
+Measured on the Apple M5, 24 GB, macOS 26.6.2, in a visible window on the built-in 2x/120 Hz display. The display guard read 8.3 ms. No production code, display override, measurement helper or performance budget changed.
+
+The unchanged `pnpm perf` suite passed all 18 checks in 12.7 minutes. The HID idle counter increased throughout the run, with no physical input. These are medians of three runs; the gates compared unrounded values.
+
+| Metric | Result | Limit |
+|---|---|---|
+| Cold start | 232.5 ms | 1,000 ms |
+| Switch to a running thread | 30.1 ms | 100 ms |
+| Streaming frame p95 / p99, worst scenario | 10.0 / 10.3 ms | 16.7 / 33 ms |
+| Input p95, single / ten streaming threads | 24 / 32 ms | 32 ms |
+| Total before streaming, 1,000 / 200 tok/s | 272.241 / 271.241 MiB | 279.4 MiB |
+| Total after 1,000 / 200 tok/s | 403.334 / 376.850 MiB | 510.4 / 522.5 MiB |
+| Terminal output, 50 MiB | 1,891 ms, no tasks >=100 ms | No tasks >=100 ms |
+| Page/host round trip p95 | 0.100 ms | Less than 1 ms |
+
+A separate stress test compared sharing off and on in the same build while 50 MiB passed through a real PTY and 59 keys were typed in chat. Four alternating blocks of three fresh apps per mode gave twelve samples each. Both modes clicked the switch once after setting its opposite state through the host. The test used the normal all-heap GC and `footprint` measurement, retaining categories for attribution. It added no settling waits. Per-sample HID counters verified all 24 native and both informational 4x samples were untouched.
+
+| Native-run median | Sharing off | Sharing on |
+|---|---|---|
+| 50 MiB completion | 2,873.296 ms | 2,877.827 ms |
+| Frame p95 / p99 | 8.70 / 9.25 ms | 8.70 / 9.20 ms |
+| Input p95 | 24 ms | 32 ms |
+| Tasks >=100 ms, every sample | 0 | 0 |
+| Total before output | 313.506 MiB | 314.920 MiB |
+| Total after output | 444.608 MiB | 453.178 MiB |
+| Host after output | 37.861 MiB | 38.259 MiB |
+| Renderer after output | 169.056 MiB | 171.002 MiB |
+| GPU after output | 187.024 MiB | 195.923 MiB |
+| Capture-availability updates during output | 0 | 1 |
+| Retained attachment text | None | 16,384 characters |
+
+The overhead is small but measurable: 4.531 ms, or 0.158%, for completion and 8.570 MiB, or 1.928%, for total footprint. GPU IOSurface dirty plus swapped memory increased by 8.273 MiB at the median. This identifies graphics allocations, not a particular DOM element. Independent process medians do not add up to the total. Input is at its unchanged 32 ms limit under this stress, with no spare input-latency budget. These terminal-memory readings include a live terminal and its retained history; they are not the single-thread chat-memory scenario above.
+
+Unadjusted two-sided, 50,000-shuffle permutation tests on the median differences gave p=0.0118 for completion, p=0.0278 for input p95 and p=0.00022 for total memory. The even-sized medians average the middle two observations. Completion ranges were 2,863.927 to 2,880.250 ms off and 2,871.145 to 2,881.715 ms on. Individual unrounded samples, process footprints and category data are in the controlled run's `results.json`, `analysis.json` and `footprint-*.json` files.
+
+At informational 4x renderer CPU slowdown, completion was 8,678 / 8,749 ms off/on, input p95 was 24 / 32 ms and neither run had a task >=100 ms. DevTools throttles the renderer, not the host's capture parser. The pending preview remained bounded and contained the completion marker in every enabled sample.
+
+The first off/on comparison left only the on case with a real switch click. Its before-output memory difference was 41.7 MiB, mostly outside the host and renderer. The final setup balanced the gestures and retained footprint categories. Its before-output difference was 1.4 MiB; the first setup was not a fair memory comparison and cannot attribute the larger difference to capture. An intermediate balanced run then had an end-of-run HID reset, and the user was unsure whether they interacted. It is retained as potentially affected, not used for the acceptance figures. The explicitly identified rerun added per-sample input checks rather than rerunning until numbers passed.
+
+Evidence under `.dev/perf/`:
+
+- `terminal-sharing-full-2026-10-20T20-15-46/`: unchanged full suite.
+- `terminal-sharing-compare-2026-10-20T20-28-51/`: initial unequal-gesture comparison.
+- `terminal-sharing-balanced-2026-10-20T20-34-06/`: potentially interacted-with balanced run.
+- `terminal-sharing-controlled-2026-10-20T20-39-32/`: final controlled comparison and diagnostic sources.
+
+The source hashes match across all runs, and the measured terminal-sharing code is in commit `04f5593`. These measurements precede the separate unread-marker persistence fix. That follow-up has functional regression coverage; the full performance suite was not rerun afterward. The mid-stream, terminal-completion and enabled-preview screenshots were opened and inspected. No optimization was needed to meet the existing gates, and no claim is made that sharing has zero overhead or that this compares against a pre-feature commit. Linux performance was not measured.
+
 ## Open questions
 
 - **How do real screens compare?** The empty-window numbers come from a trivial hidden page, not a real app.
