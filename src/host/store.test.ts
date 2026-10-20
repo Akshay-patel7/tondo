@@ -214,7 +214,7 @@ describe("Store", () => {
   it("defaults old threads to private and remembers terminal sharing per thread across restart", () => {
     const file = path.join(dir, "terminal-sharing.sqlite");
     const db = new DatabaseSync(file);
-    migrate(db, MIGRATIONS.slice(0, -1));
+    migrate(db, MIGRATIONS.slice(0, 6));
     db.exec(
       "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, created_at) VALUES ('old', 1, 2), ('other', 1, 3);",
     );
@@ -228,6 +228,28 @@ describe("Store", () => {
     expect(store.thread("other")?.shareTerminalOutput).toBe(false);
     store.setTerminalSharing("old", false);
     expect(store.thread("old")?.shareTerminalOutput).toBe(false);
+    store.close();
+  });
+
+  it("migrates old threads to read and keeps unread changes across restarts", () => {
+    const file = path.join(dir, "unread.sqlite");
+    const db = new DatabaseSync(file);
+    migrate(db, MIGRATIONS.slice(0, 7));
+    db.exec(
+      "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, created_at) VALUES ('old', 1, 2), ('other', 1, 3);",
+    );
+    db.close();
+    let store = Store.open(file);
+    expect(store.thread("old")?.unread).toBe(false);
+    store.setUnread("old", true);
+    store.close();
+    store = Store.open(file);
+    expect(store.thread("old")?.unread).toBe(true);
+    expect(store.thread("other")?.unread).toBe(false);
+    store.setUnread("old", false);
+    store.close();
+    store = Store.open(file);
+    expect(store.thread("old")?.unread).toBe(false);
     store.close();
   });
 
@@ -258,6 +280,7 @@ describe("Store", () => {
         sessionFile: "/sessions/t1.jsonl",
         createdAt: 30,
         pinned: true,
+        unread: false,
         archived: true,
         draft: "half a thought",
         hasImages: false,

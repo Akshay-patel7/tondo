@@ -90,6 +90,10 @@ Branch changes are blocked while pi is starting or working in the same checkout,
 
 **Delete thread** asks for confirmation, then removes the thread, its saved draft and its associated pi session files. The session no longer appears in pi's `/resume` picker. Stop active work before deleting. For a managed worktree, use **Remove worktree** first, then delete the retained thread separately; Delete never removes a checkout or branch.
 
+## Unread threads
+
+**Mark as unread** in a thread's menu survives page reloads and quitting the app. Restoring the last-open thread at startup doesn't clear its marker. Clicking a thread marks it read. Background replies also keep their unread state across restarts.
+
 ## Sharing terminal output
 
 Turn on **Share with chat** in a thread's terminal header to attach new shell text to your next chat message. Sharing starts off and the choice is saved per thread. It captures only output received while sharing is on, not earlier terminal history. Running commands never sends a message by itself, and chat still works if you run none.

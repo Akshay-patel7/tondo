@@ -128,8 +128,6 @@ export class Workspace {
   private readonly live = new Map<string, LiveThread>();
   /** What each live thread was last doing, to notice when a thread you aren't looking at finishes. */
   private readonly activities = new Map<string, ThreadActivity>();
-  /** Threads that finished or failed while you looked at another. */
-  private readonly unread = new Set<string>();
   private visibleId: string | null = null;
   private choosing = false;
   private readonly removingProjects = new Set<number>();
@@ -239,7 +237,9 @@ export class Workspace {
   async start(): Promise<void> {
     await this.worktrees.cleanup((message) => this.toast("warning", message));
     const { openThread } = this.store.ui();
-    if (openThread !== null && this.store.thread(openThread)) this.run(() => this.open(openThread));
+    // Restoring the window is not an explicit read of a manually marked thread.
+    if (openThread !== null && this.store.thread(openThread))
+      this.run(() => this.open(openThread, false));
     await this.refresh();
     this.run(() => this.forgetUnused());
   }
@@ -390,7 +390,7 @@ export class Workspace {
       case "mark-unread":
         this.run(() => {
           this.row(message.threadId);
-          this.unread.add(message.threadId);
+          this.store.setUnread(message.threadId, true);
           this.sendSidebar();
         });
         break;
@@ -854,9 +854,12 @@ export class Workspace {
   }
 
   /** Puts a thread on screen, starting its pi if it isn't running. */
-  private open(id: string): void {
+  private open(id: string, markRead = true): void {
     if (id === this.visibleId && this.live.has(id)) {
-      if (this.unread.delete(id)) this.sendSidebar();
+      if (markRead && this.store.thread(id)?.unread) {
+        this.store.setUnread(id, false);
+        this.sendSidebar();
+      }
       return;
     }
     // Capture this before startThread registers a replacement for the visible pi.
@@ -872,7 +875,7 @@ export class Workspace {
     }
     this.terminals.detachAll();
     this.visibleId = id;
-    this.unread.delete(id);
+    if (markRead && this.store.thread(id)?.unread) this.store.setUnread(id, false);
     thread.show();
     thread.lastUsed = Date.now();
     this.store.setUi("openThread", id);
@@ -1030,7 +1033,8 @@ export class Workspace {
     const activity = activityOf(thread);
     const before = this.activities.get(thread.id);
     this.activities.set(thread.id, activity);
-    if (!thread.visible && isBusy(before) && !isBusy(activity)) this.unread.add(thread.id);
+    if (!thread.visible && isBusy(before) && !isBusy(activity))
+      this.store.setUnread(thread.id, true);
   }
 
   private restoreDraft(id: string, text: string): void {
@@ -1333,7 +1337,6 @@ export class Workspace {
       this.terminals.forgetContext(id);
       this.found.delete(id);
       this.activities.delete(id);
-      this.unread.delete(id);
       this.extensionDrafts.delete(id);
       if (this.visibleId === id) {
         this.visibleId = null;
@@ -1422,6 +1425,7 @@ export class Workspace {
       !row ||
       row.visible ||
       row.pinned ||
+      row.unread ||
       row.archived ||
       row.draft.trim() ||
       row.hasImages ||
@@ -1650,7 +1654,7 @@ export class Workspace {
       pinned: row?.pinned ?? false,
       archived: row?.archived ?? false,
       activity: activityOf(thread),
-      unread: this.unread.has(id),
+      unread: row?.unread ?? false,
       hasDraft: (row?.draft.trim() ?? "") !== "" || (row?.hasImages ?? false),
       worktree: this.worktrees.forThread(id) !== undefined,
       // pi saves a name in the session file, which it writes with the first reply.

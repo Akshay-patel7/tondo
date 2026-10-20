@@ -1178,6 +1178,7 @@ describe("marking threads unread", () => {
         ],
       });
       expect(store.ui().openThread).toBe("thread-a");
+      expect(store.thread(id)?.unread).toBe(true);
       expect(threads).toHaveLength(1);
 
       sent.length = 0;
@@ -1188,12 +1189,56 @@ describe("marking threads unread", () => {
           { threads: expect.arrayContaining([expect.objectContaining({ id, unread: false })]) },
         ],
       });
+      expect(store.thread(id)?.unread).toBe(false);
       if (id === "thread-a") {
         expect(sent.some((message) => message.type === "snapshot")).toBe(false);
         expect(current.open).toHaveBeenCalledTimes(1);
       }
     },
   );
+
+  it("restores unread state at startup without treating the restored thread as explicitly opened", async () => {
+    store.setUnread("thread-a", true);
+    store.setUnread("thread-b", true);
+    store.setUi("openThread", "thread-a");
+    await workspace.start();
+    expect(store.thread("thread-a")?.unread).toBe(true);
+    expect(store.thread("thread-b")?.unread).toBe(true);
+    const sidebar = sent.findLast((message) => message.type === "sidebar");
+    expect(sidebar).toMatchObject({
+      projects: [
+        {
+          threads: expect.arrayContaining([
+            expect.objectContaining({ id: "thread-a", unread: true }),
+            expect.objectContaining({ id: "thread-b", unread: true }),
+          ]),
+        },
+      ],
+    });
+    expect(store.ui().openThread).toBe("thread-a");
+    workspace.handle({ v, type: "open-thread", threadId: "thread-a" });
+    expect(store.thread("thread-a")?.unread).toBe(false);
+    expect(store.thread("thread-b")?.unread).toBe(true);
+  });
+
+  it("persists the automatic unread marker when a hidden turn finishes", async () => {
+    const hidden = await openThread("thread-a");
+    await openThread("thread-b");
+    hidden.state.running = true;
+    hidden.listener.changed();
+    const marked = next(
+      (message) =>
+        message.type === "sidebar" &&
+        message.projects.some((project) =>
+          project.threads.some((thread) => thread.id === "thread-a" && thread.unread),
+        ),
+    );
+    hidden.state.running = false;
+    hidden.listener.changed();
+    expect(store.thread("thread-a")?.unread).toBe(true);
+    expect(store.thread("thread-b")?.unread).toBe(false);
+    await marked;
+  });
 
   it("rejects an unknown thread without starting pi", async () => {
     const error = next(isError);

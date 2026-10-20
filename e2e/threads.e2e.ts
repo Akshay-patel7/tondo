@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FauxScript } from "../scripts/fixtures/faux-ext";
-import { bringToFront, hostPid, type Tondo } from "./launch";
+import { bringToFront, hostPid, launchTondo, type Tondo } from "./launch";
 import {
   addProject,
   bashCall,
@@ -495,6 +495,73 @@ test("threads can be marked unread from either menu and read again by opening th
   await expect(secondUnread).not.toBeAttached();
   await expect(second).toHaveAttribute("aria-current", "page");
   await expect(message(page, 1)).toHaveText("Answer 1");
+});
+
+test("unread markers survive page reload and cold restart until explicitly opened", async () => {
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  tondo = await launchWithPi({ workDir, profileDir, script: { responses: [] } });
+  await bringToFront(tondo);
+  let { page } = tondo;
+  writeSessions(sessionFolder(profileDir, project), project, 2);
+  await addProject(tondo, project);
+  await threadRow(page, "Question 0").click();
+  await waitForPi(page);
+  await chooseThreadAction(page, "Question 0", "Mark as unread");
+  await chooseThreadAction(page, "Question 1", "Mark as unread");
+  await expect(
+    threadRow(page, "Question 0").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+  await expect(
+    threadRow(page, "Question 1").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    threadRow(page, "Question 0").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+  await expect(
+    threadRow(page, "Question 1").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+
+  await tondo.close();
+  tondo = await launchTondo({ profileDir });
+  await bringToFront(tondo);
+  page = tondo.page;
+  await waitForPi(page);
+  await expect(
+    threadRow(page, "Question 1").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+  await expect(
+    threadRow(page, "Question 0").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+  await expect(threadRow(page, "Question 0")).toHaveAttribute("aria-current", "page");
+  await page.screenshot({
+    path: test.info().outputPath("unread-after-restart.png"),
+    animations: "disabled",
+  });
+  await threadRow(page, "Question 0").click();
+  await expect(
+    threadRow(page, "Question 0").getByRole("img", { name: "Unread", exact: true }),
+  ).not.toBeAttached();
+  await expect(
+    threadRow(page, "Question 1").getByRole("img", { name: "Unread", exact: true }),
+  ).toBeVisible();
+  await threadRow(page, "Question 1").click();
+  await expect(
+    threadRow(page, "Question 1").getByRole("img", { name: "Unread", exact: true }),
+  ).not.toBeAttached();
+
+  await tondo.close();
+  tondo = await launchTondo({ profileDir });
+  await bringToFront(tondo);
+  page = tondo.page;
+  await waitForPi(page);
+  await expect(
+    threadRow(page, "Question 0").getByRole("img", { name: "Unread", exact: true }),
+  ).not.toBeAttached();
+  await expect(
+    threadRow(page, "Question 1").getByRole("img", { name: "Unread", exact: true }),
+  ).not.toBeAttached();
 });
 
 test("the keyboard moves through the sidebar, opens threads and their menu, and the palette", async () => {

@@ -57,6 +57,7 @@ export const MIGRATIONS: readonly string[] = [
   // NULL identifies legacy worktrees created under the app data folder.
   `ALTER TABLE worktrees ADD COLUMN root TEXT;`,
   `ALTER TABLE threads ADD COLUMN share_terminal_output INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 /** Brings `db` up to date with `migrations`, one transaction per migration. */
@@ -104,6 +105,7 @@ export interface StoredThread {
   readonly sessionFile: string | null;
   readonly createdAt: number;
   readonly pinned: boolean;
+  readonly unread: boolean;
   readonly archived: boolean;
   /** What you were writing in the composer. */
   readonly draft: string;
@@ -149,6 +151,7 @@ interface ThreadRow {
   session_file: string | null;
   created_at: number;
   pinned: number;
+  unread: number;
   archived: number;
   draft: string;
   has_images: number;
@@ -172,6 +175,7 @@ function toThread(row: ThreadRow): StoredThread {
     sessionFile: row.session_file,
     createdAt: row.created_at,
     pinned: row.pinned === 1,
+    unread: row.unread === 1,
     archived: row.archived === 1,
     draft: row.draft,
     hasImages: row.has_images === 1,
@@ -276,6 +280,10 @@ export class Store {
 
   setPinned(threadId: string, pinned: boolean): void {
     this.update(threadId, "pinned", pinned ? 1 : 0);
+  }
+
+  setUnread(threadId: string, unread: boolean): void {
+    this.update(threadId, "unread", unread ? 1 : 0);
   }
 
   setTerminalSharing(threadId: string, enabled: boolean): void {
@@ -390,7 +398,14 @@ export class Store {
 
   private update(
     threadId: string,
-    column: "session_file" | "pinned" | "archived" | "draft" | "visible" | "share_terminal_output",
+    column:
+      | "session_file"
+      | "pinned"
+      | "unread"
+      | "archived"
+      | "draft"
+      | "visible"
+      | "share_terminal_output",
     value: string | number,
   ): void {
     const { changes } = this.db
