@@ -13,7 +13,7 @@ import {
 } from "../shared/terminal";
 import { LoginTyper } from "./loginTyper";
 import { drainGroup } from "./processGroup";
-import { TerminalHistory } from "./terminalHistory";
+import { HistoryFilter, TerminalHistory } from "./terminalHistory";
 import { TerminalContext, type TerminalContextSend } from "./terminalContext";
 
 export interface TerminalLaunch {
@@ -28,6 +28,9 @@ interface Session {
   state: TerminalState;
   pty?: IPty;
   history: TerminalHistory;
+  input: HistoryFilter;
+  pasting: boolean;
+  capturing: boolean;
   started: Promise<void>;
   closing?: Promise<void>;
   attachment: string | null;
@@ -103,7 +106,11 @@ export class Terminals {
 
   takeContext(threadId: string): TerminalContextSend | null {
     const send = this.context(threadId).take();
-    if (send) this.publishContext(threadId);
+    if (send) {
+      const session = this.sessions.get(threadId);
+      if (session) session.capturing = false;
+      this.publishContext(threadId);
+    }
     return send;
   }
 
@@ -125,11 +132,15 @@ export class Terminals {
   handle(message: TerminalRequest): void | Promise<void> {
     if (message.type === "terminal-sharing") {
       this.context(message.threadId).setEnabled(message.enabled);
+      const session = this.sessions.get(message.threadId);
+      if (session) session.capturing = false;
       this.publishContext(message.threadId);
       return;
     }
     if (message.type === "terminal-discard") {
       this.context(message.threadId).discard();
+      const session = this.sessions.get(message.threadId);
+      if (session) session.capturing = false;
       this.publishContext(message.threadId);
       return;
     }
@@ -153,7 +164,10 @@ export class Terminals {
       case "terminal-attach": {
         this.detach(session);
         session.attachment = message.attachment;
-        if (!session.exited) session.pty?.resize(message.cols, message.rows);
+        if (!session.exited) {
+          this.context(session.threadId).resize();
+          session.pty?.resize(message.cols, message.rows);
+        }
         this.enqueue(session, session.history.tail(TERMINAL_HISTORY_BYTES));
         this.pump(session);
         break;
@@ -163,10 +177,21 @@ export class Terminals {
         break;
       case "terminal-write":
         session.typer?.input(message.data);
-        if (session.state.status === "running") session.pty?.write(message.data);
+        if (session.state.status === "running") {
+          for (const char of message.data) {
+            const plain = session.input.push(char);
+            // Pasting multiline text into a line editor is not submitting it.
+            // Escape-only terminal replies and focus reports are not user input.
+            if (plain && !session.pasting) session.capturing = plain === "\r" || plain === "\n";
+          }
+          session.pty?.write(message.data);
+        }
         break;
       case "terminal-resize":
-        if (session.state.status === "running") session.pty?.resize(message.cols, message.rows);
+        if (session.state.status === "running") {
+          this.context(session.threadId).resize();
+          session.pty?.resize(message.cols, message.rows);
+        }
         break;
       case "terminal-ack":
         if (session.attachment === message.attachment) {
@@ -194,6 +219,14 @@ export class Terminals {
       threadId,
       state: { id: randomUUID(), kind, status: "starting", error: null, exitCode: null },
       history: new TerminalHistory(),
+      input: new HistoryFilter(true, (sequence) => {
+        if (sequence === "\u001b[200~") {
+          session.pasting = true;
+          session.capturing = false;
+        } else if (sequence === "\u001b[201~") session.pasting = false;
+      }),
+      pasting: false,
+      capturing: false,
       started: Promise.resolve(),
       attachment: null,
       pending: [],
@@ -239,7 +272,7 @@ export class Terminals {
         if (session.state.kind === "shell" && this.sessions.get(session.threadId) === session) {
           const context = this.context(session.threadId);
           const pending = context.pending;
-          context.append(data);
+          context.append(data, session.capturing);
           // Only availability changes reach React, never the output stream.
           if (pending !== context.pending) this.publishContext(session.threadId);
         }

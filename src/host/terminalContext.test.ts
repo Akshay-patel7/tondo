@@ -131,6 +131,34 @@ describe("terminal context", () => {
     });
   });
 
+  it("ignores only exact redraws, preserving split mismatches and repeated real lines", () => {
+    const context = new TerminalContext(true);
+    context.append("prompt> ", false);
+    context.resize();
+    context.append("\r\u001b[Kpro");
+    context.resize();
+    context.append("mpt> \r\u001b[Jprompt> ");
+    expect(context.take()).toBeNull();
+    context.append("\rpro");
+    context.append("gress output\r\n");
+    expect(context.take()?.text).toBe("\nprogress output\n");
+    context.resize();
+    context.append("repeated\r\nrepeated\r\n");
+    expect(context.take()?.text).toBe("repeated\nrepeated\n");
+  });
+
+  it("doesn't retain unbounded input lines or let an old redraw swallow a new shell", () => {
+    const context = new TerminalContext(true);
+    context.append("x".repeat(TERMINAL_CONTEXT_CHARS + 1), false);
+    context.resize();
+    context.append("\rnew output");
+    expect(context.take()?.text).toBe("\nnew output");
+    context.resize();
+    context.newShell();
+    context.append("\rnew output");
+    expect(context.take()?.text).toBe("\nnew output");
+  });
+
   it("resets the parser for a new shell without losing unsent output", () => {
     const context = new TerminalContext(true);
     context.append("old\n\u001b]unfinished");

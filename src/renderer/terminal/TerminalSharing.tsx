@@ -23,7 +23,7 @@ export function TerminalSharing({ threadId }: { threadId: string }) {
     <Label
       htmlFor={id}
       className="shrink-0"
-      title="Share new shell output with your next chat message. Output may contain secrets; preview it before sending."
+      title="Share output after submitting a terminal command with your next chat message. Output may contain secrets; preview it before sending."
     >
       <Switch
         id={id}

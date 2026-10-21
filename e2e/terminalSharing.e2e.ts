@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { TERMINAL_CONTEXT_CHARS } from "../src/shared/terminal";
 import { bringToFront, launchTondo, type Tondo } from "./launch";
+import { listenOnPort, type PerfWindow } from "./perf";
 import {
   addProject,
   composer,
@@ -180,6 +181,75 @@ test("zero, one and four commands attach only actual new output, without automat
   expect(positions).toEqual(positions.toSorted((a, b) => a - b));
   expect(batch.match(/<tondo_terminal_output>/g)).toHaveLength(1);
   await expect(attachment()).toBeHidden();
+});
+
+test("typing, resizing, focus changes and reopening cannot create an attachment without submission", async () => {
+  const { page } = tondo;
+  await listenOnPort(tondo);
+  await waitForPi(page);
+  await openTerminal();
+  await command("PS1='SHARE_PROMPT> '; PROMPT=$PS1; printf 'READY_%s\\n' SHARE", "READY_SHARE");
+  const rows = page.locator(".xterm-accessibility-tree > div");
+  const prompt = async () => (await rows.allTextContents()).findLast((row) => row.trim())?.trim();
+  await expect.poll(prompt).toBe("SHARE_PROMPT>");
+  await sharing().click();
+  const input = page.locator(".xterm-helper-textarea");
+  await input.focus();
+  await input.pressSequentially("printf 'UNSUBMITTED_%s\\n' TEXT");
+  await expect(page.locator(".xterm-accessibility-tree")).toContainText("UNSUBMITTED_");
+  await expect(attachment()).toBeHidden();
+  expect(await post("I have not run that command.")).toBe("I have not run that command.");
+  await input.focus();
+  await input.press("Control+u");
+  await expect.poll(prompt).toBe("SHARE_PROMPT>");
+
+  // Wait for actual PTY redraw bytes, not a quiet-period timeout, before checking capture.
+  const redrawAfter = async (action: () => Promise<void>) => {
+    const observed = await page.evaluateHandle(() => {
+      const state = { output: "" };
+      (window as PerfWindow).tondoPerf!.onMessage = ({ data }) => {
+        if (data.type === "terminal-output") state.output += data.data;
+      };
+      return state;
+    });
+    await action();
+    await expect.poll(() => observed.evaluate((state) => state.output)).toContain("SHARE_PROMPT>");
+    await observed.dispose();
+  };
+  const grip = page.getByRole("separator", { name: "Resize terminal" });
+  await redrawAfter(() => grip.press("ArrowUp"));
+  await expect(attachment()).toBeHidden();
+  await redrawAfter(async () => {
+    const box = (await grip.boundingBox())!;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y - 48, { steps: 4 });
+    await page.mouse.up();
+  });
+  await expect(attachment()).toBeHidden();
+  expect(await post("Only resized the terminal.")).toBe("Only resized the terminal.");
+
+  await command("printf 'DISCARD_%s\\n' OUTPUT", "DISCARD_OUTPUT");
+  await expect(attachment()).toBeVisible();
+  await attachment().getByRole("button", { name: "Discard terminal output" }).click();
+  await redrawAfter(() => grip.press("ArrowDown"));
+  await expect(attachment()).toBeHidden();
+  expect(await post("Discarded means discarded.")).toBe("Discarded means discarded.");
+
+  await command("printf 'SUBMITTED_%s\\n' OUTPUT", "SUBMITTED_OUTPUT");
+  expect(await post("Here is the command output.")).toContain("SUBMITTED_OUTPUT");
+  await redrawAfter(() => page.getByRole("button", { name: "Hide sidebar", exact: true }).click());
+  await expect(attachment()).toBeHidden();
+  await page.reload();
+  await expect(sharing()).toBeChecked();
+  await expect.poll(prompt).toBe("SHARE_PROMPT>");
+  await expect(attachment()).toBeHidden();
+  expect(await post("No new command after sending or reopening.")).toBe(
+    "No new command after sending or reopening.",
+  );
+  await page.screenshot({ path: test.info().outputPath("terminal-no-incidental-attachment.png") });
 });
 
 test("preview, discard, opt-out and bounded logs control exactly what reaches real pi", async () => {

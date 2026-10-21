@@ -17,9 +17,11 @@ export class HistoryFilter {
   private overflow = false;
 
   private readonly plainText: boolean;
+  private readonly onCsi: ((sequence: string) => void) | undefined;
 
-  constructor(plainText = false) {
+  constructor(plainText = false, onCsi?: (sequence: string) => void) {
     this.plainText = plainText;
+    this.onCsi = onCsi;
   }
 
   push(data: string): string {
@@ -60,6 +62,7 @@ export class HistoryFilter {
             ((char === "p" || char === "y") && /^[0-9;?]*\$$/.test(body)) ||
             (char === "q" && /^>[0-9;]*$/.test(body)) ||
             (char === "u" && body.startsWith("?"));
+          if (!this.overflow) this.onCsi?.(this.sequence + char);
           if (!this.plainText && !query && !this.overflow) kept.push(this.sequence + char);
           this.mode = "text";
           this.sequence = "";

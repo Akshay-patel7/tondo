@@ -96,9 +96,9 @@ Branch changes are blocked while pi is starting or working in the same checkout,
 
 ## Sharing terminal output
 
-Turn on **Share with chat** in a thread's terminal header to attach new shell text to your next chat message. Sharing starts off and the choice is saved per thread. It captures only output received while sharing is on, not earlier terminal history. Running commands never sends a message by itself, and chat still works if you run none.
+Turn on **Share with chat** in a thread's terminal header to attach command output to your next chat message. Sharing starts off and the choice is saved per thread. Capture starts when you submit a command, not when you type, open or resize the terminal. Earlier terminal history is never included. Running commands never sends a message by itself, and chat still works if you run none.
 
-The composer shows a pending attachment with **Preview** and **Discard**. Preview is a snapshot; output arriving before you send is included too. Discard clears the pending text but leaves sharing on. Turning sharing off clears it too. Check for secrets before sending. Tondo strips terminal controls and keeps only the latest 16,384 characters, with a notice when earlier text was omitted. It captures shell text, including prompts, rather than tracking command completion or exit codes.
+The composer shows a pending attachment with **Preview** and **Discard**. Preview is a snapshot; output arriving before you send is included too. Sending or discarding stops capture until you submit another command. Discard leaves sharing on. Turning sharing off clears the pending text too. Check for secrets before sending. Tondo strips terminal controls and keeps only the latest 16,384 characters, with a notice when earlier text was omitted. Captured text can include the shell's next prompt; Tondo does not track command completion or exit codes.
 
 Only new output accompanies each message. A rejected send returns its attachment for retry. Slash commands leave the attachment pending, and provider sign-in terminals never contribute output. Pending text survives thread switches and page reloads but stays in memory, so quitting the app drops it.
 

@@ -19,6 +19,8 @@ export class TerminalContext {
   private epoch = 0;
   private truncated = false;
   private carriageReturn = false;
+  private line: string | null = "";
+  private redraw: { line: string; prefix: string; matched: number } | null = null;
 
   enabled: boolean;
 
@@ -40,15 +42,24 @@ export class TerminalContext {
   newShell(): void {
     this.filter = new HistoryFilter(true);
     this.carriageReturn = false;
+    this.line = "";
+    this.redraw = null;
   }
 
-  append(raw: string): void {
+  /** A resize can make the shell reprint its current input line without running anything. */
+  resize(): void {
+    if (this.line) this.redraw ??= { line: this.line, prefix: "", matched: 0 };
+  }
+
+  append(raw: string, capture = true): void {
     // Parse even while sharing is off, so enabling midway through an OSC
     // string cannot expose its payload as plain text.
     const plain = this.filter.push(raw);
-    if (!this.enabled) return;
+    const fresh = this.withoutRedraw(plain);
+    this.rememberLine(plain);
+    if (!this.enabled || !capture) return;
     let text = "";
-    for (const char of plain) {
+    for (const char of fresh) {
       if (char === "\n" && this.carriageReturn) {
         this.carriageReturn = false;
         continue;
@@ -105,6 +116,48 @@ export class TerminalContext {
     this.parts = [];
     this.truncated = false;
     this.carriageReturn = false;
+  }
+
+  private withoutRedraw(plain: string): string {
+    if (!this.redraw) return plain;
+    let fresh = "";
+    for (const char of plain) {
+      const redraw = this.redraw;
+      if (!redraw) fresh += char;
+      else if (char === "\r" && redraw.matched === 0 && redraw.prefix.length < 256)
+        redraw.prefix += char;
+      else if (redraw.prefix && redraw.line.startsWith(char, redraw.matched)) {
+        redraw.prefix += char;
+        redraw.matched += char.length;
+        if (redraw.matched === redraw.line.length) {
+          // Keep recognizing repeated redraws during a drag, across PTY chunks.
+          redraw.prefix = "";
+          redraw.matched = 0;
+        }
+      } else {
+        // No redraw, or different text: preserve real output, including a partial match.
+        fresh += redraw.prefix + char;
+        this.redraw = null;
+      }
+    }
+    return fresh;
+  }
+
+  private rememberLine(plain: string): void {
+    const start = Math.max(plain.lastIndexOf("\n"), plain.lastIndexOf("\r"));
+    if (start >= 0) this.line = "";
+    if (this.line === null) return;
+    for (const char of plain.slice(start + 1)) {
+      if (char === "\b") this.line = Array.from(this.line).slice(0, -1).join("");
+      else {
+        const code = char.codePointAt(0)!;
+        if (char === "\t" || (code >= 0x20 && !(code >= 0x7f && code <= 0x9f))) this.line += char;
+      }
+      if (this.line.length > TERMINAL_CONTEXT_CHARS) {
+        this.line = null;
+        break;
+      }
+    }
   }
 
   private bound(): void {
