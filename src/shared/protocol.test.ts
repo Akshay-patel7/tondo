@@ -463,8 +463,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 26, which adds sidebar thread models", () => {
-    expect(PROTOCOL_VERSION).toBe(26);
+  it("speaks version 27, which adds absolute retry deadlines", () => {
+    expect(PROTOCOL_VERSION).toBe(27);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

@@ -3,8 +3,12 @@
 // batches it receives, so both hold the same state.
 import type { JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-/** A session event as pi writes it to stdout in RPC mode. */
-export type PiEvent = JsonAgentSessionEvent;
+type RetryStart = Extract<JsonAgentSessionEvent, { type: "auto_retry_start" }>;
+
+/** A pi session event. The host adds the retry deadline before forwarding it. */
+export type PiEvent =
+  | Exclude<JsonAgentSessionEvent, RetryStart>
+  | (RetryStart & { readonly retryAt?: number });
 /** A transcript message, as get_messages and message_end carry it. */
 export type PiMessage = Extract<PiEvent, { type: "message_end" }>["message"];
 export type AssistantMessage = Extract<PiMessage, { role: "assistant" }>;
@@ -45,7 +49,7 @@ export interface Queue {
 }
 
 /** A failed request pi is about to retry, as auto_retry_start describes it. */
-export type Retry = Omit<Extract<PiEvent, { type: "auto_retry_start" }>, "type">;
+export type Retry = Omit<RetryStart, "type"> & { readonly retryAt: number };
 export type CompactionReason = Extract<PiEvent, { type: "compaction_start" }>["reason"];
 
 export interface ThreadState {
@@ -57,7 +61,7 @@ export interface ThreadState {
   readonly running: boolean;
   /** What pi's last queue_update listed. */
   readonly queue: Queue;
-  /** Set from auto_retry_start until auto_retry_end. */
+  /** Set while waiting to retry, until response content arrives or the retry ends. */
   readonly retry: Retry | null;
   /** Set from compaction_start until compaction_end. */
   readonly compaction: CompactionReason | null;
@@ -152,15 +156,21 @@ export function applyEvent(thread: ThreadState, event: PiEvent): ThreadState {
       return thread.running ? thread : { ...thread, running: true };
     case "agent_settled":
       // pi won't run anything more, so a call still listed will never finish.
-      return thread.running || thread.tools !== NO_TOOLS
-        ? { ...thread, running: false, tools: NO_TOOLS }
+      return thread.running || thread.tools !== NO_TOOLS || thread.retry !== null
+        ? { ...thread, running: false, tools: NO_TOOLS, retry: null }
         : thread;
     case "message_start":
       return event.message.role === "assistant" ? { ...thread, streaming: event.message } : thread;
     case "message_update": {
       if (!thread.streaming) return thread;
-      const streaming = applyUpdate(thread.streaming, event.assistantMessageEvent);
-      return streaming === thread.streaming ? thread : { ...thread, streaming };
+      const update = event.assistantMessageEvent;
+      const streaming = applyUpdate(thread.streaming, update);
+      // The generic start precedes the provider request. Content events mean
+      // the provider is responding; auto_retry_end waits for the entire reply.
+      const retry = update.type === "start" || update.type === "error" ? thread.retry : null;
+      return streaming === thread.streaming && retry === thread.retry
+        ? thread
+        : { ...thread, streaming, retry };
     }
     case "message_end": {
       // message_end carries the whole message, so it replaces what the deltas built.
@@ -198,7 +208,8 @@ export function applyEvent(thread: ThreadState, event: PiEvent): ThreadState {
     }
     case "auto_retry_start": {
       const { attempt, maxAttempts, delayMs, errorMessage } = event;
-      return { ...thread, retry: { attempt, maxAttempts, delayMs, errorMessage } };
+      const retryAt = event.retryAt ?? Date.now() + delayMs;
+      return { ...thread, retry: { attempt, maxAttempts, delayMs, errorMessage, retryAt } };
     }
     case "auto_retry_end":
       return thread.retry ? { ...thread, retry: null } : thread;

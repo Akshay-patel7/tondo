@@ -220,13 +220,14 @@ describe("applyEvent", () => {
     expect(drained.queue).toEqual({ steering: [], followUp: [] });
   });
 
-  test("a retry shows from auto_retry_start until auto_retry_end", () => {
+  test.each([true, false])("a retry clears when auto_retry_end has success=%s", (success) => {
     const retrying = applyEvent(empty, {
       type: "auto_retry_start",
       attempt: 1,
       maxAttempts: 3,
       delayMs: 2000,
       errorMessage: "503 Service Unavailable",
+      retryAt: 10_000,
     });
 
     expect(retrying.retry).toEqual({
@@ -234,9 +235,50 @@ describe("applyEvent", () => {
       maxAttempts: 3,
       delayMs: 2000,
       errorMessage: "503 Service Unavailable",
+      retryAt: 10_000,
     });
-    const ended = applyEvent(retrying, { type: "auto_retry_end", success: true, attempt: 1 });
+    const ended = applyEvent(retrying, { type: "auto_retry_end", success, attempt: 1 });
     expect(ended.retry).toBeNull();
+  });
+
+  test.each(["text_delta", "thinking_delta", "toolcall_delta"] as const)(
+    "a retry clears on %s, without waiting for the reply to finish",
+    (type) => {
+      const partial = finished(fixture("stream-1000.jsonl"))[1] as AssistantMessage;
+      let retrying = applyEvent(empty, {
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 2000,
+        errorMessage: "503 Service Unavailable",
+      });
+      retrying = applyEvent(retrying, { type: "message_start", message: partial });
+      retrying = applyEvent(retrying, {
+        type: "message_update",
+        usage: partial.usage,
+        assistantMessageEvent: { type: "start" },
+      });
+      // pi starts a message before the provider has accepted the request.
+      expect(retrying.retry).not.toBeNull();
+      const responding = applyEvent(retrying, {
+        type: "message_update",
+        usage: partial.usage,
+        assistantMessageEvent: { type, contentIndex: 0, delta: "hello" },
+      });
+      expect(responding.retry).toBeNull();
+      expect(responding.streaming).not.toBeNull();
+    },
+  );
+
+  test("settling clears a retry even without auto_retry_end", () => {
+    const retrying = applyEvent(empty, {
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2000,
+      errorMessage: "503 Service Unavailable",
+    });
+    expect(applyEvent(retrying, { type: "agent_settled" }).retry).toBeNull();
   });
 
   test("compaction shows from compaction_start until compaction_end", () => {

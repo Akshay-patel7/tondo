@@ -3,6 +3,7 @@
 // pi's own status lines. Errors are alerts, which screen readers announce at
 // once, and the rest are statuses, which they announce when they're idle.
 import { ChevronRight, CircleAlert, RotateCw, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { CompactionReason, Retry } from "../../shared/thread";
 import { dismissError, restartPi, useHost, usePi } from "../connection";
 import { useThread } from "../thread/store";
@@ -52,8 +53,26 @@ function PiStopped({ error }: { error: string }) {
   );
 }
 
-function retryText({ attempt, maxAttempts, delayMs }: Retry): string {
-  return `Retrying (${attempt}/${maxAttempts}) in ${Math.ceil(delayMs / 1000)} s. Escape cancels.`;
+function RetryBanner({ retry }: { retry: Retry }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((retry.retryAt - now) / 1000));
+  const delay = seconds > 0 ? ` in ${seconds} s` : "";
+
+  return (
+    <Alert variant="warning" role="status">
+      <RotateCw aria-hidden className="self-start translate-y-px" />
+      <AlertTitle>
+        Retrying ({retry.attempt}/{retry.maxAttempts}){delay}. Escape cancels.
+      </AlertTitle>
+      {retry.errorMessage ? (
+        <AlertDescription className="break-words">{retry.errorMessage}</AlertDescription>
+      ) : null}
+    </Alert>
+  );
 }
 
 function compactionText(reason: CompactionReason): string {
@@ -72,15 +91,7 @@ export function Banners() {
     <div className="mb-2 flex flex-col gap-2 empty:hidden">
       {/* A pi Tondo couldn't find or can't run is explained in the main area instead. */}
       {pi.state === "exited" && pi.problem === undefined ? <PiStopped error={pi.error} /> : null}
-      {retry ? (
-        <Alert variant="warning" role="status">
-          <RotateCw aria-hidden className="self-start translate-y-px" />
-          <AlertTitle>{retryText(retry)}</AlertTitle>
-          {retry.errorMessage ? (
-            <AlertDescription className="break-words">{retry.errorMessage}</AlertDescription>
-          ) : null}
-        </Alert>
-      ) : null}
+      {retry ? <RetryBanner key={retry.retryAt} retry={retry} /> : null}
       {compaction ? (
         <Alert role="status">
           {/* It spins only while pi compacts, and the banner goes when pi is done. */}

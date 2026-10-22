@@ -642,7 +642,11 @@ export class LiveThread {
       this.questionnaires.clear();
       this.questionCalls.clear();
     }
-    const event = record as PiEvent;
+    const piEvent = record as PiEvent;
+    const event: PiEvent =
+      piEvent.type === "auto_retry_start"
+        ? { ...piEvent, retryAt: Date.now() + piEvent.delayMs }
+        : piEvent;
     if (event.type === "agent_start") this.checkpoints.started();
     if (event.type === "agent_settled") this.checkpoints.settled();
     if (event.type === "session_info_changed") {

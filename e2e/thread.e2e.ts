@@ -270,20 +270,49 @@ test("a model you pick is the one pi reports", async () => {
   await expectPicked(page, "Model", "faux/faux-2");
 });
 
-test("a failed request shows pi's retry, then the reply", async () => {
+test("a retry counts down and clears while the recovered reply is still streaming", async () => {
+  const answer = words(120);
   const page = await start({
-    responses: [failure("503 Service Unavailable"), reply("Recovered.")],
+    tokensPerSecond: 40,
+    responses: [failure("503 Service Unavailable"), reply(answer)],
   });
+  await page.emulateMedia({ colorScheme: "dark" });
   const statuses = await recordStatuses(page);
+  const retry = page.getByRole("status").filter({ hasText: "Retrying" });
 
   await send(page, "Hello?");
-  await expect(page.getByText("Recovered.")).toBeVisible();
-  await waitForIdle(page);
-  // The banner showed while pi waited to retry, and went once pi's retry worked.
+  await expect(retry).toContainText("Retrying (1/3) in 2 s.");
+  await expect(retry).toContainText("Retrying (1/3) in 1 s.");
+  await page.screenshot({ path: test.info().outputPath("retry-countdown.png") });
+  await expect(page.locator("[data-streaming]")).toContainText("word0");
+  await expect(retry).toBeHidden();
+  await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("retry-recovered.png") });
   expect(await statuses.jsonValue()).toContainEqual(
-    "Retrying (1/3) in 2 s. Escape cancels.503 Service Unavailable",
+    "Retrying (1/3) in 1 s. Escape cancels.503 Service Unavailable",
   );
-  await expect(page.getByRole("status")).toHaveCount(0);
+  await expect(page.getByText(answer, { exact: true })).toBeVisible({ timeout: 30_000 });
+  await waitForIdle(page);
+});
+
+test("a new retry resets the countdown and Escape clears it", async () => {
+  const page = await start({
+    responses: [
+      failure("503 Service Unavailable"),
+      failure("429 Too Many Requests"),
+      reply("Should not run."),
+    ],
+  });
+  const retry = page.getByRole("status").filter({ hasText: "Retrying" });
+  await send(page, "Hello?");
+  await expect(retry).toContainText("Retrying (1/3) in 1 s.");
+  await expect(retry).toContainText("Retrying (2/3) in 4 s.");
+  await expect(retry).toContainText("429 Too Many Requests");
+  await expect(retry).toContainText("Retrying (2/3) in 3 s.");
+  await composer(page).press("Escape");
+  await expect(retry).toBeHidden();
+  await waitForIdle(page);
+  await expect(page.getByText("Should not run.")).toHaveCount(0);
 });
 
 test("a project that needs trust asks first, and Tondo remembers the answer", async () => {

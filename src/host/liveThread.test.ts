@@ -171,6 +171,31 @@ describe("pi's events", () => {
     expect(listener.events).toHaveBeenCalledWith([queued]);
   });
 
+  it("stamps a retry deadline shared by live events and restored snapshots", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      thread.show();
+      emit({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 2000,
+        errorMessage: "503 Service Unavailable",
+      });
+      expect(thread.state.retry?.retryAt).toBe(3000);
+      expect(listener.events).toHaveBeenLastCalledWith([
+        expect.objectContaining({ type: "auto_retry_start", retryAt: 3000 }),
+      ]);
+      // Switching back or reloading the page must not restart the countdown.
+      clock.mockReturnValue(2500);
+      thread.hide();
+      thread.show();
+      expect(thread.state.retry?.retryAt).toBe(3000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("drops records from a pi that was replaced", async () => {
     const oldEmit = emit;
     pi = fakePi();
