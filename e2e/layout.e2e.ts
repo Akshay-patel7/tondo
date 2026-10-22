@@ -238,7 +238,9 @@ for (const size of ["default", "minimum", "zoomed"] as const) {
     await send(page, "First.");
     const header = page.locator("header");
     await expect(header.getByRole("heading")).toHaveText("First.");
-    await threads(page).getByTitle("First.", { exact: true }).click({ button: "right" });
+    await threads(page)
+      .getByRole("button", { name: "First.", exact: true })
+      .click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
     const title =
       "In tondo the pi plugins area is looking a bit weird. Also can you add git pull support?";
@@ -246,7 +248,7 @@ for (const size of ["default", "minimum", "zoomed"] as const) {
     await input.fill(title);
     await input.press("Enter");
     await expect(header.getByRole("heading")).toHaveText(title);
-    await expect(threads(page).getByTitle(title, { exact: true })).toBeVisible();
+    await expect(threads(page).getByRole("button", { name: title, exact: true })).toBeVisible();
     const branch = header.locator("span").filter({ hasText: /^Branch main$/ });
     await expect(branch).toBeVisible();
 

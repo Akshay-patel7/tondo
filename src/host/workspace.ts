@@ -1650,6 +1650,7 @@ export class Workspace {
     return {
       id,
       title: this.titleOf(id),
+      model: this.modelOf(id),
       updatedAt: thread?.updatedAt ?? summary?.updatedAt ?? row?.createdAt ?? 0,
       pinned: row?.pinned ?? false,
       archived: row?.archived ?? false,
@@ -1662,6 +1663,24 @@ export class Workspace {
         summary !== undefined ||
         (thread?.state.messages.some((message) => message.role === "assistant") ?? false),
     };
+  }
+
+  /** Reading sidebar metadata never starts pi. Saved sessions keep their own model. */
+  private modelOf(id: string): string | null {
+    const current = this.live.get(id)?.status;
+    const model =
+      current?.state === "ready" ? current.session.model : this.found.get(id)?.summary.model;
+    if (!model) return null;
+    // A running pi's catalog can name a model used by an unopened session too.
+    for (const thread of this.live.values()) {
+      const status = thread.status;
+      if (status.state !== "ready") continue;
+      const option = status.session.models.find(
+        (candidate) => candidate.provider === model.provider && candidate.id === model.id,
+      );
+      if (option) return option.name;
+    }
+    return `${model.provider}/${model.id}`;
   }
 
   private describe(thread: LiveThread): OpenThread {

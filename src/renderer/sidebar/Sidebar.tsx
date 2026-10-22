@@ -70,6 +70,7 @@ import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
 import { PanelResizeHandle } from "../ui/panel-resize";
 import { StatusDot, StatusRing, TondoMark } from "../ui/status";
+import { ThreadTooltipContent } from "../ui/thread-tooltip";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { toggleSidebarShown, usePanelSize } from "./layout";
 import { listedThreads, MORE_SIZE, PAGE_SIZE, runningCount } from "./model";
@@ -778,66 +779,73 @@ function ThreadRow({
           <RenameInput thread={thread} />
         ) : (
           <>
-            <button
-              ref={row}
-              type="button"
-              data-sidebar-row=""
-              data-thread-id={thread.id}
-              tabIndex={tabIndex}
-              aria-current={open ? "page" : undefined}
-              title={thread.title}
-              onClick={() => openThread(thread.id)}
-              onKeyDown={openContextMenu}
-              className={`flex h-7 w-full items-center gap-2 rounded-control pr-2 pl-3 text-left text-sm outline-none focus-visible:focus-ring ${
-                open
-                  ? "bg-selected text-foreground"
-                  : "text-muted-foreground group-has-data-popup-open:bg-accent group-has-data-popup-open:text-foreground group-data-popup-open:bg-accent group-data-popup-open:text-foreground hover:bg-accent hover:text-foreground"
-              }`}
-            >
-              <ActivityDot activity={thread.activity} unread={thread.unread} />
-              <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-              {thread.hasDraft ? (
-                <span
-                  role="img"
-                  aria-label="Unsent draft"
-                  title="Unsent draft"
-                  className="flex shrink-0 text-faint-foreground"
-                >
-                  <Pen aria-hidden className="size-3" />
-                </span>
-              ) : null}
-              {thread.pinned ? (
-                <span
-                  role="img"
-                  aria-label="Pinned"
-                  title="Pinned"
-                  className="flex shrink-0 text-faint-foreground"
-                >
-                  <Pin aria-hidden className="size-3" />
-                </span>
-              ) : null}
-              {thread.worktree ? (
-                <span
-                  role="img"
-                  aria-label="Worktree"
-                  title="Worktree"
-                  className="flex shrink-0 text-faint-foreground"
-                >
-                  <GitBranch aria-hidden className="size-3" />
-                </span>
-              ) : null}
-              {/* The age gives way to the actions button while that shows. It's
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    ref={row}
+                    type="button"
+                    data-sidebar-row=""
+                    data-thread-id={thread.id}
+                    tabIndex={tabIndex}
+                    aria-current={open ? "page" : undefined}
+                    aria-label={thread.title}
+                    onClick={() => openThread(thread.id)}
+                    onKeyDown={openContextMenu}
+                    className={`flex h-7 w-full items-center gap-2 rounded-control pr-2 pl-3 text-left text-sm outline-none focus-visible:focus-ring ${
+                      open
+                        ? "bg-selected text-foreground"
+                        : "text-muted-foreground group-has-data-popup-open:bg-accent group-has-data-popup-open:text-foreground group-data-popup-open:bg-accent group-data-popup-open:text-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                  />
+                }
+              >
+                <ActivityDot activity={thread.activity} unread={thread.unread} />
+                <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+                {thread.hasDraft ? (
+                  <span
+                    role="img"
+                    aria-label="Unsent draft"
+                    title="Unsent draft"
+                    className="flex shrink-0 text-faint-foreground"
+                  >
+                    <Pen aria-hidden className="size-3" />
+                  </span>
+                ) : null}
+                {thread.pinned ? (
+                  <span
+                    role="img"
+                    aria-label="Pinned"
+                    title="Pinned"
+                    className="flex shrink-0 text-faint-foreground"
+                  >
+                    <Pin aria-hidden className="size-3" />
+                  </span>
+                ) : null}
+                {thread.worktree ? (
+                  <span
+                    role="img"
+                    aria-label="Worktree"
+                    title="Worktree"
+                    className="flex shrink-0 text-faint-foreground"
+                  >
+                    <GitBranch aria-hidden className="size-3" />
+                  </span>
+                ) : null}
+                {/* The age gives way to the actions button while that shows. It's
                   at least as wide as the button, so the markers stay clear of it. */}
-              {thread.activity === "waiting" ? (
-                <span className="min-w-7 shrink-0 text-right text-2xs font-medium text-warning-text group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
-                  Needs input
-                </span>
-              ) : (
-                <span className="min-w-7 shrink-0 text-right text-2xs text-faint-foreground tabular-nums group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
-                  {formatAge(thread.updatedAt, now)}
-                </span>
-              )}
-            </button>
+                {thread.activity === "waiting" ? (
+                  <span className="min-w-7 shrink-0 text-right text-2xs font-medium text-warning-text group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
+                    Needs input
+                  </span>
+                ) : (
+                  <span className="min-w-7 shrink-0 text-right text-2xs text-faint-foreground tabular-nums group-focus-within:invisible group-hover:invisible group-has-data-popup-open:invisible group-data-popup-open:invisible">
+                    {formatAge(thread.updatedAt, now)}
+                  </span>
+                )}
+              </TooltipTrigger>
+              <ThreadTooltipContent title={thread.title} model={thread.model} />
+            </Tooltip>
             {/* It fades out rather than hides, like the project's buttons, so
                 Shift+Tab reaches it as Tab does. Its menu renders outside the
                 row, so it stays shown while the menu is open, and closing the

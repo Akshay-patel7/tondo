@@ -174,7 +174,7 @@ test("large output stays available to copy after resizing, switching threads and
   await composer(page).fill("Keep terminal history");
   await composer(page).press("ControlOrMeta+n");
   await waitForPi(page);
-  await threads(page).locator("li > button[title]:not([aria-label]):not([aria-current])").click();
+  await threads(page).locator("button[data-thread-id]:not([aria-current])").click();
   await expect(output()).toContainText("TONDO_LARGE_DONE");
   await scrollToStart();
   await page.reload();
@@ -377,7 +377,7 @@ test("switching threads retains each shell, and clipboard paste reaches the term
   await expect(output()).toContainText("SECOND=empty");
   await composer(page).fill("Second shell");
   await expect(threadRows(page)).toHaveCount(2);
-  await page.locator("nav li > button[title]:not([aria-label]):not([aria-current])").click();
+  await page.locator("nav button[data-thread-id]:not([aria-current])").click();
   await expect(output()).toContainText("FIRST_READY");
   await command("printf 'KEPT=%s\\n' \"$TONDO_TERMINAL_TEST\"");
   await expect(output()).toContainText("KEPT=first");
@@ -536,7 +536,7 @@ test("confirmed deletion stops its terminal's shell and background jobs", async 
   await expect(threadRows(page)).toHaveCount(1);
   await waitForPi(page);
   await threads(page)
-    .locator("li > button[title]:not([aria-label]):not([aria-current])")
+    .locator("button[data-thread-id]:not([aria-current])")
     .click({ button: "right" });
   await page
     .getByRole("menu", { name: "Thread actions" })
@@ -546,7 +546,7 @@ test("confirmed deletion stops its terminal's shell and background jobs", async 
   await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(processesIn(groups)).not.toEqual([]);
   await threads(page)
-    .locator("li > button[title]:not([aria-label]):not([aria-current])")
+    .locator("button[data-thread-id]:not([aria-current])")
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Delete…", exact: true }).click();
   await page.screenshot({

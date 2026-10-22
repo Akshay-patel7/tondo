@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PROTOCOL_VERSION as v, type HostMessage } from "../shared/protocol";
+import { PROTOCOL_VERSION as v, type HostMessage, type PiStatus } from "../shared/protocol";
 import type { PiMessage } from "../shared/thread";
 import type { PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
 import type { ThreadListener } from "./liveThread";
@@ -37,7 +37,18 @@ const { FakeThread, threads } = vi.hoisted(() => {
     readonly sessionFile: string | null;
     readonly listener: ThreadListener;
     readonly checkpoints: { readonly busy: boolean };
-    readonly status = { state: "ready" };
+    status: PiStatus = {
+      state: "ready",
+      session: {
+        model: null,
+        models: [],
+        thinkingLevel: "off",
+        thinkingLevels: ["off"],
+        context: null,
+        commands: [],
+        signedIn: false,
+      },
+    };
     readonly state = { messages: [] as PiMessage[], running: false, compaction: null, retry: null };
     readonly ui = {};
     readonly waiting = false;
@@ -777,6 +788,106 @@ describe("worktree creation alongside a busy checkout", () => {
       expect(git("branch", "--show-current")).toBe("main");
     },
   );
+});
+
+describe("sidebar models", () => {
+  it("reads unopened sessions without starting pi, including unknown models", async () => {
+    const project = store.addProject(dir, 1);
+    const file = session("saved-model", project.id);
+    const header = readFileSync(file, "utf8");
+    writeFileSync(
+      file,
+      `${header}${JSON.stringify({
+        type: "model_change",
+        provider: "custom",
+        modelId: "saved-model",
+      })}\n`,
+    );
+    session("unknown-model", project.id);
+    await workspace.refresh();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        {
+          threads: [
+            { id: "saved-model", model: "custom/saved-model" },
+            { id: "unknown-model", model: null },
+          ],
+        },
+      ],
+    });
+    expect(threads).toHaveLength(0);
+    expect(store.ui().openThread).toBeNull();
+  });
+
+  it("prefers live model changes, names saved models from the catalog and keeps a missing model unknown", async () => {
+    const project = store.addProject(dir, 1);
+    const file = session("saved", project.id);
+    writeFileSync(
+      file,
+      `${readFileSync(file, "utf8")}${JSON.stringify({
+        type: "model_change",
+        provider: "faux",
+        modelId: "faux-2",
+      })}\n`,
+    );
+    addThread(project.id, "live");
+    const thread = await openThread("live");
+    const sessionState = {
+      model: { provider: "faux", id: "faux-1" },
+      models: [
+        { provider: "faux", id: "faux-1", name: "Faux 1" },
+        { provider: "faux", id: "faux-2", name: "Faux 2" },
+      ],
+      thinkingLevel: "off" as const,
+      thinkingLevels: ["off" as const],
+      context: null,
+      commands: [],
+      signedIn: true,
+    };
+    thread.status = { state: "ready", session: sessionState };
+    await workspace.refresh();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        {
+          threads: [
+            { id: "live", model: "Faux 1" },
+            { id: "saved", model: "Faux 2" },
+          ],
+        },
+      ],
+    });
+    thread.status = {
+      state: "ready",
+      session: {
+        ...sessionState,
+        model: { provider: "faux", id: "faux-2" },
+      },
+    };
+    await workspace.refresh();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        {
+          threads: [
+            { id: "live", model: "Faux 2" },
+            { id: "saved", model: "Faux 2" },
+          ],
+        },
+      ],
+    });
+    thread.status = { state: "ready", session: { ...sessionState, model: null } };
+    await workspace.refresh();
+    expect(sent.findLast((message) => message.type === "sidebar")).toMatchObject({
+      projects: [
+        {
+          threads: [
+            { id: "live", model: null },
+            { id: "saved", model: "Faux 2" },
+          ],
+        },
+      ],
+    });
+    expect(threads).toHaveLength(1);
+  });
 });
 
 describe("thread titles after compaction", () => {

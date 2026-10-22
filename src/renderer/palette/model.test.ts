@@ -8,6 +8,7 @@ function thread(id: string, updatedAt: number, extra: Partial<SidebarThread> = {
   return {
     id,
     title: `Thread ${id}`,
+    model: null,
     updatedAt,
     pinned: false,
     archived: false,

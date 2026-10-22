@@ -7,6 +7,7 @@
 import type { Stats } from "node:fs";
 import { lstat, readdir, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
+import type { PiSession } from "../shared/protocol";
 import type { SessionFolder } from "./sessionFolder";
 
 export interface SessionSummary {
@@ -22,6 +23,8 @@ export interface SessionSummary {
   readonly name: string | undefined;
   /** The first thing you asked, on one line and cut to TITLE_LENGTH, or "" before you ask anything. */
   readonly firstMessage: string;
+  /** The selected branch's last model, including changes made without a reply. */
+  readonly model: PiSession["model"];
 }
 
 export const TITLE_LENGTH = 100;
@@ -146,6 +149,7 @@ function summarize(file: string, text: string, mtimeMs: number): SessionSummary 
     updatedAt: lastActivity(text) ?? created ?? mtimeMs,
     name: lastName(text),
     firstMessage: oneLine(firstMessage),
+    model: lastModel(text),
   };
 }
 
@@ -224,6 +228,38 @@ function lastName(text: string): string | undefined {
     at = text.lastIndexOf(NAME_TOKEN, start - 1);
   }
   return undefined;
+}
+
+/** The last model on the saved leaf's ancestry, or the last in an older, linear session. */
+function lastModel(text: string): PiSession["model"] {
+  let parent: string | null | undefined;
+  for (let end = text.length; end > 0;) {
+    const start = text.lastIndexOf("\n", end - 1) + 1;
+    const entry = parseLine(text.slice(start, end));
+    end = start - 1;
+    if (!isEntry(entry) || entry.type === "session") continue;
+    if (parent !== undefined && entry.id !== parent) continue;
+    if (typeof entry.id === "string") {
+      parent = typeof entry.parentId === "string" ? entry.parentId : null;
+    }
+    let provider: unknown;
+    let id: unknown;
+    if (entry.type === "model_change") {
+      provider = entry.provider;
+      id = entry.modelId;
+    } else if (
+      entry.type === "message" &&
+      isEntry(entry.message) &&
+      entry.message.role === "assistant"
+    ) {
+      provider = entry.message.provider;
+      id = entry.message.model;
+    }
+    if (typeof provider === "string" && provider && typeof id === "string" && id) {
+      return { provider, id };
+    }
+  }
+  return null;
 }
 
 /** A message's text as the sidebar titles a thread with it: on one line and cut to TITLE_LENGTH. */

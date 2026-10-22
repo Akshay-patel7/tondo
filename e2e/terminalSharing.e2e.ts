@@ -307,7 +307,7 @@ test("sharing and pending output stay with their thread through switches and rel
   await expect(attachment()).toBeHidden();
   await command("printf 'SECOND_THREAD_%s\\n' PRIVATE", "SECOND_THREAD_PRIVATE");
   expect(await post("Keep this second thread.")).toBe("Keep this second thread.");
-  await threads(page).locator("li > button[title]:not([aria-label]):not([aria-current])").click();
+  await threads(page).locator("button[data-thread-id]:not([aria-current])").click();
   await waitForPi(page);
   await expect(sharing()).toBeChecked();
   const dialog = await preview();

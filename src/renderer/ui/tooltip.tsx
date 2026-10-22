@@ -12,7 +12,7 @@ type TooltipContentProps = Omit<ComponentProps<typeof TooltipPrimitive.Popup>, "
   Pick<
     ComponentProps<typeof TooltipPrimitive.Positioner>,
     "side" | "align" | "sideOffset" | "alignOffset"
-  > & { className?: string };
+  > & { className?: string; variant?: "default" | "card" };
 
 /**
  * A short label that shows while its trigger is hovered or has keyboard focus.
@@ -37,6 +37,7 @@ function TooltipTrigger({ className, delay = OPEN_DELAY_MS, ...props }: TooltipT
 // inside looks as it does everywhere else.
 function TooltipContent({
   className,
+  variant = "default",
   side = "top",
   align = "center",
   sideOffset = 6,
@@ -56,6 +57,7 @@ function TooltipContent({
           data-slot="tooltip-popup"
           className={cn(
             "app-no-drag flex max-w-xs origin-(--transform-origin) items-center gap-1.5 rounded-control border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-composer transition-[opacity,scale] duration-100 ease-out has-data-[slot=kbd]:pe-1 data-ending-style:scale-95 data-ending-style:opacity-0 data-instant:transition-none data-starting-style:scale-95 data-starting-style:opacity-0",
+            variant === "card" && "max-w-sm flex-col items-start gap-2 px-3 py-2.5",
             className,
           )}
           {...props}

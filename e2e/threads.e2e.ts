@@ -108,7 +108,7 @@ test("a pi session opens with its whole transcript, and pi carries on in the sam
 
   const session = threads(page).locator(`${THREAD_ROW}:not([aria-current])`);
   await expect(session).toHaveCount(1);
-  const title = await session.getAttribute("title");
+  const title = await session.getAttribute("aria-label");
   await session.click();
   await waitForTranscript(page);
   await expect(heading(page)).toHaveText(title!);
@@ -841,14 +841,14 @@ async function ask(page: Page, question: string, answer: string): Promise<void> 
 
 /** The sidebar row of the thread titled `title`. */
 function threadRow(page: Page, title: string) {
-  return threads(page).getByTitle(title, { exact: true });
+  return threads(page).getByRole("button", { name: title, exact: true });
 }
 
 /** The "Thread actions" button beside the row of the thread titled `title`. */
 function rowActions(page: Page, title: string) {
   return threads(page)
     .getByRole("listitem")
-    .filter({ has: page.getByTitle(title, { exact: true }) })
+    .filter({ has: page.getByRole("button", { name: title, exact: true }) })
     .getByRole("button", { name: "Thread actions" });
 }
 
@@ -875,7 +875,9 @@ async function showMore(page: Page, more: number, total: number): Promise<void> 
 
 /** The titles of the threads the sidebar lists, top to bottom. */
 function threadTitles(page: Page): Promise<string[]> {
-  return threadRows(page).evaluateAll((rows) => rows.map((row) => row.getAttribute("title") ?? ""));
+  return threadRows(page).evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("aria-label") ?? ""),
+  );
 }
 
 /** The open thread's title, in the header. */
@@ -913,7 +915,7 @@ function timeToListed(page: Page, title: string) {
       });
       const listed = () =>
         [...document.querySelectorAll(`nav ${row}`)].some(
-          (element) => element.getAttribute("title") === wanted,
+          (element) => element.getAttribute("aria-label") === wanted,
         );
       const done = new Promise<number>((resolve) => {
         const observer = new MutationObserver(() => {

@@ -135,8 +135,61 @@ describe("SessionIndex", () => {
         updatedAt: ANSWERED,
         name: "Build fix",
         firstMessage: "Fix the build",
+        model: null,
       },
     ]);
+  });
+
+  it("reads the last selected model even when it has not answered yet", async () => {
+    const file = write("model.jsonl", [
+      header("model"),
+      { type: "model_change", id: "a", parentId: null, provider: "faux", modelId: "faux-1" },
+      {
+        type: "message",
+        id: "b",
+        parentId: "a",
+        message: { role: "assistant", provider: "faux", model: "faux-1", content: [] },
+      },
+      { type: "model_change", id: "c", parentId: "b", provider: "faux", modelId: "faux-2" },
+      { type: "session_info", id: "d", parentId: "c", name: "Changed" },
+      "{incomplete",
+    ]);
+    expect((await new SessionIndex().summary(file))?.model).toEqual({
+      provider: "faux",
+      id: "faux-2",
+    });
+  });
+
+  it("uses the selected branch rather than a later model on an abandoned branch", async () => {
+    const file = write("branched.jsonl", [
+      header("branched"),
+      { type: "model_change", id: "a", parentId: null, provider: "first", modelId: "one" },
+      { type: "model_change", id: "b", parentId: "a", provider: "abandoned", modelId: "two" },
+      { type: "session_info", id: "c", parentId: "a", name: "Back on the first branch" },
+    ]);
+    expect((await new SessionIndex().summary(file))?.model).toEqual({
+      provider: "first",
+      id: "one",
+    });
+  });
+
+  it("reads model metadata from assistant messages in older sessions", async () => {
+    const file = write("assistant-model.jsonl", [
+      header("old-model"),
+      {
+        type: "message",
+        message: { role: "assistant", provider: "custom", model: "custom-model" },
+      },
+      { type: "model_change", provider: 1, modelId: false },
+      { type: "message", message: { role: "user", content: "model_change" } },
+    ]);
+    expect((await new SessionIndex().summary(file))?.model).toEqual({
+      provider: "custom",
+      id: "custom-model",
+    });
+    expect(
+      (await new SessionIndex().summary(write("unknown.jsonl", [header("unknown")])))?.model,
+    ).toBeNull();
   });
 
   it("reads version 1 files, whose header and entries have fewer fields", async () => {

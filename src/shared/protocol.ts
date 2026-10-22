@@ -34,7 +34,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -237,6 +237,8 @@ export interface SidebarThread {
   /** pi's session id. */
   readonly id: string;
   readonly title: string;
+  /** The live or saved model's name, or provider/id if its name isn't available. */
+  readonly model: string | null;
   /** When the thread last had a message, in milliseconds since 1970. */
   readonly updatedAt: number;
   readonly pinned: boolean;

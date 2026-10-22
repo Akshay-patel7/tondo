@@ -161,11 +161,10 @@ export function threads(page: Page) {
 }
 
 /**
- * A thread's row in the sidebar. Its title attribute holds the thread's
- * title. The row's list item also holds a "Thread actions" button, which an
- * aria-label names.
+ * A thread's row in the sidebar. Its accessible name is the full title.
+ * The list item also holds a separate "Thread actions" button.
  */
-export const THREAD_ROW = "li > button[title]:not([aria-label])";
+export const THREAD_ROW = "li > button[data-thread-id]";
 
 /** The sidebar's thread rows. */
 export function threadRows(page: Page) {

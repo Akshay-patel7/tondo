@@ -463,8 +463,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 25, which adds terminal sharing and previews", () => {
-    expect(PROTOCOL_VERSION).toBe(25);
+  it("speaks version 26, which adds sidebar thread models", () => {
+    expect(PROTOCOL_VERSION).toBe(26);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

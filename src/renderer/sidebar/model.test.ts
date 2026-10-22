@@ -6,6 +6,7 @@ function thread(id: string, extra: Partial<SidebarThread> = {}): SidebarThread {
   return {
     id,
     title: `Thread ${id}`,
+    model: null,
     updatedAt: 1,
     pinned: false,
     archived: false,
@@ -34,6 +35,15 @@ describe("keepUnchanged", () => {
     expect(next[0]!.threads[1]).not.toBe(previous[0]!.threads[1]);
     expect(next[0]!.threads[1]!.activity).toBe("working");
     expect(next[1]).toBe(previous[1]);
+  });
+
+  test("reuses unchanged model labels and replaces a row when its model changes", () => {
+    const previous = [project(1, [thread("a", { model: "Faux 1" })])];
+    const same = keepUnchanged(previous, [project(1, [thread("a", { model: "Faux 1" })])]);
+    expect(same[0]).toBe(previous[0]);
+    const next = keepUnchanged(previous, [project(1, [thread("a", { model: "Faux 2" })])]);
+    expect(next[0]!.threads[0]).not.toBe(previous[0]!.threads[0]);
+    expect(next[0]!.threads[0]!.model).toBe("Faux 2");
   });
 
   test("replaces a row when its worktree ownership changes", () => {
