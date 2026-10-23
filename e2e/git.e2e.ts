@@ -447,7 +447,10 @@ test("status labels and the PR link update without opening Git actions or Change
 
 test("the worktree directory setting affects new checkouts, survives restart and leaves old checkouts removable", async () => {
   test.setTimeout(90_000);
-  const first = await start([bashCall("pwd"), reply("Working in the custom folder.")]);
+  const first = await start([
+    bashCall("pwd", "custom-cwd"),
+    reply("Working in the custom folder."),
+  ]);
   let { page } = first;
   const errors: string[] = [];
   const watchErrors = (target: Page) => {
@@ -539,7 +542,7 @@ test("the worktree directory setting affects new checkouts, survives restart and
   await send(page, "Show custom cwd");
   await expect(page.getByText("Working in the custom folder.", { exact: true })).toBeVisible();
   await waitForIdle(page);
-  await page.getByRole("button", { name: "Done Run pwd", exact: true }).click();
+  await page.locator('[data-tool-call="custom-cwd"]').getByRole("button").first().click();
   await expect(page.getByText(checkout, { exact: true })).toBeVisible();
 
   settings = await openWorktreeSettings();
@@ -555,7 +558,7 @@ test("the worktree directory setting affects new checkouts, survives restart and
   await bringToFront(tondo);
   await waitForPi(page);
   await expectBranch(page, "feature/custom-location");
-  await page.getByRole("button", { name: "Done Run pwd", exact: true }).click();
+  await page.locator('[data-tool-call="custom-cwd"]').getByRole("button").first().click();
   await expect(page.getByText(checkout, { exact: true })).toBeVisible();
   settings = await openWorktreeSettings();
   await expect(settings.getByText(nextRoot, { exact: true })).toBeVisible();
