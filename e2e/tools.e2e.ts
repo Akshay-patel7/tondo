@@ -1,7 +1,7 @@
 // The work log: every built-in tool and an extension's tool from a recorded
 // turn, grouped into one log whose header folds it, a shell command's output
-// while it runs, and edit diffs highlighted by @pierre/diffs's worker pool
-// under the CSP, in colors legible in both schemes.
+// while it runs, readable summaries and result previews, and edit diffs
+// highlighted by @pierre/diffs's worker pool under the CSP in both schemes.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,21 +104,56 @@ test("every built-in tool and an extension's tool get a work log row that opens 
   await expect(list.locator("[data-tool-call]")).toHaveCount(9);
 
   const rows: [id: string, header: string, body: string][] = [
-    ["look_0", "List src 2 entries", "parser.ts"],
-    ["look_1", "Search *.ts 2 files", "src/lexer.ts"],
-    ["look_2", "Search export function in src 2 matches", "parser.ts:8: export function parse"],
-    ["look_3", "Read src/parser.ts 18 lines", "export function parse(source: string): Node[] {"],
-    ["look_4", "Run wc -l src/*.ts", "29 total"],
-    ["look_5", "Run Get-ChildItem src", "The powershell tool is only available on Windows."],
-    ["look_6", 'word_count {"path":"README.md"}', "README.md has 11 words."],
-    ["change_0", "Edit src/parser.ts +1 −0", 'if (token.type === "space") continue;'],
-    ["change_1", "Write src/kinds.ts 3 lines", "export const KINDS"],
+    ["look_0", "List src", "parser.ts"],
+    ["look_1", 'Find files matching "*.ts"', "src/lexer.ts"],
+    ["look_2", 'Search for "export function"', "parser.ts:8: export function parse"],
+    ["look_3", "Read parser.ts", "export function parse(source: string): Node[] {"],
+    ["look_4", "Run bash command", "29 total"],
+    ["look_5", "Run powershell command", "The powershell tool is only available on Windows."],
+    ["look_6", "Word count", "README.md has 11 words."],
+    ["change_0", "Edit parser.ts", 'if (token.type === "space") continue;'],
+    ["change_1", "Write kinds.ts", "export const KINDS"],
   ];
+  await expect(card(page, "look_3").locator("[data-tool-detail]")).toHaveText("src/parser.ts");
+  await expect(card(page, "look_3").locator("[data-tool-preview]")).toHaveCount(0);
+  await expect(header(card(page, "look_3"))).toContainText("18 lines");
+  await expect(card(page, "look_6").locator("[data-tool-detail]")).toHaveText("path: README.md");
+  await expect(card(page, "look_2").locator("[data-tool-preview]")).toContainText("parser.ts:8:");
+  await expect(card(page, "look_5").locator("[data-tool-preview]")).toContainText(
+    "only available on Windows",
+  );
+  await expect(card(page, "change_0").locator("[data-tool-preview]")).toContainText(
+    'if (token.type === "space") continue;',
+  );
+  // Closed previews must not load the code viewer or start its workers.
+  expect(page.workers()).toHaveLength(0);
+  await page.emulateMedia({ colorScheme: "light" });
+  await header(log).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: test.info().outputPath("previews-light.png"),
+    animations: "disabled",
+  });
+  await card(page, "change_1").scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: test.info().outputPath("previews-bottom-light.png"),
+    animations: "disabled",
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: test.info().outputPath("previews-bottom-dark.png"),
+    animations: "disabled",
+  });
+  await header(log).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: test.info().outputPath("previews-dark.png"),
+    animations: "disabled",
+  });
   for (const [id, title, body] of rows) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- one row at a time, each opened and photographed in turn.
     await openCard(page, id, title, body);
   }
-  // The extension's tool gets the generic row, with its arguments.
+  // The readable extension label never replaces its exact name or arguments.
+  await expect(card(page, "look_6")).toContainText("Tool: word_count");
   await expect(card(page, "look_6")).toContainText('"path": "README.md"');
 
   // The diffs came from the worker pool, and the CSP let everything load.
@@ -126,7 +161,78 @@ test("every built-in tool and an extension's tool get a work log row that opens 
   expect(await violations.jsonValue()).toEqual([]);
 });
 
-test("a running command shows its last lines under its row until it ends", async () => {
+test("long summaries stay compact while click and keyboard expansion expose the exact inputs", async () => {
+  const relative =
+    "src/a-long-directory-for-tool-summary-checks/a-long-filename-for-the-tool-summary.ts";
+  const file = path.join(project, relative);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, "one\ntwo\nthree\nfour\nfive\n");
+  const command = `printf '%s\\n' '${"detail ".repeat(100)}END_OF_COMMAND'\nprintf 'last result\\n'`;
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      responses: [
+        toolCalls(
+          { id: "long_read", name: "read", arguments: { path: relative, offset: 3, limit: 2 } },
+          { id: "long_command", name: "bash", arguments: { command, timeout: 10 } },
+        ),
+        reply("Inspected the file and ran the command."),
+      ],
+    },
+  });
+  const { app, page } = tondo;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await send(page, "Inspect the file and run the command.");
+  await expect(page.getByText("Inspected the file and ran the command.")).toBeVisible();
+  const read = card(page, "long_read");
+  const run = card(page, "long_command");
+  await expect(read.locator("[data-tool-detail]")).toHaveText(`${relative} · requested lines 3–4`);
+  await expect(run.locator("[data-tool-detail]")).not.toContainText("END_OF_COMMAND");
+  await expect(run.locator("[data-tool-preview]")).toContainText("last result");
+  await expect(run.locator("[data-tool-preview]")).not.toContainText("detail ".repeat(60));
+  await expect(run.locator("[data-tool-preview]")).toContainText("More output");
+
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(840, 620));
+  await expect.poll(() => page.evaluate(() => innerWidth)).toBe(840);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await header(run).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+    true,
+  );
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({
+    path: test.info().outputPath("narrow-light.png"),
+    animations: "disabled",
+  });
+
+  await run.locator("[data-tool-preview]").click();
+  await expect(header(run)).toHaveAttribute("aria-expanded", "true");
+  await expect(run.getByRole("region", { name: "Command" })).toHaveText(command);
+  await expect(run.getByRole("region", { name: "Arguments" })).toContainText('"timeout": 10');
+  await expect(run.getByRole("region", { name: "Output" })).toContainText("END_OF_COMMAND");
+  await expect(run.locator("[data-tool-preview]")).toHaveCount(0);
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: test.info().outputPath("expanded-dark.png"),
+    animations: "disabled",
+  });
+  await header(run).press("Space");
+  await expect(header(run)).toHaveAttribute("aria-expanded", "false");
+  await header(read).press("Enter");
+  await expect(header(read)).toHaveAttribute("aria-expanded", "true");
+  await expect(read.getByRole("region", { name: "Arguments" })).toContainText('"offset": 3');
+  await expect(read.getByRole("region", { name: relative, exact: true })).toContainText("three");
+  const log = page.locator("[data-work-log]");
+  await header(log).click();
+  await header(log).click();
+  await expect(header(read)).toHaveAttribute("aria-expanded", "true");
+  expect(errors).toEqual([]);
+});
+
+test("a running command follows output, stays expanded when it ends, and keeps a collapsed result preview", async () => {
   const release = path.join(workDir, "release");
   // More lines than an open row shows at once, so its output scrolls.
   const lines = Array.from({ length: 30 }, (_, index) => `echo line${index + 1}`).join("; ");
@@ -166,9 +272,18 @@ test("a running command shows its last lines under its row until it ends", async
   await expect.poll(() => pixelsBelowView(running)).toBeLessThan(18);
   await expect(page.getByText("Ran it.")).toBeVisible();
 
-  // Closed, a finished command shows no output.
+  await expect(header(running)).toHaveAttribute("aria-expanded", "true");
+  await expect(running.getByRole("region", { name: "Command" })).toContainText("echo line1;");
+  // Closing preserves the final result as a short preview instead of making it disappear.
   await header(running).click();
   await expect(latest).not.toBeAttached();
+  await expect(running.locator("[data-tool-preview]")).toContainText("finished");
+  await expect(running.getByRole("region", { name: "Output" })).toHaveCount(0);
+  await header(running).press("Enter");
+  await expect(header(running)).toHaveAttribute("aria-expanded", "true");
+  await expect(running.getByRole("region", { name: "Output" })).toContainText("finished");
+  await header(running).press("Space");
+  await expect(header(running)).toHaveAttribute("aria-expanded", "false");
 });
 
 test("a test runner's verdict shows in the command's row", async () => {
@@ -190,8 +305,10 @@ test("a test runner's verdict shows in the command's row", async () => {
   await waitForPi(page);
   await send(page, "Run the tests.");
   await expect(page.getByText("All green.")).toBeVisible();
-  // The status mark leads the button's text with a space.
-  await expect(header(card(page, "call_test"))).toHaveText(/^\s*Run printf .* 42 passed$/);
+  await expect(header(card(page, "call_test"))).toContainText("42 passed");
+  await expect(card(page, "call_test").locator("[data-tool-preview]")).toContainText(
+    "42 passed (42)",
+  );
 });
 
 test("an edit shows its diff, and a failed call its error", async () => {
@@ -227,10 +344,18 @@ test("an edit shows its diff, and a failed call its error", async () => {
   await expect(page.getByText("Edited.")).toBeVisible();
 
   const edited = card(page, "call_edit");
-  await expect(header(edited)).toHaveText("Edit notes.md +1 −0");
+  await expect(edited.locator("[data-tool-title]")).toHaveText("Edit notes.md");
+  await expect(header(edited)).toContainText("+1 −0");
+  await expect(edited.locator("[data-tool-preview]")).toContainText("+second");
   await header(edited).click();
   await waitForHighlighting(edited);
   await expect(edited.getByRole("region", { name: "Diff" })).toContainText("second");
+  // Large inputs stay lazy even after opening the diff, until explicitly requested.
+  await expect(edited.getByRole("region", { name: "Arguments" })).toHaveCount(0);
+  await edited.getByRole("button", { name: "Show arguments", exact: true }).click();
+  await expect(edited.getByRole("region", { name: "Arguments" })).toContainText('"newText"');
+  await edited.getByRole("button", { name: "Hide arguments", exact: true }).click();
+  await expect(edited.getByRole("region", { name: "Arguments" })).toHaveCount(0);
 
   // The diff takes the page's color scheme, and switches when it changes.
   const scheme = () =>
@@ -251,7 +376,10 @@ test("an edit shows its diff, and a failed call its error", async () => {
 
   const missing = card(page, "call_missing");
   await expect(missing).toHaveAttribute("data-status", "failed");
-  await header(missing).click();
+  await expect(missing.locator("[data-tool-preview]")).toContainText("missing.md");
+  // The preview is part of the same disclosure button, not a dead patch of text.
+  await missing.locator("[data-tool-preview]").click();
+  await expect(header(missing)).toHaveAttribute("aria-expanded", "true");
   await expect(missing).toContainText("missing.md");
 });
 
@@ -415,7 +543,7 @@ function illegibleText(root: Locator): Promise<string[]> {
 /** How far the row's output box is scrolled from its end. */
 function pixelsBelowView(of: Locator): Promise<number> {
   return of
-    .locator("[tabindex='0']")
+    .getByRole("region", { name: "Output" })
     .evaluate((box) => box.scrollHeight - box.scrollTop - box.clientHeight);
 }
 
@@ -423,7 +551,7 @@ function pixelsBelowView(of: Locator): Promise<number> {
 async function openCard(page: Page, id: string, title: string, body: string): Promise<void> {
   const toolCard = card(page, id);
   await toolCard.scrollIntoViewIfNeeded();
-  await expect(header(toolCard)).toHaveText(title);
+  await expect(toolCard.locator("[data-tool-title]")).toHaveText(title);
   await expect(toolCard).toHaveAttribute("data-status", id === "look_5" ? "failed" : "done");
   await expect(header(toolCard)).toHaveAttribute("aria-expanded", "false");
   await header(toolCard).click();

@@ -7,7 +7,7 @@ import {
   editPatch,
   formatDuration,
   lastLines,
-  MAX_SUBJECT_CHARS,
+  MAX_SUMMARY_CHARS,
   outputText,
   patchStats,
   readsFromStart,
@@ -15,7 +15,6 @@ import {
   summarizeCall,
   testVerdict,
   toolResults,
-  toolVerb,
   workLogDuration,
   type ToolCall,
 } from "./model";
@@ -152,60 +151,111 @@ describe("splitReadNote", () => {
 });
 
 describe("summarizeCall", () => {
-  test("names what each built-in tool works on", () => {
-    expect(summarizeCall(call("bash", { command: "pnpm test" }))).toEqual({
-      subject: "pnpm test",
-      within: null,
-      detail: null,
+  test("puts the action and filename first, with the full path and requested range underneath", () => {
+    expect(summarizeCall(call("read", { path: "src/a.ts", offset: 10, limit: 5 }))).toEqual({
+      title: "Read a.ts",
+      detail: "src/a.ts · requested lines 10–14",
     });
-    expect(summarizeCall(call("read", { path: "a.ts", offset: 10, limit: 5 }))).toEqual({
-      subject: "a.ts",
-      within: null,
-      detail: "lines 10–14",
+    expect(summarizeCall(call("read", { path: "a.ts", offset: 10 })).detail).toBe(
+      "a.ts · requested from line 10",
+    );
+    expect(summarizeCall(call("edit", { path: "C:\\src\\a.ts" }))).toEqual({
+      title: "Edit a.ts",
+      detail: "C:\\src\\a.ts",
     });
-    expect(summarizeCall(call("read", { path: "a.ts", offset: 10 })).detail).toBe("from line 10");
-    expect(summarizeCall(call("write", { path: "b.ts", content: "x\ny\n" }))).toEqual({
-      subject: "b.ts",
-      within: null,
-      detail: "2 lines",
+    expect(summarizeCall(call("write", { file_path: "src/b.ts", content: "x\ny\n" }))).toEqual({
+      title: "Write b.ts",
+      detail: "src/b.ts",
     });
+  });
+
+  test("names a search's pattern and scope without inventing its purpose", () => {
     expect(summarizeCall(call("grep", { pattern: "TODO", path: "src" }))).toEqual({
-      subject: "TODO",
-      within: "src",
-      detail: null,
+      title: 'Search for "TODO"',
+      detail: "In src",
     });
-    expect(summarizeCall(call("find", { pattern: "*.ts", glob: "src/**" })).within).toBe("src/**");
-    expect(summarizeCall(call("ls", {}))).toEqual({ subject: ".", within: null, detail: null });
-  });
-
-  test("shows an extension tool's arguments as they are", () => {
-    expect(summarizeCall(call("weather", { city: "Oslo" })).subject).toBe('{"city":"Oslo"}');
-  });
-
-  test("cuts a very long subject", () => {
-    const { subject } = summarizeCall(call("bash", { command: "x".repeat(MAX_SUBJECT_CHARS + 1) }));
-    expect(subject).toBe(`${"x".repeat(MAX_SUBJECT_CHARS)}…`);
-  });
-
-  test("ignores arguments of the wrong type", () => {
-    expect(summarizeCall(call("read", { path: 7, offset: "10" }))).toEqual({
-      subject: "",
-      within: null,
-      detail: null,
+    expect(summarizeCall(call("find", { pattern: "*.ts", glob: "src/**" }))).toEqual({
+      title: 'Find files matching "*.ts"',
+      detail: "In src/**",
+    });
+    expect(summarizeCall(call("ls", {}))).toEqual({
+      title: "List directory",
+      detail: "Current directory",
     });
   });
-});
 
-describe("toolVerb", () => {
-  test("gives the built-in tools the design's verbs and an extension's tool its name", () => {
+  test("labels exact known commands, but does not guess what a script or compound command does", () => {
+    expect(summarizeCall(call("bash", { command: "pnpm test" }))).toEqual({
+      title: "Run tests",
+      detail: "pnpm test",
+    });
+    expect(summarizeCall(call("bash", { command: "pnpm test && pnpm build" })).title).toBe(
+      "Run bash command",
+    );
+    expect(summarizeCall(call("powershell", { command: "Get-ChildItem src" }))).toEqual({
+      title: "Run powershell command",
+      detail: "Get-ChildItem src",
+    });
+  });
+
+  test("makes extension names readable and labels their arguments", () => {
+    expect(summarizeCall(call("word_count", { path: "README.md" }))).toEqual({
+      title: "Word count",
+      detail: "path: README.md",
+    });
     expect(
-      ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"].map(toolVerb),
-    ).toEqual(["Read", "Search", "Search", "List", "Edit", "Write", "Run", "Run"]);
-    expect(toolVerb("word_count")).toBe("word_count");
+      summarizeCall(call("mcp__github__pull_request_read", { method: "get", pullNumber: 123 })),
+    ).toEqual({ title: "github · Pull request read", detail: "method: get · pullNumber: 123" });
+    expect(summarizeCall(call("weather", { city: "Oslo" }))).toEqual({
+      title: "Weather",
+      detail: "city: Oslo",
+    });
+  });
+
+  test("bounds summaries without serializing nested extension payloads or mutating the arguments", () => {
+    const args = {
+      query: "x".repeat(MAX_SUMMARY_CHARS + 1),
+      options: { deep: { payload: "y".repeat(100_000) } },
+      files: ["a", "b"],
+      enabled: false,
+    };
+    const summary = summarizeCall(call("search", args));
+    expect(summary.detail!.length).toBeLessThanOrEqual(MAX_SUMMARY_CHARS + 1);
+    expect(args.query.length).toBe(MAX_SUMMARY_CHARS + 1);
+    expect(summarizeCall(call("search", { ...args, query: "short" })).detail).toBe(
+      "query: short · options: 1 field · files: 2 items · +1 more",
+    );
+    expect(summarizeCall(call("tool", {}))).toEqual({ title: "Tool", detail: null });
+  });
+
+  test("ignores built-in arguments of the wrong type", () => {
+    expect(summarizeCall(call("read", { path: 7, offset: "10" }))).toEqual({
+      title: "Read file",
+      detail: null,
+    });
   });
 });
 
 describe("callMeta", () => {
+  test("does not scan extension results just to discover that they have no count", () => {
+    let reads = 0;
+    const output = {
+      get content() {
+        reads++;
+        return [];
+      },
+    };
+    expect(
+      callMeta({
+        call: call("custom", {}),
+        status: "done",
+        output,
+        patch: undefined,
+      }),
+    ).toBeNull();
+    expect(reads).toBe(0);
+  });
+
   test("counts what a finished call read, found or listed", () => {
     const read = call("read", { path: "a.ts" });
     expect(callMeta({ call: read, patch: undefined, ...done("a\nb\nc\n") })).toEqual(

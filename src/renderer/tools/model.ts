@@ -1,7 +1,7 @@
 // What a work log row shows about a call, worked out from pi's messages. The
 // built-in tools' arguments and results are the ones pi 0.87.1 documents and
-// sends. Anything else is a tool from an extension, and its row shows the
-// arguments and result as they are.
+// sends. Extension summaries label arguments without guessing their purpose;
+// the expanded row keeps the original arguments and result.
 import type {
   AssistantMessage,
   PiMessage,
@@ -94,32 +94,6 @@ export function lastLines(text: string, count: number): string {
 }
 
 /**
- * The verb a work log row shows for a call. The built-in tools get the
- * verbs the design names. An extension's tool shows its own name, which
- * nothing else describes.
- */
-export function toolVerb(name: string): string {
-  switch (name) {
-    case "read":
-      return "Read";
-    case "grep":
-    case "find":
-      return "Search";
-    case "ls":
-      return "List";
-    case "edit":
-      return "Edit";
-    case "write":
-      return "Write";
-    case "bash":
-    case "powershell":
-      return "Run";
-    default:
-      return name;
-  }
-}
-
-/**
  * The figure at the end of a work log row: a count of what the call found or
  * changed, or a test runner's verdict. Counts come from the call's real
  * output, so a call that hasn't finished shows what its arguments say, if
@@ -183,28 +157,38 @@ export function callMeta({
   /** The unified patch an edit reported, if it has. */
   patch: string | undefined;
 }): CallMeta | null {
-  const { detail } = summarizeCall(call);
+  const args = call.arguments;
   const finished = status === "done" && output !== null;
-  const text = finished ? outputText(output.content) : "";
   switch (call.name) {
     case "edit":
       return patch === undefined ? null : { kind: "stats", ...patchStats(patch) };
     case "read": {
-      if (!finished || hasImage(output)) return faint(detail);
-      const lines = lineCount(splitReadNote(text).body);
+      if (!finished || hasImage(output))
+        return faint(readRange(numberArg(args, "offset"), numberArg(args, "limit")));
+      const lines = lineCount(splitReadNote(outputText(output.content)).body);
       return faint(counted(lines, "line", "lines"));
     }
     case "grep":
-      return finished ? faint(counted(grepMatches(text), "match", "matches")) : null;
+      return finished
+        ? faint(counted(grepMatches(outputText(output.content)), "match", "matches"))
+        : null;
     case "find":
-      return finished ? faint(counted(listedLines(text), "file", "files")) : null;
+      return finished
+        ? faint(counted(listedLines(outputText(output.content)), "file", "files"))
+        : null;
     case "ls":
-      return finished ? faint(counted(listedLines(text), "entry", "entries")) : null;
+      return finished
+        ? faint(counted(listedLines(outputText(output.content)), "entry", "entries"))
+        : null;
     case "bash":
     case "powershell":
-      return finished ? testVerdict(text) : null;
+      return finished ? testVerdict(outputText(output.content)) : null;
+    case "write": {
+      const content = writeContent(call);
+      return content === undefined ? null : faint(counted(lineCount(content), "line", "lines"));
+    }
     default:
-      return faint(detail);
+      return null;
   }
 }
 
@@ -269,13 +253,9 @@ export function splitReadNote(text: string): { body: string; note: string | null
   return { body: text.slice(0, match.index), note: match[1]! };
 }
 
-/** What a work log row says about a call after its verb. */
+/** A readable action, followed by the path, command or labelled arguments. */
 export interface CallSummary {
-  /** The command, path or pattern. */
-  readonly subject: string;
-  /** Where a search looks, shown after the subject as "in <within>". */
-  readonly within: string | null;
-  /** A short qualifier, such as the lines a read covers, for a call without a better figure. */
+  readonly title: string;
   readonly detail: string | null;
 }
 
@@ -307,59 +287,109 @@ export function lineCount(text: string): number {
   return text.replace(/\n$/, "").split("\n").length;
 }
 
-/** A row shows one line, so a longer subject is cut, and a huge one can't stall layout. */
-export const MAX_SUBJECT_CHARS = 500;
+/** Bound collapsed text before it reaches the DOM. Expanded inputs are never shortened. */
+export const MAX_SUMMARY_CHARS = 500;
+
+function summaryText(text: string): string {
+  const singleLine = text.slice(0, MAX_SUMMARY_CHARS).replace(/\s+/g, " ").trim();
+  return text.length > MAX_SUMMARY_CHARS ? `${singleLine}…` : singleLine;
+}
 
 export function summarizeCall(call: ToolCall): CallSummary {
   const summary = summarizeArguments(call);
-  if (summary.subject.length <= MAX_SUBJECT_CHARS) return summary;
-  return { ...summary, subject: `${summary.subject.slice(0, MAX_SUBJECT_CHARS)}…` };
+  return {
+    title: summaryText(summary.title),
+    detail: summary.detail ? summaryText(summary.detail) : null,
+  };
 }
 
-function summarizeArguments(call: ToolCall): CallSummary {
-  const args = call.arguments as Record<string, unknown>;
-  const path = stringArg(args, "path", "file_path");
-  switch (call.name) {
-    case "bash":
-    case "powershell":
-      return { subject: stringArg(args, "command") ?? "", within: null, detail: null };
-    case "read":
-      return {
-        subject: path ?? "",
-        within: null,
-        detail: readRange(numberArg(args, "offset"), numberArg(args, "limit")),
-      };
-    case "edit":
-      return { subject: path ?? "", within: null, detail: null };
-    case "write": {
-      const content = stringArg(args, "content");
-      if (content === undefined) return { subject: path ?? "", within: null, detail: null };
-      return {
-        subject: path ?? "",
-        within: null,
-        detail: counted(lineCount(content), "line", "lines"),
-      };
-    }
-    case "grep":
-    case "find":
-      return {
-        subject: stringArg(args, "pattern") ?? "",
-        within: path ?? stringArg(args, "glob") ?? null,
-        detail: null,
-      };
-    case "ls":
-      return { subject: path ?? ".", within: null, detail: null };
+function basename(path: string): string {
+  return path.split(/[/\\]/).findLast(Boolean) ?? path;
+}
+
+/** Only exact, simple commands get an action label. Never parse or guess at shell scripts. */
+function commandTitle(command: string, shell: string): string {
+  if (command.length > MAX_SUMMARY_CHARS) return `Run ${shell} command`;
+  const match = /^(?:pnpm|npm|yarn|bun)(?: run)? (test|lint|typecheck|build)$/.exec(command.trim());
+  switch (match?.[1]) {
+    case "test":
+      return "Run tests";
+    case "lint":
+      return "Run lint";
+    case "typecheck":
+      return "Check types";
+    case "build":
+      return "Build project";
     default:
-      return { subject: compactJson(args), within: null, detail: null };
+      return `Run ${shell} command`;
   }
 }
 
-/** Arguments on one line, for a header that truncates them. */
-function compactJson(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? "";
-  } catch {
-    return "";
+function readableName(name: string): string {
+  const words = name.replace(/[_-]+/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function extensionTitle(name: string): string {
+  if (!name.startsWith("mcp__")) return readableName(name);
+  const [, server, ...tool] = name.split("__");
+  return server && tool.length ? `${server} · ${readableName(tool.join(" "))}` : name;
+}
+
+/** Summarize containers, not their potentially huge contents. Keep scalar field names literal. */
+function argumentValue(value: unknown): string {
+  if (Array.isArray(value)) return counted(value.length, "item", "items");
+  if (value !== null && typeof value === "object")
+    return counted(Object.keys(value).length, "field", "fields");
+  return summaryText(String(value));
+}
+
+function argumentSummary(args: Record<string, unknown>): string | null {
+  const entries = Object.entries(args);
+  if (entries.length === 0) return null;
+  const fields = entries.slice(0, 3).map(([key, value]) => `${key}: ${argumentValue(value)}`);
+  if (entries.length > 3) fields.push(`+${entries.length - 3} more`);
+  return fields.join(" · ");
+}
+
+function summarizeArguments(call: ToolCall): CallSummary {
+  const args = call.arguments;
+  const path = callPath(call);
+  switch (call.name) {
+    case "bash":
+    case "powershell": {
+      const command = stringArg(args, "command") ?? "";
+      return { title: commandTitle(command, call.name), detail: command || null };
+    }
+    case "read": {
+      const range = readRange(numberArg(args, "offset"), numberArg(args, "limit"));
+      return {
+        title: `Read ${path ? basename(path) : "file"}`,
+        detail: [path, range ? `requested ${range}` : null].filter(Boolean).join(" · ") || null,
+      };
+    }
+    case "edit":
+      return { title: `Edit ${path ? basename(path) : "file"}`, detail: path ?? null };
+    case "write":
+      return { title: `Write ${path ? basename(path) : "file"}`, detail: path ?? null };
+    case "grep":
+    case "find": {
+      const pattern = stringArg(args, "pattern");
+      const action = call.name === "grep" ? "Search" : "Find files";
+      const qualifier = call.name === "grep" ? "for" : "matching";
+      const within = path ?? stringArg(args, "glob");
+      return {
+        title: pattern ? `${action} ${qualifier} "${pattern}"` : action,
+        detail: within ? `In ${within}` : "In current directory",
+      };
+    }
+    case "ls":
+      return {
+        title: path ? `List ${basename(path)}` : "List directory",
+        detail: path ?? "Current directory",
+      };
+    default:
+      return { title: extensionTitle(call.name), detail: argumentSummary(args) };
   }
 }
 
