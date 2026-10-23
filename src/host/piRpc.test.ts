@@ -30,7 +30,8 @@ function connect(stdin: Writable = new PassThrough()) {
     problems,
     /** The commands written since the last call. */
     sent(): PiRecord[] {
-      const text = (stdin as PassThrough).read() as Buffer | null;
+      const input = stdin as PassThrough;
+      const text = input.read(input.readableLength) as Buffer | null;
       return (text?.toString() ?? "")
         .split("\n")
         .filter(Boolean)
