@@ -163,7 +163,7 @@ test("pi's built-in commands run in Tondo and never reach pi as text", async () 
   await expect(session).toBeHidden();
 
   await send(page, "/name Better name");
-  await expect(threadRows(page).first()).toHaveAttribute("title", "Better name");
+  await expect(threadRows(page).first()).toHaveAccessibleName("Better name");
 
   await send(page, "/thinking high");
   await expectPicked(page, "Thinking level", "high");

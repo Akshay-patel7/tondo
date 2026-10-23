@@ -253,7 +253,7 @@ test("the header follows agent branch changes and labels external worktree activ
   await page.getByRole("button", { name: "New thread in project", exact: true }).click();
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
   await expect(badge()).toHaveCount(0);
-  await threads(page).locator('button[title="Make a local branch"]').click();
+  await threads(page).getByRole("button", { name: "Make a local branch", exact: true }).click();
   await expect(badge()).toHaveText("Agent worktree: agent/next");
   await page.reload();
   await waitForPi(page);

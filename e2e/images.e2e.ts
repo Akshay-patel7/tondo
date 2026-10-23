@@ -149,7 +149,7 @@ test("paste a real clipboard image, preview it, and send its pixels to pi", asyn
     return result;
   }, received[0]!);
   expect(pixels).toEqual({ width: 2, height: 2, rgba: [180, 80, 50, 255] });
-  await expect(threadRows(page).first()).toHaveAttribute("title", "What is in this image?");
+  await expect(threadRows(page).first()).toHaveAccessibleName("What is in this image?");
   await page.screenshot({ path: test.info().outputPath("sent.png"), animations: "disabled" });
 });
 
