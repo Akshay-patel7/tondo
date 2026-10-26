@@ -113,6 +113,19 @@ describe("outputText and lastLines", () => {
     ).toBe("Read image file [image/png]\n[image: image/png]");
   });
 
+  test("expanded image results omit redundant placeholders without dropping text", () => {
+    expect(
+      outputText(
+        [
+          { type: "text", text: "Before" },
+          { type: "image", data: "AAAA", mimeType: "image/png" },
+          { type: "text", text: "After" },
+        ],
+        { imageLabels: false },
+      ),
+    ).toBe("Before\nAfter");
+  });
+
   test("a command's colors don't show as escape codes", () => {
     const colored = "\u001B[31mRED\u001B[0m plain \u001B[1;32mGREEN\u001B[0m\n";
     expect(outputText([{ type: "text", text: colored }])).toBe("RED plain GREEN\n");

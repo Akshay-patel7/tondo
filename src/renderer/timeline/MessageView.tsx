@@ -8,6 +8,7 @@ import { showTurnChanges } from "../diffs/store";
 import { useThread } from "../thread/store";
 import { outputText } from "../tools/model";
 import { OutputView } from "../tools/OutputView";
+import { OutputImages } from "../tools/OutputImages";
 import { Button } from "../ui/button";
 import { codeHighlighter } from "./codeHighlighter";
 import { LinkDialog } from "./LinkDialog";
@@ -239,9 +240,10 @@ function OrphanResult({ message }: { message: ToolResultMessage }) {
       {/* Rounded like the card, so the output's inset focus ring follows the corners. */}
       <div className="overflow-hidden rounded-b-[calc(var(--card-radius)-1px)] border-t border-border [&>:last-child]:rounded-b-[calc(var(--card-radius)-1px)]">
         <OutputView
-          text={outputText(message.content)}
+          text={outputText(message.content, { imageLabels: false })}
           tone={message.isError ? "error" : "normal"}
         />
+        <OutputImages content={message.content} />
       </div>
     </article>
   );

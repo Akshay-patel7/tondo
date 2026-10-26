@@ -79,12 +79,16 @@ export function hasImage(output: ToolOutput): boolean {
  * sequences with it, which a page would show as stray text like "[31m", so
  * they go.
  */
-export function outputText(content: ToolOutput["content"]): string {
-  return stripAnsi(
-    content
-      .map((part) => (part.type === "text" ? part.text : `[image: ${part.mimeType}]`))
-      .join("\n"),
-  );
+export function outputText(
+  content: ToolOutput["content"],
+  { imageLabels = true }: { imageLabels?: boolean } = {},
+): string {
+  const parts: string[] = [];
+  for (const part of content) {
+    if (part.type === "text") parts.push(part.text);
+    else if (imageLabels) parts.push(`[image: ${part.mimeType}]`);
+  }
+  return stripAnsi(parts.join("\n"));
 }
 
 /** The last `count` lines of `text`, without a trailing empty line. */

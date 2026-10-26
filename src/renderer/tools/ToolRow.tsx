@@ -24,6 +24,7 @@ import {
   type ToolCall,
 } from "./model";
 import { OutputView } from "./OutputView";
+import { OutputImages } from "./OutputImages";
 import { callPreview } from "./preview";
 
 // @pierre/diffs and its workers load only once a row shows code.
@@ -133,14 +134,20 @@ export function ToolBody({
   output: ToolOutput | null;
   patch: string | undefined;
 }) {
-  const text = output ? outputText(output.content) : "";
+  const text = output ? outputText(output.content, { imageLabels: false }) : "";
   const failed = status === "failed";
   // A command's last lines matter most, so its output opens at the end.
   const follow = status === "running" || SHELLS.has(call.name);
-  const plain = text ? (
-    <OutputView text={text} follow={follow} tone={failed ? "error" : "normal"} />
-  ) : (
-    <Note>{noOutput(status)}</Note>
+  const images = output ? <OutputImages content={output.content} initiallyVisible /> : null;
+  const plain = (
+    <>
+      {text ? (
+        <OutputView text={text} follow={follow} tone={failed ? "error" : "normal"} />
+      ) : output && hasImage(output) ? null : (
+        <Note>{noOutput(status)}</Note>
+      )}
+      {images}
+    </>
   );
   const path = callPath(call) ?? "";
 
@@ -160,9 +167,12 @@ export function ToolBody({
     case "edit":
       if (patch === undefined) return plain;
       return (
-        <Suspense fallback={<CodeLoading />}>
-          <DiffView patch={patch} />
-        </Suspense>
+        <>
+          <Suspense fallback={<CodeLoading />}>
+            <DiffView patch={patch} />
+          </Suspense>
+          {images}
+        </>
       );
     case "write": {
       const content = writeContent(call);
@@ -173,7 +183,7 @@ export function ToolBody({
           <Suspense fallback={<CodeLoading />}>
             <FileView name={path} contents={content} lineNumbers />
           </Suspense>
-          {failed ? plain : null}
+          {failed ? plain : images}
         </>
       );
     }
