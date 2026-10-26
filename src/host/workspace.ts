@@ -29,6 +29,7 @@ import { editorText } from "../shared/drafts";
 import type { AppSettings, PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
 import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
+import { readFilePreview } from "./filePreview";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
 import { checkpointMetadata, TurnCheckpoints } from "./turnCheckpoints";
 import type { DraftImage } from "../shared/images";
@@ -272,6 +273,7 @@ export class Workspace {
         "list-files",
         "list-checkpoints",
         "find-files",
+        "preview-file",
         "get-pi-config-files",
         "get-pi-accounts",
         "get-project-git",
@@ -438,6 +440,14 @@ export class Workspace {
             turn: message.turn,
             diff,
           });
+        });
+        break;
+      case "preview-file":
+        this.run(async () => {
+          const { threadId, id, target } = message;
+          if (threadId !== this.visibleId) return;
+          const preview = await readFilePreview(this.checkout(this.row(threadId)), target);
+          this.send({ v, type: "file-preview", threadId, id, preview });
         });
         break;
       case "list-files":

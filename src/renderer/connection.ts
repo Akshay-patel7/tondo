@@ -4,6 +4,7 @@
 // only what changes.
 import { create } from "zustand";
 import type { FileIndex } from "../shared/files";
+import type { FilePreview } from "../shared/filePreview";
 import type { PickedFiles } from "../shared/attachments";
 import type { AgentCheckout, GitAction, GitStatus } from "../shared/git";
 import { NO_PI_UPDATES, type PiUpdates } from "../shared/piUpdates";
@@ -318,6 +319,54 @@ const filePickers = new Map<
   }
 >();
 
+const filePreviews = new Map<
+  string,
+  {
+    threadId: string;
+    resolve: (preview: FilePreview) => void;
+    reject: (error: Error) => void;
+  }
+>();
+
+/** A dialog owns the request; closing it drops the response and its image/text bytes. */
+export function previewFile(target: string, signal: AbortSignal): Promise<FilePreview> {
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const threadId = requireShownId();
+    const abort = () => {
+      filePreviews.delete(id);
+      reject(new Error("File preview closed."));
+    };
+    if (signal.aborted) return abort();
+    signal.addEventListener("abort", abort, { once: true });
+    const finish = () => signal.removeEventListener("abort", abort);
+    filePreviews.set(id, {
+      threadId,
+      resolve: (preview) => {
+        finish();
+        resolve(preview);
+      },
+      reject: (error) => {
+        finish();
+        reject(error);
+      },
+    });
+    try {
+      send({ v, type: "preview-file", threadId, id, target });
+    } catch (error) {
+      filePreviews.delete(id);
+      finish();
+      reject(error);
+    }
+  });
+}
+
+function disconnectFilePreviews(): void {
+  for (const pending of filePreviews.values())
+    pending.reject(new Error("The thread or host changed. Open the file again."));
+  filePreviews.clear();
+}
+
 function disconnectFilePickers(): void {
   for (const pending of filePickers.values())
     pending.reject(new Error("The host disconnected. Choose the files again."));
@@ -441,6 +490,14 @@ function receive(message: HostMessage): void {
       else pending?.resolve({ paths: message.paths, images: message.images });
       break;
     }
+    case "file-preview": {
+      const pending = filePreviews.get(message.id);
+      if (pending?.threadId === message.threadId && message.threadId === shownId()) {
+        filePreviews.delete(message.id);
+        pending.resolve(message.preview);
+      }
+      break;
+    }
     case "pi-updates":
       usePiUpdates.setState(message.updates, true);
       break;
@@ -473,6 +530,7 @@ function receive(message: HostMessage): void {
       useHost.setState({ connection: "connected", thread: message.thread });
       // The composer holds newer text than the host for the thread it already shows.
       if (message.thread?.id !== shown) {
+        disconnectFilePreviews();
         extensionText = undefined;
         useGit.setState({ status: null, error: null, agentCheckout: null });
         setDraft(message.draft);
@@ -602,6 +660,7 @@ function receive(message: HostMessage): void {
 
 function accept(next: MessagePort): void {
   disconnectFilePickers();
+  disconnectFilePreviews();
   answeringTrust = undefined;
   // A new host may not have made the thread; what you wrote stays in its draft if it did.
   firstSend = undefined;
@@ -625,6 +684,7 @@ function accept(next: MessagePort): void {
       useHost.setState({ connection: "reconnecting" });
       disconnectGit();
       disconnectFilePickers();
+      disconnectFilePreviews();
     }
   });
   next.start();

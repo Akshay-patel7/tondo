@@ -23,7 +23,7 @@ function imageUrl(data: string, mimeType: string): string {
 }
 
 /** Object URLs live exactly as long as the mounted image. No remote URL is accepted. */
-function LocalImage({ data, mimeType, name, className }: Props) {
+export function LocalImage({ data, mimeType, name, className }: Props) {
   const ref = useRef<HTMLImageElement>(null);
   useEffect(() => {
     const image = ref.current;

@@ -9,6 +9,7 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import { isLocalFileLink, type FilePreview } from "./filePreview";
 import type { PickedFiles } from "./attachments";
 import { readQuestionAnswers, type Question, type QuestionAnswer } from "./questionnaire";
 import { isGitAction, type GitCommand, type GitEvent } from "./git";
@@ -34,7 +35,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -306,6 +307,8 @@ export type ClientMessage = Versioned<
   | { type: "list-files"; threadId: string; id: number }
   /** Search every project file when list-files' index was truncated. `id` is that menu's. */
   | { type: "find-files"; threadId: string; id: number; query: string }
+  /** Read a bounded file inside this thread's checkout, only after a link is clicked. */
+  | { type: "preview-file"; threadId: string; id: string; target: string }
   | { type: "list-checkpoints"; threadId: string }
   | { type: "read-checkpoint"; threadId: string; turn: number; id: number }
   | { type: "set-sidebar-hidden"; hidden: boolean }
@@ -394,6 +397,7 @@ export type HostMessage = Versioned<
   | { type: "files"; threadId: string; id: number; index: FileIndex }
   /** The best matches for find-files' `query`, ranked as the page ranks an index. */
   | { type: "file-matches"; threadId: string; id: number; query: string; paths: readonly string[] }
+  | { type: "file-preview"; threadId: string; id: string; preview: FilePreview }
   | {
       type: "checkpoints";
       threadId: string;
@@ -836,6 +840,20 @@ export function parseClientMessage(data: unknown): ParseResult {
         return invalid(`export: path must be a string, not ${describe(path)}`);
       }
       return exactly(message, { v, type, threadId: threadId as string, path });
+    }
+    case "preview-file": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id, target } = message;
+      if (
+        typeof id !== "string" ||
+        !id ||
+        id.length > MAX_ID ||
+        typeof target !== "string" ||
+        !isLocalFileLink(target)
+      )
+        return invalid("preview-file: invalid request id or local file target");
+      return exactly(message, { v, type, threadId: threadId as string, id, target });
     }
     case "reveal": {
       const { path } = message;

@@ -1,8 +1,9 @@
 // The question Streamdown asks before it opens a link from a reply, as a ui
 // Dialog. Streamdown's own is a page-wide button with the question inside it:
 // screen readers can't tell it's a dialog, and focus stays on the link behind it.
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import type { LinkSafetyModalProps } from "streamdown";
+import { fileLinkTarget } from "../../shared/filePreview";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -14,13 +15,28 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 
+const LocalFileDialog = lazy(() =>
+  import("./LocalFileDialog").then((module) => ({ default: module.LocalFileDialog })),
+);
+
 /**
  * Asks before `url` opens in the browser. Focus moves to Cancel when it opens,
  * stays inside while it's open, and goes back to the link when it closes.
  * Streamdown renders one for every link, so it's on the page only from when it
  * opens until it has finished closing.
  */
-export function LinkDialog({ url, isOpen, onClose, onConfirm }: LinkSafetyModalProps) {
+export function LinkDialog(props: LinkSafetyModalProps) {
+  const target = fileLinkTarget(props.url);
+  if (target === null) return <ExternalLinkDialog {...props} />;
+  if (!props.isOpen) return null;
+  return (
+    <Suspense fallback={null}>
+      <LocalFileDialog {...props} target={target} />
+    </Suspense>
+  );
+}
+
+function ExternalLinkDialog({ url, isOpen, onClose, onConfirm }: LinkSafetyModalProps) {
   const [closing, setClosing] = useState(false);
   const cancel = useRef<HTMLButtonElement>(null);
   if (!isOpen && !closing) return null;

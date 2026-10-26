@@ -399,6 +399,39 @@ describe("settings messages", () => {
   });
 });
 
+describe("preview-file", () => {
+  it("reads from the visible thread's worktree", async () => {
+    const project = repository("preview-project", ["report.md"]);
+    const checkout = repository("preview-worktree", ["report.md"]);
+    writeFileSync(path.join(project, "report.md"), "project");
+    writeFileSync(path.join(checkout, "report.md"), "worktree report");
+    const { id: projectId } = store.addProject(project, 1);
+    addThread(projectId, "preview-thread");
+    store.addWorktree({
+      root: null,
+      path: checkout,
+      repository: project,
+      branch: "b",
+      threadId: "preview-thread",
+    });
+    await openThread("preview-thread");
+    const response = next((message) => isError(message) || message.type === "file-preview");
+    workspace.handle({
+      v,
+      type: "preview-file",
+      threadId: "preview-thread",
+      id: "request",
+      target: "report.md",
+    });
+    expect(await response).toMatchObject({
+      type: "file-preview",
+      threadId: "preview-thread",
+      id: "request",
+      preview: { kind: "text", text: "worktree report", truncated: false },
+    });
+  });
+});
+
 describe("find-files", () => {
   it("searches the thread's worktree checkout and answers with the request's id and query", async () => {
     const project = repository("project", ["project-only.ts"]);

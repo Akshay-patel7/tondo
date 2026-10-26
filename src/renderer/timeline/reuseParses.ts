@@ -3,6 +3,7 @@
 // mounts, as it does when you switch to a thread, and micromark's parse is
 // most of that work. Text already parsed in this window reuses its tree.
 import { defaultRemarkPlugins } from "streamdown";
+import { localFileLinks } from "./fileLinks";
 
 /** A unified parser. `never` lets the processor's own parser type assign to it. */
 export type Parse = (document: string, file: never) => unknown;
@@ -46,4 +47,4 @@ function reuseParses(this: { parser: Parse | undefined }): void {
 }
 
 /** Streamdown's own remark plugins, plus the parse cache. */
-export const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), reuseParses];
+export const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), reuseParses, localFileLinks];

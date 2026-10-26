@@ -23,6 +23,29 @@ describe("parseClientMessage", () => {
       expect(parseClientMessage(message).ok).toBe(false);
   });
 
+  it("file previews accept only bounded local targets and correlated request identities", () => {
+    for (const extra of [
+      { target: "https://example.com/file" },
+      { target: "//server/file" },
+      { target: "a".repeat(4097) },
+      { target: "a\u0000b" },
+      { id: "" },
+      { id: 1 },
+      { threadId: "" },
+      { command: "open" },
+    ])
+      expect(
+        parseClientMessage({
+          v,
+          type: "preview-file",
+          threadId: "thread",
+          id: "preview-1",
+          target: "report.md",
+          ...extra,
+        }).ok,
+      ).toBe(false);
+  });
+
   it("rejects nonboolean draft input provenance", () => {
     expect(
       parseClientMessage({
@@ -57,6 +80,7 @@ describe("parseClientMessage", () => {
       { v, type: "set-draft", threadId, text: "extension text", userInput: false },
       { v, type: "set-draft", threadId, text: "typed text", userInput: true },
       { v, type: "list-files", threadId, id: 1 },
+      { v, type: "preview-file", threadId, id: "preview-1", target: ".dev/report.md" },
       { v, type: "list-checkpoints", threadId },
       { v, type: "read-checkpoint", threadId, id: 1, turn: 2 },
       { v, type: "set-draft-images", threadId, images: [IMAGE_FIXTURE] },
@@ -463,8 +487,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 27, which adds absolute retry deadlines", () => {
-    expect(PROTOCOL_VERSION).toBe(27);
+  it("speaks version 28, which adds bounded local file previews", () => {
+    expect(PROTOCOL_VERSION).toBe(28);
   });
 
   it("rejects extra fields when marking a thread unread", () => {
