@@ -11,6 +11,30 @@ function rejection(data: unknown): string {
 }
 
 describe("parseClientMessage", () => {
+  it("history requests accept bounded identities, never file paths or arbitrary fields", () => {
+    for (const type of ["history-index", "history-preview", "history-page"]) {
+      const message = {
+        v,
+        type,
+        threadId: "thread",
+        id: "request",
+        ...(type === "history-index" ? {} : { revision: "revision", entryId: "entry" }),
+      };
+      expect(parseClientMessage(message).ok).toBe(true);
+      for (const extra of [
+        { id: "" },
+        { threadId: "" },
+        { path: "/etc/passwd" },
+        { id: 42 },
+        { id: "x".repeat(1000) },
+      ])
+        expect(parseClientMessage({ ...message, ...extra }).ok).toBe(false);
+      if (type !== "history-index") {
+        for (const extra of [{ revision: "" }, { entryId: "" }, { entryId: null }])
+          expect(parseClientMessage({ ...message, ...extra }).ok).toBe(false);
+      }
+    }
+  });
   it("update requests accept only a host-offered id, never commands, sources or force flags", () => {
     const id = "0199c5e0-4a2b-7c3d-9e8f-1a2b3c4d5e6f";
     for (const message of [
@@ -487,8 +511,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 28, which adds bounded local file previews", () => {
-    expect(PROTOCOL_VERSION).toBe(28);
+  it("speaks version 29, which adds bounded saved-history browsing", () => {
+    expect(PROTOCOL_VERSION).toBe(29);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

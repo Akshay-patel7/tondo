@@ -26,7 +26,7 @@ import { toggleSidebarShown, useChangesPanelShown, useSidebarShown } from "./sid
 import { Sidebar } from "./sidebar/Sidebar";
 import { Header } from "./shell/Header";
 import { useThreadKey } from "./thread/store";
-import { Timeline } from "./timeline/Timeline";
+import { HistoryTimeline as Timeline } from "./timeline/HistoryTimeline";
 import { Toasts } from "./toasts/Toasts";
 
 const TerminalDrawer = lazy(() => import("./terminal/TerminalDrawer"));

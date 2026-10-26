@@ -124,7 +124,7 @@ export function eventProblem(record: { readonly type: string }): string | undefi
   }
 }
 
-function messageProblem(message: unknown): string | undefined {
+export function messageProblem(message: unknown): string | undefined {
   if (!isObject(message) || typeof message.role !== "string") return "it has no message role";
   if (
     (message.role === "assistant" || message.role === "toolResult") &&

@@ -1,18 +1,74 @@
 // The rail and preview interaction follow T3 Code's chat/MessagesTimeline.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { Button } from "./button";
 import { cn } from "../lib/cn";
 import { navigationIndex } from "../timeline/navigation";
+
+export function HistoryToolbar({
+  busy,
+  error,
+  browsing,
+  previous,
+  next,
+  onLatest,
+  onRetry,
+}: {
+  busy: boolean;
+  error: string | null;
+  browsing: boolean;
+  previous: (() => void) | undefined;
+  next: (() => void) | undefined;
+  onLatest: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background px-8 py-2 text-xs">
+      <span role="status" className="mr-auto text-muted-foreground">
+        {busy
+          ? "Loading saved history…"
+          : (error ?? "Saved history · Messages load one section at a time")}
+      </span>
+      {error ? (
+        <Button size="sm" variant="neutral" onClick={onRetry}>
+          Retry history
+        </Button>
+      ) : null}
+      {browsing ? (
+        <>
+          <Button size="sm" variant="neutral" disabled={busy || !previous} onClick={previous}>
+            Previous section
+          </Button>
+          <Button size="sm" variant="neutral" disabled={busy || !next} onClick={next}>
+            Next section
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onLatest}>
+            Back to live
+          </Button>
+        </>
+      ) : null}
+    </div>
+  );
+}
 
 interface MessageNavigatorProps {
   count: number;
   current: number;
   preview: (index: number) => { prompt: string; reply: string };
   onSelect: (index: number) => void;
+  onPreview?: ((index: number | null) => void) | undefined;
+  allowSingle?: boolean;
 }
 
 /** One focus stop and at most 40 decorative ticks, regardless of thread size. */
-export function MessageNavigator({ count, current, preview, onSelect }: MessageNavigatorProps) {
+export function MessageNavigator({
+  count,
+  current,
+  preview,
+  onSelect,
+  onPreview,
+  allowSingle = false,
+}: MessageNavigatorProps) {
   const instructions = useId();
   const previewId = useId();
   const [hovered, setHovered] = useState<number | null>(null);
@@ -23,7 +79,11 @@ export function MessageNavigator({ count, current, preview, onSelect }: MessageN
   const tickCount = Math.min(40, count);
   const marker = selected ?? current;
   const activeTick = navigationIndex(marker / Math.max(1, count - 1), tickCount);
-  if (count < 2) return null;
+  useEffect(() => {
+    onPreview?.(selected);
+    return () => onPreview?.(null);
+  }, [selected, onPreview]);
+  if (count === 0 || (count < 2 && !allowSingle)) return null;
 
   return (
     <nav

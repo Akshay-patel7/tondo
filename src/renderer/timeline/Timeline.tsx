@@ -3,7 +3,7 @@
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import { ArrowDown } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useThread } from "../thread/store";
+import { useTranscript } from "./transcript";
 import { Button } from "../ui/button";
 import { MessageNavigator } from "../ui/message-navigator";
 import { followsAfterScroll } from "./follow";
@@ -15,12 +15,12 @@ function Row({ index }: { index: number }) {
   // A row's object only changes when a message joins its turn, and only the
   // streaming row reads the streaming message, so only it re-renders while
   // pi writes. Once message_end lands, the same row holds the message.
-  const row = useThread((thread) => rowAt(thread.messages, index));
-  const streaming = useThread((thread) =>
+  const row = useTranscript((thread) => rowAt(thread.messages, index));
+  const streaming = useTranscript((thread) =>
     streamingRowStart(thread.messages, thread.streaming) === index ? thread.streaming : null,
   );
   // The last turn is over once pi stops working; an earlier one once a message follows it.
-  const settled = useThread(
+  const settled = useTranscript(
     (thread) =>
       !thread.running ||
       (rowAt(thread.messages, index)?.end ?? thread.messages.length) < thread.messages.length,
@@ -37,20 +37,41 @@ function Row({ index }: { index: number }) {
   );
 }
 
-export function Timeline() {
-  const messages = useThread((thread) => thread.messages);
-  const streamingRow = useThread((thread) => streamingRowStart(thread.messages, thread.streaming));
+export function Timeline({
+  navigation,
+  initialIndex,
+  onLatest,
+}: {
+  navigation?: {
+    count: number;
+    offset: number;
+    current?: number;
+    preview: (index: number) => { prompt: string; reply: string };
+    onPreview: (index: number | null) => void;
+    onSelect: (index: number) => boolean;
+  };
+  /** A message index, not a prompt ordinal. Continuation pages start at their first record. */
+  initialIndex?: number | undefined;
+  onLatest?: () => void;
+} = {}) {
+  const messages = useTranscript((thread) => thread.messages);
+  const streamingRow = useTranscript((thread) =>
+    streamingRowStart(thread.messages, thread.streaming),
+  );
   const scroller = useRef<HTMLDivElement>(null);
-  const followingNow = useRef(true);
+  const followingNow = useRef(initialIndex === undefined);
   const lastScroll = useRef(0);
   const programmedScroll = useRef<number | null>(null);
-  const [following, setFollowing] = useState(true);
-  const [jumpTarget, setJumpTarget] = useState<number | null>(null);
+  const [following, setFollowing] = useState(initialIndex === undefined);
+  const [jumpTarget, setJumpTarget] = useState<number | null>(initialIndex ?? null);
   const [layout, setLayout] = useState(() => ({
     heights: new Map<number, number>(),
     viewport: 0,
     scroll: 0,
   }));
+  useLayoutEffect(() => {
+    if (initialIndex !== undefined) scroller.current?.focus({ preventScroll: true });
+  }, [initialIndex]);
   const completedRows = timelineRows(messages);
   const targets = useMemo(() => navigationTargets(completedRows), [completedRows]);
   const shown = completedRows.map((row) => row.start);
@@ -176,6 +197,10 @@ export function Timeline() {
   };
 
   const jumpToLatest = () => {
+    if (onLatest) {
+      onLatest();
+      return;
+    }
     setJumpTarget(null);
     const node = scroller.current;
     node?.focus({ preventScroll: true });
@@ -243,12 +268,19 @@ export function Timeline() {
         </div>
       </div>
       <MessageNavigator
-        count={targets.length}
-        current={currentTarget}
-        preview={(index) => navigationPreview(targets[index]!)}
-        onSelect={jumpToMessage}
+        allowSingle={(navigation?.offset ?? 0) > 0}
+        count={navigation?.count ?? targets.length}
+        current={Math.min(
+          (navigation?.count ?? targets.length) - 1,
+          navigation?.current ?? (navigation?.offset ?? 0) + currentTarget,
+        )}
+        preview={navigation?.preview ?? ((index) => navigationPreview(targets[index]!))}
+        onPreview={navigation?.onPreview}
+        onSelect={(index) => {
+          if (!navigation?.onSelect(index)) jumpToMessage(index - (navigation?.offset ?? 0));
+        }}
       />
-      {following ? null : (
+      {following && !onLatest ? null : (
         <div className="absolute inset-x-0 bottom-4 mx-auto w-fit rounded-control border border-border bg-secondary">
           <Button variant="secondary" size="sm" onClick={jumpToLatest}>
             <ArrowDown aria-hidden />

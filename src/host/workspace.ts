@@ -30,6 +30,7 @@ import type { AppSettings, PaletteSetting, SettingsPatch, ThemeSetting } from ".
 import { newShortcutProblems, type Settings } from "./settings";
 import { FileIndexes } from "./fileIndex";
 import { readFilePreview } from "./filePreview";
+import { SessionHistory } from "./history";
 import { checkpointRoot, deleteCheckpoints } from "./checkpoints";
 import { checkpointMetadata, TurnCheckpoints } from "./turnCheckpoints";
 import type { DraftImage } from "../shared/images";
@@ -110,6 +111,9 @@ export class Workspace {
   private readonly offered = new Set<string>();
   private readonly index = new SessionIndex();
   private readonly files = new FileIndexes();
+  private history: SessionHistory | undefined;
+  private historyThread: string | undefined;
+  private historyAbort: AbortController | undefined;
   /** The draft an extension last set in each thread that wasn't on screen. */
   private readonly extensionDrafts = new Map<string, string>();
   private readonly terminals: Terminals;
@@ -218,6 +222,9 @@ export class Workspace {
   }
 
   disconnected(): void {
+    this.historyAbort?.abort();
+    this.history = undefined;
+    this.historyThread = undefined;
     this.gitConnected = false;
     this.gitGeneration++;
     clearTimeout(this.gitTimer);
@@ -441,6 +448,11 @@ export class Workspace {
             diff,
           });
         });
+        break;
+      case "history-index":
+      case "history-preview":
+      case "history-page":
+        void this.readHistory(message);
         break;
       case "preview-file":
         this.run(async () => {
@@ -1585,6 +1597,9 @@ export class Workspace {
   }
 
   private sendSnapshot(): void {
+    this.historyAbort?.abort();
+    this.history = undefined;
+    this.historyThread = undefined;
     const thread = this.visibleThread();
     this.send(
       thread
@@ -1608,6 +1623,56 @@ export class Workspace {
           },
     );
     if (thread) this.terminals.publishContext(thread.id);
+  }
+
+  /** Reads only the host-owned session path. The page can name entries, never files. */
+  private async readHistory(
+    message: Extract<ClientMessage, { type: "history-index" | "history-preview" | "history-page" }>,
+  ): Promise<void> {
+    const { threadId, id } = message;
+    if (threadId !== this.visibleId) return;
+    try {
+      if (message.type === "history-index") {
+        this.historyAbort?.abort();
+        const controller = new AbortController();
+        this.historyAbort = controller;
+        this.history = undefined;
+        const file = this.running(threadId).sessionFile;
+        if (!file) throw new Error("This thread has no saved history yet.");
+        const history = await SessionHistory.read(file, threadId, controller.signal);
+        if (controller.signal.aborted || threadId !== this.visibleId) return;
+        this.history = history;
+        this.historyThread = threadId;
+        this.send({
+          v,
+          type: "history-result",
+          threadId,
+          id,
+          result: { kind: "index", index: history.index },
+          error: null,
+        });
+      } else {
+        const history = this.history;
+        if (!history || this.historyThread !== threadId || message.revision !== history.revision)
+          throw new Error("Saved history changed. Reload the thread and try again.");
+        const result =
+          message.type === "history-page"
+            ? { kind: "page" as const, page: await history.page(message.entryId) }
+            : { kind: "preview" as const, preview: await history.preview(message.entryId) };
+        if (this.history === history && threadId === this.visibleId)
+          this.send({ v, type: "history-result", threadId, id, result, error: null });
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      this.send({
+        v,
+        type: "history-result",
+        threadId,
+        id,
+        result: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /** Sends the sidebar within SIDEBAR_DELAY_MS, with any other changes in that time. */

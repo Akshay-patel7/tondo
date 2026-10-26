@@ -215,6 +215,87 @@ async function openThread(id: string): Promise<InstanceType<typeof FakeThread>> 
   return threads.find((thread) => thread.id === id)!;
 }
 
+describe("saved history requests", () => {
+  it("routes only the visible thread's saved file and rejects stale revisions", async () => {
+    const project = store.addProject(dir, 1);
+    const file = session("history-thread", project.id);
+    const records = [
+      {
+        type: "message",
+        id: "old",
+        parentId: null,
+        timestamp: "2026-10-26",
+        message: { role: "user", content: "Saved original", timestamp: 1 },
+      },
+      {
+        type: "message",
+        id: "live",
+        parentId: "old",
+        timestamp: "2026-10-26",
+        message: { role: "user", content: "Retained", timestamp: 2 },
+      },
+      {
+        type: "compaction",
+        id: "compact",
+        parentId: "live",
+        timestamp: "2026-10-26",
+        summary: "Summary",
+        firstKeptEntryId: "live",
+      },
+    ];
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8") +
+        records.map((record) => JSON.stringify(record)).join("\n") +
+        "\n",
+    );
+    await openThread("history-thread");
+    const indexed = next((message) => message.type === "history-result" && message.id === "index");
+    workspace.handle({ v, type: "history-index", threadId: "history-thread", id: "index" });
+    const response = await indexed;
+    expect(response).toMatchObject({
+      type: "history-result",
+      threadId: "history-thread",
+      result: { kind: "index", index: { prompts: ["old"] } },
+      error: null,
+    });
+    if (response.type !== "history-result" || response.result?.kind !== "index")
+      throw new Error("Expected history index");
+    const revision = response.result.index.revision;
+    const loaded = next((message) => message.type === "history-result" && message.id === "page");
+    workspace.handle({
+      v,
+      type: "history-page",
+      threadId: "history-thread",
+      id: "page",
+      revision,
+      entryId: "old",
+    });
+    expect(await loaded).toMatchObject({
+      result: {
+        kind: "page",
+        page: { messages: [{ content: "Saved original" }, { content: "Retained" }] },
+      },
+      error: null,
+    });
+    const stale = next((message) => message.type === "history-result" && message.id === "stale");
+    workspace.handle({
+      v,
+      type: "history-preview",
+      threadId: "history-thread",
+      id: "stale",
+      revision: "stale",
+      entryId: "old",
+    });
+    expect(await stale).toMatchObject({ result: null, error: expect.stringContaining("changed") });
+    addThread(project.id, "other");
+    await openThread("other");
+    const count = sent.filter((message) => message.type === "history-result").length;
+    workspace.handle({ v, type: "history-index", threadId: "history-thread", id: "background" });
+    expect(sent.filter((message) => message.type === "history-result")).toHaveLength(count);
+  });
+});
+
 describe("terminal sharing", () => {
   it("saves the opt-in per thread, broadcasts it, and restores it on reconnect", async () => {
     const project = store.addProject(dir, 1);

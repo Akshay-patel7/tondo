@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId } from "react";
 import { toolRun } from "../../shared/thread";
-import { useThread } from "../thread/store";
+import { useTranscript } from "./transcript";
 import { formatDuration, toolResults, workLogDuration } from "../tools/model";
 import { ToolRow } from "../tools/ToolRow";
 import type { StackItem } from "./turns";
@@ -17,14 +17,14 @@ export type WorkLogItem = Extract<StackItem, { kind: "workLog" }>;
 export function WorkLog({ log }: { log: WorkLogItem }) {
   const collapsed = useCollapsedWorkLogs((keys) => keys.has(log.key));
   const calls = log.calls.map(({ call }) => call);
-  const working = useThread(
+  const working = useTranscript(
     (thread) =>
       thread.running &&
       calls.some(
         (call) => !toolResults(thread.messages).has(call.id) && !toolRun(thread, call.id)?.result,
       ),
   );
-  const duration = useThread((thread) =>
+  const duration = useTranscript((thread) =>
     working ? null : workLogDuration(log.startedAt, calls, toolResults(thread.messages)),
   );
   const listId = useId();

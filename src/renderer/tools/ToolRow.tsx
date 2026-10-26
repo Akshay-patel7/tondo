@@ -2,7 +2,7 @@
 // header opens the exact inputs and the full result; expansion stays user-controlled.
 import { lazy, Suspense, useId, useState, type ReactNode } from "react";
 import { toolRun, type ToolOutput } from "../../shared/thread";
-import { useThread } from "../thread/store";
+import { useSavedTranscript, useTranscript } from "../timeline/transcript";
 import { Button } from "../ui/button";
 import { ToolCallHeader } from "../ui/tool-call";
 import { toggleExpanded, useExpanded } from "./expanded";
@@ -35,12 +35,13 @@ const SHELLS = new Set(["bash", "powershell"]);
 
 /** `writing` is true while the model still streams the message that holds the call. */
 export function ToolRow({ call, writing }: { call: ToolCall; writing: boolean }) {
-  const result = useThread((thread) => toolResults(thread.messages).get(call.id));
-  const run = useThread((thread) => toolRun(thread, call.id));
-  const piWorking = useThread((thread) => thread.running);
+  const result = useTranscript((thread) => toolResults(thread.messages).get(call.id));
+  const run = useTranscript((thread) => toolRun(thread, call.id));
+  const piWorking = useTranscript((thread) => thread.running);
   const expanded = useExpanded((ids) => ids.has(call.id));
   const bodyId = useId();
-  const status = callStatus({ writing, result, run, piWorking });
+  const historical = useSavedTranscript();
+  const status = callStatus({ writing, result, run, piWorking, historical });
   const output = callOutput(result, run);
   const patch = call.name === "edit" ? editPatch(output?.details) : undefined;
   const meta = callMeta({ call, status, output, patch });
@@ -118,6 +119,8 @@ function CodeLoading() {
 
 /** What a call without output says, by where it stands. */
 function noOutput(status: CallStatus): string {
+  if (status === "unloaded")
+    return "No result is loaded for this call. It may be in another saved section.";
   if (status === "stopped") return "pi stopped before this call finished.";
   if (status === "done" || status === "failed") return "No output.";
   return "No output yet.";

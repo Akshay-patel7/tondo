@@ -23,6 +23,7 @@ import {
   type ClientMessage,
   type DialogAnswer,
   type HostMessage,
+  type HistoryResult,
   type OpenThread,
   type PiAccount,
   type PiDiscovery,
@@ -132,6 +133,40 @@ export function checkPiUpdates(manual = true): void {
 
 export function applyPiUpdate(id: string): void {
   send({ v, type: "apply-pi-update", id });
+}
+
+const historyRequests = new Map<
+  string,
+  { threadId: string; resolve: (result: HistoryResult) => void; reject: (error: Error) => void }
+>();
+
+export function requestHistory(
+  type: "history-index" | "history-preview" | "history-page",
+  revision = "",
+  entryId = "",
+): Promise<HistoryResult> {
+  const threadId = requireShownId();
+  if (type === "history-index") disconnectHistory();
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    historyRequests.set(id, { threadId, resolve, reject });
+    try {
+      send(
+        type === "history-index"
+          ? { v, type, threadId, id }
+          : { v, type, threadId, id, revision, entryId },
+      );
+    } catch (error) {
+      historyRequests.delete(id);
+      reject(error);
+    }
+  });
+}
+
+function disconnectHistory(): void {
+  for (const pending of historyRequests.values())
+    pending.reject(new Error("The thread changed while loading history."));
+  historyRequests.clear();
 }
 
 let gitRequest = 0;
@@ -362,6 +397,7 @@ export function previewFile(target: string, signal: AbortSignal): Promise<FilePr
 }
 
 function disconnectFilePreviews(): void {
+  disconnectHistory();
   for (const pending of filePreviews.values())
     pending.reject(new Error("The thread or host changed. Open the file again."));
   filePreviews.clear();
@@ -483,6 +519,16 @@ function receive(message: HostMessage): void {
     return;
   }
   switch (message.type) {
+    case "history-result": {
+      const pending = historyRequests.get(message.id);
+      historyRequests.delete(message.id);
+      if (pending?.threadId === message.threadId && message.threadId === shownId()) {
+        if (message.error || !message.result)
+          pending.reject(new Error(message.error ?? "History could not be loaded."));
+        else pending.resolve(message.result);
+      }
+      break;
+    }
     case "files-chosen": {
       const pending = filePickers.get(message.id);
       filePickers.delete(message.id);
@@ -525,6 +571,7 @@ function receive(message: HostMessage): void {
       break;
     case "snapshot": {
       const shown = shownId();
+      disconnectHistory();
       showThread(message.state);
       showExtensionUi(message.ui);
       useHost.setState({ connection: "connected", thread: message.thread });

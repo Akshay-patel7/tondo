@@ -5,7 +5,7 @@ import type { AssistantMessage, ToolResultMessage } from "../../shared/thread";
 import { useCheckpoints, useHost } from "../connection";
 import { ImagePreview } from "../composer/ImagePreview";
 import { showTurnChanges } from "../diffs/store";
-import { useThread } from "../thread/store";
+import { useTranscript } from "./transcript";
 import { outputText } from "../tools/model";
 import { OutputView } from "../tools/OutputView";
 import { OutputImages } from "../tools/OutputImages";
@@ -263,10 +263,10 @@ function TurnSummary({
   start: number;
   messages: readonly AssistantMessage[];
 }) {
-  const changes = useThread((thread) => turnChanges(messages, thread.messages));
+  const changes = useTranscript((thread) => turnChanges(messages, thread.messages));
   // The prompt's stamp places the turn among the checkpoints. pi sets it as
   // the prompt arrives; a faux reply's stamp is whenever the test wrote it.
-  const startedAt = useThread((thread) => {
+  const startedAt = useTranscript((thread) => {
     const before = thread.messages[start - 1];
     return before?.role === "user" ? before.timestamp : messages[0]?.timestamp;
   });

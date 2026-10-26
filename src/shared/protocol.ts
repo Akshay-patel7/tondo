@@ -9,6 +9,7 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import type { HistoryIndex, HistoryPage, HistoryPreview } from "./history";
 import { isLocalFileLink, type FilePreview } from "./filePreview";
 import type { PickedFiles } from "./attachments";
 import { readQuestionAnswers, type Question, type QuestionAnswer } from "./questionnaire";
@@ -35,7 +36,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 28;
+export const PROTOCOL_VERSION = 29;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -282,6 +283,11 @@ export interface OpenThread {
   readonly pi: PiStatus;
 }
 
+export type HistoryResult =
+  | { kind: "index"; index: HistoryIndex }
+  | { kind: "preview"; preview: HistoryPreview }
+  | { kind: "page"; page: HistoryPage };
+
 type Versioned<T> = T & { readonly v: typeof PROTOCOL_VERSION };
 
 /** What the page asks of the host. */
@@ -309,6 +315,14 @@ export type ClientMessage = Versioned<
   | { type: "find-files"; threadId: string; id: number; query: string }
   /** Read a bounded file inside this thread's checkout, only after a link is clicked. */
   | { type: "preview-file"; threadId: string; id: string; target: string }
+  | { type: "history-index"; threadId: string; id: string }
+  | {
+      type: "history-preview" | "history-page";
+      threadId: string;
+      id: string;
+      revision: string;
+      entryId: string;
+    }
   | { type: "list-checkpoints"; threadId: string }
   | { type: "read-checkpoint"; threadId: string; turn: number; id: number }
   | { type: "set-sidebar-hidden"; hidden: boolean }
@@ -398,6 +412,13 @@ export type HostMessage = Versioned<
   /** The best matches for find-files' `query`, ranked as the page ranks an index. */
   | { type: "file-matches"; threadId: string; id: number; query: string; paths: readonly string[] }
   | { type: "file-preview"; threadId: string; id: string; preview: FilePreview }
+  | {
+      type: "history-result";
+      threadId: string;
+      id: string;
+      result: HistoryResult | null;
+      error: string | null;
+    }
   | {
       type: "checkpoints";
       threadId: string;
@@ -539,6 +560,21 @@ export function parseClientMessage(data: unknown): ParseResult {
   const v = PROTOCOL_VERSION;
   const { type, threadId, projectId } = message;
   switch (type) {
+    case "history-index":
+    case "history-preview":
+    case "history-page": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { id, revision, entryId } = message;
+      const identity = (value: unknown): value is string =>
+        typeof value === "string" && value.length > 0 && value.length <= MAX_ID;
+      if (!identity(id)) return invalid(`${type}: invalid request id`);
+      if (type === "history-index")
+        return exactly(message, { v, type, threadId: threadId as string, id });
+      if (!identity(revision) || !identity(entryId))
+        return invalid(`${type}: invalid history identity`);
+      return exactly(message, { v, type, threadId: threadId as string, id, revision, entryId });
+    }
     case "git-refresh": {
       const bad = badThreadId(type, threadId);
       if (bad) return invalid(bad);

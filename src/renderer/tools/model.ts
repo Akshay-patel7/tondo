@@ -38,13 +38,21 @@ export function toolResults(
  * Where a call stands. `writing` while the model still writes the call,
  * `waiting` until pi starts it, and `stopped` if pi stopped before it ended.
  */
-export type CallStatus = "writing" | "waiting" | "running" | "done" | "failed" | "stopped";
+export type CallStatus =
+  | "writing"
+  | "waiting"
+  | "running"
+  | "done"
+  | "failed"
+  | "stopped"
+  | "unloaded";
 
 export function callStatus({
   writing,
   result,
   run,
   piWorking,
+  historical = false,
 }: {
   /** Whether the message holding the call is still streaming. */
   writing: boolean;
@@ -52,11 +60,13 @@ export function callStatus({
   run: ToolRun | undefined;
   /** Whether pi is between agent_start and agent_settled. */
   piWorking: boolean;
+  historical?: boolean;
 }): CallStatus {
   if (result) return result.isError ? "failed" : "done";
   if (run?.result) return run.isError ? "failed" : "done";
   if (run) return "running";
   if (writing) return "writing";
+  if (historical) return "unloaded";
   return piWorking ? "waiting" : "stopped";
 }
 

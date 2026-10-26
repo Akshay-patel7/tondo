@@ -12,6 +12,7 @@ const STATUS: Record<CallStatus, string> = {
   done: "Done",
   failed: "Failed",
   stopped: "Stopped",
+  unloaded: "Not loaded",
 };
 
 const TONE: Record<CallStatus, string> = {
@@ -21,6 +22,7 @@ const TONE: Record<CallStatus, string> = {
   done: "text-faint-foreground",
   failed: "text-destructive",
   stopped: "text-faint-foreground",
+  unloaded: "text-faint-foreground",
 };
 
 /** The whole collapsed row, including its preview, is one keyboard-accessible disclosure. */

@@ -85,6 +85,14 @@ describe("callStatus", () => {
     expect(callStatus({ ...base, result: result("a", "boom", true) })).toBe("failed");
   });
 
+  test("a result outside a saved section is not reported as stopped", () => {
+    expect(callStatus({ ...base, piWorking: false, historical: true })).toBe("unloaded");
+    expect(callStatus({ ...base, historical: true, result: result("a", "done") })).toBe("done");
+    expect(callStatus({ ...base, historical: true, result: result("a", "failed", true) })).toBe(
+      "failed",
+    );
+  });
+
   test("a call pi never finished shows as stopped once pi is idle", () => {
     expect(callStatus({ ...base, piWorking: false })).toBe("stopped");
   });

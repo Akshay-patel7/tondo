@@ -1,5 +1,6 @@
 // Prompt/reply navigation follows T3 Code's chat/timelineMinimapItems.ts.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
+import { historyText } from "../../shared/history";
 import type { AssistantMessage } from "../../shared/thread";
 import type { TimelineRow, UserMessage } from "./turns";
 
@@ -30,24 +31,6 @@ export function navigationTargets(rows: readonly TimelineRow[]): readonly Naviga
   return targets;
 }
 
-const PREVIEW_CHARS = 320;
-const PREVIEW_BLOCKS = 32;
-
-/** Bound work before normalizing, even for multi-megabyte messages. */
-function previewText(content: UserMessage["content"] | AssistantMessage["content"]): string {
-  if (typeof content === "string")
-    return content.slice(0, PREVIEW_CHARS).replace(/\s+/g, " ").trim();
-  let text = "";
-  for (let index = 0; index < Math.min(content.length, PREVIEW_BLOCKS); index++) {
-    const block = content[index];
-    if (block?.type !== "text") continue;
-    if (text) text += " ";
-    text += block.text.slice(0, PREVIEW_CHARS - text.length);
-    if (text.length >= PREVIEW_CHARS) break;
-  }
-  return text.replace(/\s+/g, " ").trim();
-}
-
 /** Only the hovered/focused turn gets a preview; never parse Markdown here. */
 export function navigationPreview(target: NavigationTarget): { prompt: string; reply: string } {
   let reply = "";
@@ -58,11 +41,11 @@ export function navigationPreview(target: NavigationTarget): { prompt: string; r
     index--
   ) {
     const message = target.replies[index];
-    if (message) reply = previewText(message.content);
+    if (message) reply = historyText(message.content);
     if (reply) break;
   }
   return {
-    prompt: previewText(target.prompt.content) || "Image or attachment",
+    prompt: historyText(target.prompt.content) || "Image or attachment",
     reply: reply || "No reply preview",
   };
 }
