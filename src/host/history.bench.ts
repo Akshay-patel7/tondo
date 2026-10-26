@@ -1,3 +1,4 @@
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -38,6 +39,18 @@ append("compaction", "compacted", {
   firstKeptEntryId: "live",
   tokensBefore: 100_000,
 });
+const unorderedFile = path.join(dir, "extension-state.jsonl");
+const unordered = SessionManager.inMemory(dir);
+unordered.appendMessage({ role: "user", content: "Old prompt", timestamp: 1 });
+unordered.appendCustomEntry("large-state", { payload: "x".repeat(32 * 1024 * 1024) });
+const kept = unordered.appendMessage({ role: "user", content: "Live prompt", timestamp: 2 });
+unordered.appendCompaction("Summary", kept, 100_000);
+writeFileSync(
+  unorderedFile,
+  [unordered.getHeader(), ...unordered.getEntries()]
+    .map((entry) => JSON.stringify(entry))
+    .join("\n") + "\n",
+);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 test("saved history indexing skips 32 MiB of old tool bodies", async ({ bench }) => {
@@ -46,11 +59,13 @@ test("saved history indexing skips 32 MiB of old tool bodies", async ({ bench })
     "index 32 MiB plus 5,000 messages",
     "bounded saved preview",
     "bounded history page",
+    "index 32 MiB of extension state with late identity",
   ];
   const results = await bench.compare(
     bench(names[0]!, () => SessionHistory.read(file, "bench")),
     bench(names[1]!, () => history.preview("old")),
     bench(names[2]!, () => history.page("old")),
+    bench(names[3]!, () => SessionHistory.read(unorderedFile, unordered.getSessionId())),
   );
   for (const name of names)
     console.info(`${name}: ${(1000 / results.get(name).throughput.mean).toFixed(2)} ms/call`);

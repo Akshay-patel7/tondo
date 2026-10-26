@@ -1,3 +1,4 @@
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -79,6 +80,95 @@ describe("saved history", () => {
     ]);
     expect(await readFile(file, "utf8")).toBe(before);
     expect(JSON.stringify(history.index)).not.toContain("Old request");
+  });
+
+  it("reads real pi extension-state entries whose identity follows data", async () => {
+    const session = SessionManager.inMemory(dir);
+    const old = session.appendMessage({ role: "user", content: "Original request", timestamp: 1 });
+    session.appendCustomEntry("extension-state", {
+      phase: "idle",
+      message: { id: "fake", parentId: "fake", role: "user" },
+    });
+    const live = session.appendMessage({ role: "user", content: "Retained request", timestamp: 2 });
+    session.appendCompaction("Summary", live, 1000);
+    const custom = session.getEntries().find((entry) => entry.type === "custom")!;
+    expect(Object.keys(custom).indexOf("id")).toBeGreaterThan(Object.keys(custom).indexOf("data"));
+    await writeFile(
+      file,
+      [session.getHeader(), ...session.getEntries()]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+    const before = await readFile(file, "utf8");
+    const history = await SessionHistory.read(file, session.getSessionId());
+    expect(history.prompts).toEqual([old]);
+    expect((await history.page(old)).messages.map((entry) => entry.role)).toEqual(["user", "user"]);
+    expect((await history.preview(old)).prompt).toBe("Original request");
+    expect(await readFile(file, "utf8")).toBe(before);
+  });
+
+  for (const shape of ["object", "array", "string"] as const) {
+    it(`streams past large ${shape} extension data without parsing or retaining its body`, async () => {
+      const payload = 'Escapes \\" \\\\ and braces {}[] Unicode 🌍 '.repeat(100_000);
+      let data: unknown = payload;
+      if (shape === "object")
+        data = { nested: { id: "fake", parentId: "fake", type: "message" }, payload };
+      else if (shape === "array") data = [{ id: "fake" }, payload];
+      const session = SessionManager.inMemory(dir);
+      const old = session.appendMessage({
+        role: "user",
+        content: "Original request",
+        timestamp: 1,
+      });
+      session.appendCustomEntry("large-extension-state", data);
+      const live = session.appendMessage({
+        role: "user",
+        content: "Retained request",
+        timestamp: 2,
+      });
+      session.appendCompaction("Summary", live, 1000);
+      await writeFile(
+        file,
+        [session.getHeader(), ...session.getEntries()]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+      );
+      const lengths: number[] = [];
+      const parse = JSON.parse;
+      vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+        lengths.push(text.length);
+        return parse(text, reviver);
+      });
+      const history = await SessionHistory.read(file, session.getSessionId());
+      expect(history.prompts).toEqual([old]);
+      expect(Math.max(...lengths)).toBeLessThanOrEqual(4096);
+      expect(JSON.stringify(history)).not.toContain("Escapes");
+      expect((await history.page(old)).messages).toHaveLength(2);
+    });
+  }
+
+  it("supports identities split around payloads and metadata after message content", async () => {
+    await seed([
+      {
+        message: { role: "user", content: "Old request ".repeat(10_000), timestamp: 1 },
+        parentId: null,
+        type: "message",
+        id: "old",
+        timestamp: time,
+      },
+      {
+        type: "custom",
+        id: "state",
+        data: { nested: { id: "fake", parentId: "fake" }, payload: "x".repeat(128_000) },
+        parentId: "old",
+        timestamp: time,
+      },
+      user("live", "state"),
+      compact("c", "live", "live"),
+    ]);
+    const history = await SessionHistory.read(file, "session");
+    expect(history.prompts).toEqual(["old"]);
+    expect((await history.page("old")).messages).toHaveLength(2);
   });
 
   it("follows the selected branch and latest compaction, not abandoned prompts", async () => {

@@ -2,6 +2,7 @@
 // deliberately drops summarized messages. Keep only offsets and ancestry here.
 import { randomUUID } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
 import {
   HISTORY_PAGE_BYTES,
   HISTORY_PAGE_MESSAGES,
@@ -31,7 +32,7 @@ function record(value: unknown): value is RecordValue {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** pi writes identity before message/data/summary payloads. Never parse tool bodies to index them. */
+/** Fast path for entries whose identity precedes their payload. Custom entries need the fallback. */
 function metadata(prefix: string): RecordValue | null {
   const payload = /,\s*"(?:message|data|summary|content)"\s*:/.exec(prefix);
   try {
@@ -97,16 +98,18 @@ export class SessionHistory {
         if (prefix.length === 0) return;
         const text = prefix.toString("utf8");
         if (!text.trim()) return;
-        const value = metadata(text);
+        let value = metadata(text);
         if (!header) {
           if (value?.type !== "session" || value.id !== sessionId)
             throw new Error("The saved history no longer belongs to this thread.");
           header = true;
           return;
         }
-        if (!value)
-          throw new Error("Can't index a saved history entry. Reload the thread and try again.");
-        if (typeof value.id !== "string" || typeof value.type !== "string") return;
+        if (!value || !hasIdentity(value)) {
+          value = await readIdentity(handle, lineStart, end - lineStart, text, signal);
+        }
+        if (!hasIdentity(value))
+          throw new Error("A saved history entry has an invalid identity. Reload the thread.");
         if (
           value.id.length > 128 ||
           (typeof value.parentId === "string" && value.parentId.length > 128) ||
@@ -284,6 +287,110 @@ export class SessionHistory {
       };
     });
   }
+}
+
+/** Entry fields are unordered. In particular, pi puts custom-entry identity after data. */
+function hasIdentity(
+  value: RecordValue,
+): value is RecordValue & { type: string; id: string; parentId: string | null } {
+  return (
+    typeof value.type === "string" &&
+    typeof value.id === "string" &&
+    (value.parentId === null || typeof value.parentId === "string")
+  );
+}
+
+/** Skip payloads without retaining them, even when identity follows megabytes of extension data. */
+async function readIdentity(
+  handle: FileHandle,
+  offset: number,
+  bytes: number,
+  prefix: string,
+  signal?: AbortSignal,
+): Promise<RecordValue> {
+  if (bytes <= PREFIX_BYTES) {
+    const value: unknown = JSON.parse(prefix);
+    if (record(value)) return value;
+    throw new Error("A saved history entry isn't an object.");
+  }
+  const fields: RecordValue = {};
+  const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.alloc(64 * 1024);
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  let expectingKey = true;
+  let key: "type" | "id" | "parentId" | null = null;
+  let capture: "key" | "value" | null = null;
+  let text = "";
+  let overflow = false;
+  let bare = "";
+  for (let read = 0; read < bytes;) {
+    signal?.throwIfAborted();
+    // oxlint-disable-next-line eslint/no-await-in-loop -- rare unordered-entry fallback, yielded every 64 KiB.
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, bytes - read),
+      offset + read,
+    );
+    if (bytesRead === 0) throw new Error("The saved history changed while indexing it.");
+    read += bytesRead;
+    for (const char of decoder.write(buffer.subarray(0, bytesRead))) {
+      if (quoted) {
+        if (capture && !overflow) {
+          if (text.length >= 1024) {
+            if (capture === "value")
+              throw new Error("A saved history identity exceeds the browsing limit.");
+            overflow = true;
+          } else text += char;
+        }
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') {
+          quoted = false;
+          if (capture === "key") {
+            const name: unknown = overflow ? null : JSON.parse(text);
+            key = name === "type" || name === "id" || name === "parentId" ? name : null;
+            expectingKey = false;
+          } else if (capture === "value" && key) {
+            fields[key] = JSON.parse(text) as unknown;
+            if (hasIdentity(fields)) return fields;
+          }
+          capture = null;
+          text = "";
+        }
+        continue;
+      }
+      if (char === '"') {
+        quoted = true;
+        capture = null;
+        if (depth === 1) {
+          if (expectingKey) capture = "key";
+          else if (key) capture = "value";
+        }
+        text = capture ? '"' : "";
+        overflow = false;
+      } else if (char === "{" || char === "[") depth++;
+      else if (char === "," || char === "}" || char === "]") {
+        if (depth === 1) {
+          if (key && bare) {
+            fields[key] = JSON.parse(bare) as unknown;
+            bare = "";
+            if (hasIdentity(fields)) return fields;
+          }
+          expectingKey = true;
+          key = null;
+        }
+        if (char !== ",") depth--;
+      } else if (depth === 1 && key && char !== ":" && !/\s/.test(char)) {
+        if (bare.length >= 1024)
+          throw new Error("A saved history identity exceeds the browsing limit.");
+        bare += char;
+      }
+    }
+  }
+  throw new Error("A saved history entry has no readable identity. Reload the thread.");
 }
 
 async function readEntry(handle: FileHandle, entry: Entry): Promise<RecordValue> {

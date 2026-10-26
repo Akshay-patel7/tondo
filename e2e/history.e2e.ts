@@ -1,5 +1,5 @@
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -28,10 +28,9 @@ test.beforeEach(async () => {
   mkdirSync(profileDir);
   const folder = sessionFolder(process.env.TONDO_E2E_EXECUTABLE ? dir : profileDir, project);
   mkdirSync(folder, { recursive: true });
-  const id = randomUUID();
   const stamp = Date.now() - 60_000;
   title = "Original history request";
-  const messages: unknown[] = [
+  const messages: Parameters<SessionManager["appendMessage"]>[0][] = [
     { role: "user", content: title, timestamp: stamp },
     {
       ...reply(""),
@@ -92,35 +91,26 @@ test.beforeEach(async () => {
         timestamp: stamp + 2,
       },
     );
-  const records = messages.map((message, i) => ({
-    type: "message",
-    id: `entry-${i}`,
-    parentId: i === 0 ? null : `entry-${i - 1}`,
-    timestamp: new Date(stamp).toISOString(),
-    message,
-  }));
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const session = SessionManager.inMemory(project);
+  // Use pi's serializer, including custom state with identity after data.
+  session.appendCustomEntry("initial-state", { phase: "idle" });
+  const ids = messages.map((message, index) => {
+    const id = session.appendMessage(message);
+    if (index === 0)
+      session.appendCustomEntry("large-state", {
+        message: { role: "user", id: "fake", parentId: "fake" },
+        payload: "extension state ".repeat(20_000),
+      });
+    return id;
+  });
+  session.appendCompaction("Earlier work summarized.", ids.at(single ? -1 : -2)!, 5000);
+  session.appendCustomEntry("final-state", { phase: "idle" });
   writeFileSync(
-    path.join(folder, `${id}.jsonl`),
-    [
-      JSON.stringify({
-        type: "session",
-        version: 3,
-        id,
-        cwd: project,
-        timestamp: new Date(stamp).toISOString(),
-      }),
-      ...records.map((record) => JSON.stringify(record)),
-      JSON.stringify({
-        type: "compaction",
-        id: "compacted",
-        parentId: records.at(-1)!.id,
-        timestamp: new Date(stamp).toISOString(),
-        summary: "Earlier work summarized.",
-        firstKeptEntryId: records.at(single ? -1 : -2)!.id,
-        tokensBefore: 5000,
-      }),
-      "",
-    ].join("\n"),
+    path.join(folder, `${session.getSessionId()}.jsonl`),
+    [session.getHeader(), ...session.getEntries()]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
   );
   const streamedReply = longReply();
   tondo = await launchWithPi({
