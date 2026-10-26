@@ -2,11 +2,13 @@
 // apps/web/src/components/chat/MessagesTimeline.tsx.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
 import { ArrowDown } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useThread } from "../thread/store";
 import { Button } from "../ui/button";
+import { MessageNavigator } from "../ui/message-navigator";
 import { followsAfterScroll } from "./follow";
 import { RowView } from "./MessageView";
+import { navigationPreview, navigationTargets } from "./navigation";
 import { rowAt, streamingRowStart, timelineRows } from "./turns";
 
 function Row({ index }: { index: number }) {
@@ -43,12 +45,15 @@ export function Timeline() {
   const lastScroll = useRef(0);
   const programmedScroll = useRef<number | null>(null);
   const [following, setFollowing] = useState(true);
+  const [jumpTarget, setJumpTarget] = useState<number | null>(null);
   const [layout, setLayout] = useState(() => ({
     heights: new Map<number, number>(),
     viewport: 0,
     scroll: 0,
   }));
-  const shown = timelineRows(messages).map((row) => row.start);
+  const completedRows = timelineRows(messages);
+  const targets = useMemo(() => navigationTargets(completedRows), [completedRows]);
+  const shown = completedRows.map((row) => row.start);
   const rows = streamingRow === messages.length ? [...shown, messages.length] : shown;
   let contentHeight = 0;
   const positions: { index: number; top: number; height: number }[] = [];
@@ -60,7 +65,21 @@ export function Timeline() {
   }
   const totalHeight = contentHeight + 16;
   const end = Math.max(0, totalHeight - layout.viewport);
-  const top = following ? end : Math.max(0, Math.min(end, layout.scroll));
+  // Retain a jump's row anchor while its previously unmounted neighbors are
+  // measured. Estimated heights alone cannot land precisely in long history.
+  const jumpTop =
+    jumpTarget === null ? undefined : positions.find((row) => row.index === jumpTarget)?.top;
+  const top = following ? end : Math.max(0, Math.min(end, jumpTop ?? layout.scroll));
+  let currentTarget = Math.max(0, targets.length - 1);
+  if (!following) {
+    currentTarget = 0;
+    let targetIndex = 0;
+    for (const position of positions) {
+      if (position.top > top + 32) break;
+      if (position.index !== targets[targetIndex]?.index) continue;
+      currentTarget = targetIndex++;
+    }
+  }
   const first = positions.findIndex((row) => row.top + row.height >= top - 200);
   const after = positions.findIndex((row) => row.top > top + layout.viewport + 200);
   // Keep a neighboring row on either side, including the prompt above a long reply.
@@ -136,6 +155,7 @@ export function Timeline() {
       return;
     }
     programmedScroll.current = null;
+    setJumpTarget(null);
     followingNow.current = followsAfterScroll(followingNow.current, lastScroll.current, {
       scroll,
       contentLength: node.scrollHeight,
@@ -146,7 +166,17 @@ export function Timeline() {
     setLayout((previous) => (previous.scroll === scroll ? previous : { ...previous, scroll }));
   };
 
+  const jumpToMessage = (target: number) => {
+    const index = targets[target]?.index;
+    if (index === undefined) return;
+    followingNow.current = false;
+    setFollowing(false);
+    setJumpTarget(index);
+    scroller.current?.focus({ preventScroll: true });
+  };
+
   const jumpToLatest = () => {
+    setJumpTarget(null);
     const node = scroller.current;
     node?.focus({ preventScroll: true });
     // Stop an in-flight native PageUp before React commits the follow state.
@@ -182,6 +212,7 @@ export function Timeline() {
             });
           } else if (event.key === "Home") {
             event.preventDefault();
+            setJumpTarget(null);
             followingNow.current = false;
             setFollowing(false);
             setLayout((previous) => ({ ...previous, scroll: 0 }));
@@ -211,6 +242,12 @@ export function Timeline() {
           ))}
         </div>
       </div>
+      <MessageNavigator
+        count={targets.length}
+        current={currentTarget}
+        preview={(index) => navigationPreview(targets[index]!)}
+        onSelect={jumpToMessage}
+      />
       {following ? null : (
         <div className="absolute inset-x-0 bottom-4 mx-auto w-fit rounded-control border border-border bg-secondary">
           <Button variant="secondary" size="sm" onClick={jumpToLatest}>
