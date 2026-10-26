@@ -103,6 +103,43 @@ describe("timelineRows", () => {
   });
 });
 
+test("visible context messages keep transcript order without exposing hidden extension or system messages", () => {
+  const messages: PiMessage[] = [
+    user("Go."),
+    assistant([text("Before.")]),
+    { role: "custom", customType: "notice", content: "Visible", display: true, timestamp: 1 },
+    { role: "custom", customType: "private", content: "Hidden", display: false, timestamp: 2 },
+    {
+      role: "bashExecution",
+      command: "pwd",
+      output: "/checkout",
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 3,
+    },
+    { role: "compactionSummary", summary: "Compacted", tokensBefore: 100, timestamp: 4 },
+    { role: "branchSummary", summary: "Branch context", fromId: null, timestamp: 5 },
+    assistant([text("After.")]),
+  ];
+  const rows = timelineRows(messages);
+  expect(rows.map((row) => [row.kind, row.start, row.end])).toEqual([
+    ["user", 0, 1],
+    ["assistant", 1, 2],
+    ["context", 2, 3],
+    ["context", 4, 5],
+    ["context", 5, 6],
+    ["context", 6, 7],
+    ["assistant", 7, 8],
+  ]);
+  const appended = timelineRows([...messages, user("Next.")]);
+  for (let index = 0; index < rows.length - 1; index++) expect(appended[index]).toBe(rows[index]);
+  expect(streamingRowStart(messages.slice(0, 7), assistant([text("Now.")]))).toBe(7);
+  expect(
+    timelineRows([{ role: "system", content: "Private system prompt", timestamp: 0 }]),
+  ).toEqual([]);
+});
+
 describe("streamingRowStart", () => {
   const reply = assistant([text("")]);
 

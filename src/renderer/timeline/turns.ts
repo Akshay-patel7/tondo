@@ -15,7 +15,18 @@ import {
 
 export type UserMessage = Extract<PiMessage, { role: "user" }>;
 
+export type ContextMessage = Extract<
+  PiMessage,
+  { role: "custom" | "bashExecution" | "branchSummary" | "compactionSummary" }
+>;
+
 export type TimelineRow =
+  | {
+      readonly kind: "context";
+      readonly start: number;
+      readonly end: number;
+      readonly message: ContextMessage;
+    }
   | {
       readonly kind: "user";
       readonly start: number;
@@ -93,6 +104,19 @@ function buildRows(messages: readonly PiMessage[], kept: Rows | undefined): Rows
         if (calls.has(message.toolCallId)) break;
         endTurn(index);
         list.push(keep({ kind: "toolResult", start: index, end: index + 1, message }));
+        break;
+      case "custom":
+        if (!message.display) break;
+        endTurn(index);
+        list.push(keep({ kind: "context", start: index, end: index + 1, message }));
+        break;
+      case "bashExecution":
+      case "branchSummary":
+      case "compactionSummary":
+        endTurn(index);
+        list.push(keep({ kind: "context", start: index, end: index + 1, message }));
+        break;
+      case "system":
         break;
       default:
         break;

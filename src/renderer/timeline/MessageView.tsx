@@ -1,5 +1,5 @@
 import { ChevronRight, GitCompareArrows } from "lucide-react";
-import { useId } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Streamdown, type LinkSafetyConfig } from "streamdown";
 import type { AssistantMessage, ToolResultMessage } from "../../shared/thread";
 import { useCheckpoints, useHost } from "../connection";
@@ -17,6 +17,7 @@ import {
   checkpointTurnAt,
   turnChanges,
   turnStack,
+  type ContextMessage,
   type StackItem,
   type TimelineRow,
   type UserMessage,
@@ -79,6 +80,8 @@ export function RowView({
           settled={settled}
         />
       );
+    case "context":
+      return <ContextView message={row.message} />;
     case "toolResult":
       // The timeline shows a result as its own row only when its call isn't
       // in the transcript. Otherwise the call's work log row shows it.
@@ -143,18 +146,7 @@ function StackItemView({ item }: { item: StackItem }) {
     case "thought":
       return <Thought text={item.text} active={item.active} />;
     case "text":
-      return (
-        <div className={MARKDOWN}>
-          <Streamdown
-            plugins={MARKDOWN_PLUGINS}
-            remarkPlugins={REMARK_PLUGINS}
-            linkSafety={LINK_SAFETY}
-            isAnimating={item.streaming}
-          >
-            {item.text}
-          </Streamdown>
-        </div>
-      );
+      return <MarkdownText text={item.text} streaming={item.streaming} />;
     case "workLog":
       return <WorkLog log={item} />;
     case "error":
@@ -162,6 +154,89 @@ function StackItemView({ item }: { item: StackItem }) {
     default:
       return null;
   }
+}
+
+function MarkdownText({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  return (
+    <div className={MARKDOWN}>
+      <Streamdown
+        plugins={MARKDOWN_PLUGINS}
+        remarkPlugins={REMARK_PLUGINS}
+        linkSafety={LINK_SAFETY}
+        isAnimating={streaming}
+      >
+        {text}
+      </Streamdown>
+    </div>
+  );
+}
+
+function ContextView({ message }: { message: ContextMessage }) {
+  switch (message.role) {
+    case "custom":
+      return (
+        <article aria-label={`Extension: ${message.customType}`}>
+          <MarkdownText text={plainText(message.content)} />
+          {typeof message.content === "string" ? null : <OutputImages content={message.content} />}
+        </article>
+      );
+    case "bashExecution":
+      return (
+        <TranscriptDisclosure title="Shell execution">
+          <OutputView text={message.command} label="Command" />
+          <OutputView
+            text={message.output}
+            label="Output"
+            tone={message.exitCode ? "error" : "normal"}
+          />
+          <p className="px-3 py-2 text-xs text-muted-foreground">
+            {message.cancelled ? "Cancelled" : `Exit code: ${message.exitCode ?? "unknown"}`}
+            {message.excludeFromContext ? " · Not sent to the model" : ""}
+            {message.truncated ? " · Output truncated" : ""}
+          </p>
+          {message.fullOutputPath ? (
+            <MarkdownText text={`[Full output](<${message.fullOutputPath}>)`} />
+          ) : null}
+        </TranscriptDisclosure>
+      );
+    case "compactionSummary":
+      return (
+        <TranscriptDisclosure title="Compaction summary">
+          <MarkdownText text={message.summary} />
+        </TranscriptDisclosure>
+      );
+    case "branchSummary":
+      return (
+        <TranscriptDisclosure title="Branch summary">
+          <MarkdownText text={message.summary} />
+        </TranscriptDisclosure>
+      );
+  }
+}
+
+/** Long context and shell output aren't parsed or mounted before disclosure. */
+function TranscriptDisclosure({ title, children }: { title: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const id = useId();
+  return (
+    <article aria-label={title} className="rounded-card border border-border">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={expanded ? id : undefined}
+        onClick={() => setExpanded((open) => !open)}
+        className="flex w-full items-center gap-2 rounded-card px-3 py-2 text-left text-xs text-muted-foreground outline-none hover:bg-accent focus-visible:focus-ring"
+      >
+        <ChevronRight aria-hidden className={expanded ? "size-3 rotate-90" : "size-3"} />
+        {title}
+      </button>
+      {expanded ? (
+        <div id={id} className="flex flex-col gap-2 px-3 py-2">
+          {children}
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 /** The thinking behind a reply, behind a chevron. pi's messages carry no stamp for it, so no duration. */
