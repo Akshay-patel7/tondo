@@ -29,6 +29,7 @@ import {
   waitForPi,
 } from "./pi";
 import { piGroup, piGroups, processesIn } from "./processes";
+import { expectPicked, pickOption } from "./ui";
 
 test.describe.configure({ timeout: 60_000 });
 
@@ -388,6 +389,124 @@ test("the terminal takes the palette's colors whenever it changes", async () => 
   expect([warm, ocean]).not.toContain(rose);
 });
 
+test("new threads use saved model and thinking defaults without changing existing sessions", async () => {
+  const profileDir = path.join(workDir, "profile");
+  const project = path.join(workDir, "project");
+  mkdirSync(profileDir);
+  mkdirSync(project);
+  tondo = await launchWithPi({
+    workDir,
+    profileDir,
+    settings: { theme: "light" },
+    script: { responses: [reply("Saved answer.")] },
+  });
+  await bringToFront(tondo);
+  let { page } = tondo;
+  await page.emulateMedia({ colorScheme: null });
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await pickOption(page, "Thinking level", "Low thinking");
+  await send(page, "Original thread");
+  await expect(page.getByText("Saved answer.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+
+  let settings = await openSettings(page);
+  await section(settings, "Threads").click();
+  await expectPicked(settings, "Default model", "pi-default");
+  await expectPicked(settings, "Default thinking level", "pi-default");
+  await pickOption(settings, "Default model", "Faux 1");
+  await pickOption(settings, "Default thinking level", "High thinking");
+  await expect
+    .poll(() => saved(profileDir))
+    .toMatchObject({
+      defaultModel: { provider: "faux", id: "faux-1" },
+      defaultThinkingLevel: "high",
+    });
+  await page.screenshot({
+    path: test.info().outputPath("thread-defaults-light.png"),
+    animations: "disabled",
+  });
+  await section(settings, "Appearance").click();
+  await settings.getByRole("button", { name: "Dark", exact: true }).click();
+  await expect.poll(() => prefersDark(page)).toBe(true);
+  await section(settings, "Threads").click();
+  await page.screenshot({
+    path: test.info().outputPath("thread-defaults-dark.png"),
+    animations: "disabled",
+  });
+  await back(page).click();
+  await expectPicked(page, "Model", "faux/faux-1");
+  await expectPicked(page, "Thinking level", "low");
+
+  await page.keyboard.press("ControlOrMeta+n");
+  await waitForPi(page);
+  await expectPicked(page, "Model", "faux/faux-1");
+  await expectPicked(page, "Thinking level", "high");
+  // A per-thread override remains independent of the saved defaults.
+  await pickOption(page, "Thinking level", "Minimal thinking");
+  await page.reload();
+  await waitForPi(page);
+  await expectPicked(page, "Thinking level", "minimal");
+
+  settings = await openSettings(page);
+  await section(settings, "Threads").click();
+  await expectPicked(settings, "Default thinking level", "high");
+  await pickOption(settings, "Default model", "Faux 2");
+  await back(page).click();
+  await page.keyboard.press("ControlOrMeta+n");
+  await waitForPi(page);
+  await expectPicked(page, "Model", "faux/faux-2");
+  // Faux 2 has no reasoning. pi clamps the saved high level to off.
+  await expect(page.getByRole("combobox", { name: "Thinking level", exact: true })).toBeHidden();
+  await send(page, "Non-reasoning thread");
+  await expect(page.getByText("Saved answer.", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  await threads(page).getByRole("button", { name: "Original thread", exact: true }).click();
+  await waitForPi(page);
+  await expectPicked(page, "Model", "faux/faux-1");
+  await expectPicked(page, "Thinking level", "low");
+
+  await tondo.close();
+  tondo = await launchTondo({ profileDir });
+  ({ page } = tondo);
+  await waitForPi(page);
+  await expectPicked(page, "Model", "faux/faux-1");
+  await expectPicked(page, "Thinking level", "low");
+  settings = await openSettings(page);
+  await section(settings, "Threads").click();
+  await expectPicked(settings, "Default model", "faux/faux-2");
+  await expectPicked(settings, "Default thinking level", "high");
+  await pickOption(settings, "Default model", "Use pi's default");
+  await pickOption(settings, "Default thinking level", "Use pi's default");
+  await expect
+    .poll(() => saved(profileDir))
+    .toMatchObject({
+      defaultModel: null,
+      defaultThinkingLevel: null,
+    });
+});
+
+test("an unavailable default model can be cleared before opening a project", async () => {
+  tondo = await launchWithPi({
+    workDir,
+    script: { responses: [] },
+    settings: {
+      defaultModel: { provider: "missing", id: "old-model" },
+      defaultThinkingLevel: "max",
+    },
+  });
+  const { page, profileDir } = tondo;
+  const settings = await openSettings(page);
+  await section(settings, "Threads").click();
+  await expectPicked(settings, "Default model", "missing/old-model");
+  await expectPicked(settings, "Default thinking level", "max");
+  await pickOption(settings, "Default model", "Use pi's default");
+  await pickOption(settings, "Default thinking level", "Use pi's default");
+  await expect
+    .poll(() => saved(profileDir))
+    .toMatchObject({ defaultModel: null, defaultThinkingLevel: null });
+});
+
 test("fewer pi processes kept running stops a hidden idle thread's pi at once", async () => {
   tondo = await launchWithPi({ workDir, script: { responses: [reply("An answer.")] } });
   const { app, page, profileDir } = tondo;
@@ -625,6 +744,8 @@ function saved(profileDir: string): {
   theme?: string;
   palette?: string;
   expandThinking?: boolean;
+  defaultModel?: { provider: string; id: string } | null;
+  defaultThinkingLevel?: string | null;
   piPath?: string | null;
   pool?: { maxLive?: number };
   shortcuts?: Record<string, string | null>;

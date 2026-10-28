@@ -55,6 +55,14 @@ export function piLaunch(
       ...("file" in session ? ["--session", session.file] : ["--session-id", session.id]),
       ...trustArgs(cwd, env, settings.projectTrust),
       ...config.piArgs,
+      // Explicit flags override session restoration, so defaults belong only
+      // on launches that create a session, never on a saved session's reopen.
+      ...("id" in session && settings.defaultModel
+        ? ["--provider", settings.defaultModel.provider, "--model", settings.defaultModel.id]
+        : []),
+      ...("id" in session && settings.defaultThinkingLevel !== null
+        ? ["--thinking", settings.defaultThinkingLevel]
+        : []),
     ],
     cwd,
     env,

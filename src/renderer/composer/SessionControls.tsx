@@ -1,6 +1,7 @@
 // The model and thinking level pickers. They show what pi last reported, and a
 // pick goes to pi, which reports the change back.
-import type { PiSession, ThinkingLevel } from "../../shared/protocol";
+import type { PiSession } from "../../shared/protocol";
+import { THINKING_LABELS } from "../../shared/settings";
 import { setModel, setThinkingLevel, usePiUpdates } from "../connection";
 import {
   Select,
@@ -11,16 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-
-const THINKING_LABELS: Record<ThinkingLevel, string> = {
-  off: "Thinking off",
-  minimal: "Minimal thinking",
-  low: "Low thinking",
-  medium: "Medium thinking",
-  high: "High thinking",
-  xhigh: "Extra high thinking",
-  max: "Max thinking",
-};
 
 /** A model's value in the picker. */
 function modelKey(provider: string, id: string): string {

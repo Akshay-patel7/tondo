@@ -421,6 +421,18 @@ describe("parseClientMessage", () => {
     );
   });
 
+  it("accepts new-session defaults, copies model identities, and allows resetting either", () => {
+    const defaultModel = { provider: "faux", id: "faux-1" };
+    const patch = { defaultModel, defaultThinkingLevel: "max" };
+    const result = parseClientMessage({ v, type: "set-settings", patch });
+    if (!result.ok || result.message.type !== "set-settings") throw new Error("rejected");
+    expect(result.message.patch).toEqual(patch);
+    expect(result.message.patch.defaultModel).not.toBe(defaultModel);
+    for (const reset of [{ defaultModel: null }, { defaultThinkingLevel: null }]) {
+      expect(parseClientMessage({ v, type: "set-settings", patch: reset }).ok).toBe(true);
+    }
+  });
+
   it("copies a settings patch rather than passing the page's object on", () => {
     const pool = { maxLive: 3 };
     const result = parseClientMessage({ v, type: "set-settings", patch: { pool } });
@@ -441,6 +453,19 @@ describe("parseClientMessage", () => {
     [{ patch: { expandThinking: "true" } }, "set-settings: expandThinking must be true or false"],
     [{ patch: { expandThinking: null } }, "set-settings: expandThinking must be true or false"],
     [{ patch: { expandThinking: 1 } }, "set-settings: expandThinking must be true or false"],
+    [{ patch: { defaultModel: "faux/faux-1" } }, "set-settings: defaultModel must be"],
+    [{ patch: { defaultModel: [] } }, "set-settings: defaultModel must be"],
+    [
+      { patch: { defaultModel: { provider: "faux", id: "" } } },
+      "set-settings: defaultModel must be",
+    ],
+    [
+      { patch: { defaultModel: { provider: "faux", id: "a", extra: true } } },
+      "set-settings: defaultModel must be",
+    ],
+    [{ patch: { defaultThinkingLevel: "extreme" } }, "set-settings: defaultThinkingLevel must be"],
+    [{ patch: { defaultThinkingLevel: "toString" } }, "set-settings: defaultThinkingLevel must be"],
+    [{ patch: { defaultThinkingLevel: 1 } }, "set-settings: defaultThinkingLevel must be"],
     [{ patch: { panelWidths: [] } }, "set-settings: panelWidths must be an object"],
     [{ patch: { panelWidths: null } }, "set-settings: panelWidths must be an object"],
     [
@@ -511,8 +536,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 29, which adds bounded saved-history browsing", () => {
-    expect(PROTOCOL_VERSION).toBe(29);
+  it("speaks version 30, which adds new-session model and thinking defaults", () => {
+    expect(PROTOCOL_VERSION).toBe(30);
   });
 
   it("rejects extra fields when marking a thread unread", () => {
