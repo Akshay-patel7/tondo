@@ -614,6 +614,7 @@ export function parseClientMessage(data: unknown): ParseResult {
     case "terminal-sharing":
     case "terminal-preview":
     case "terminal-discard":
+    case "terminal-new":
     case "terminal-open":
     case "terminal-close":
     case "terminal-attach":
@@ -965,6 +966,24 @@ function parseTerminalMessage(
   }
   if (type === "terminal-preview" || type === "terminal-discard")
     return exactly(message, { ...base, type });
+  if (type === "terminal-new") {
+    if (message.split === undefined) return exactly(message, { ...base, type });
+    const split = message.split;
+    if (typeof split !== "object" || split === null || Array.isArray(split))
+      return invalid("terminal-new: invalid split");
+    const fields = split as Record<string, unknown>;
+    if (
+      Object.keys(fields).length !== 2 ||
+      badThreadId(type, fields.terminalId) ||
+      (fields.direction !== "vertical" && fields.direction !== "horizontal")
+    )
+      return invalid("terminal-new: invalid split");
+    return exactly(message, {
+      ...base,
+      type,
+      split: { terminalId: fields.terminalId as string, direction: fields.direction },
+    });
+  }
   if (type === "terminal-open") {
     if (kind !== "shell" && kind !== "login") return invalid("terminal-open: invalid kind");
     if (provider === undefined) return exactly(message, { ...base, type, kind });

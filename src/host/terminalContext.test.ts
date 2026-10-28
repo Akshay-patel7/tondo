@@ -3,6 +3,33 @@ import { TERMINAL_CONTEXT_CHARS } from "../shared/terminal";
 import { TerminalContext, terminalContextSuffix } from "./terminalContext";
 
 describe("terminal context", () => {
+  it("isolates partial escape sequences and redraws between simultaneous shells", () => {
+    const context = new TerminalContext(true);
+    context.newShell("a");
+    context.newShell("b");
+    context.append("\u001b]0;private", true, "a");
+    context.append("visible b\r\n", true, "b");
+    context.append(" title\u0007visible a\r", true, "a");
+    context.append("\n", true, "b");
+    expect(context.take()?.text).toBe("visible b\nvisible a\n\n");
+    context.append("prompt-a> ", false, "a");
+    context.resize("a");
+    context.append("\rprompt-a> ", true, "a");
+    context.append("prompt-b> ", true, "b");
+    expect(context.take()?.text).toBe("prompt-b> ");
+    context.forgetShell("a");
+    context.newShell("a");
+    context.append("fresh", true, "a");
+    expect(context.take()?.text).toBe("fresh");
+  });
+
+  it("does not let a shell backspace erase another shell's output", () => {
+    const context = new TerminalContext(true);
+    context.append("first", true, "a");
+    context.append("\bsecond", true, "b");
+    expect(context.take()?.text).toBe("firstsecond");
+  });
+
   it("starts off, captures no history retroactively, and needs no output to send a message", () => {
     const context = new TerminalContext();
     context.append("old output\r\n");

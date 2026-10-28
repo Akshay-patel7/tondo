@@ -6,10 +6,12 @@ import type { IPty } from "node-pty";
 import { MAX_SCRIPT_TERMINALS } from "../shared/projectScripts";
 import { PROTOCOL_VERSION, type HostMessage, type TerminalRequest } from "../shared/protocol";
 import {
+  MAX_SHELL_TERMINALS,
   TERMINAL_CHUNK_CHARS,
   TERMINAL_HISTORY_BYTES,
   TERMINAL_WINDOW_BYTES,
   type TerminalKind,
+  type TerminalSplit,
   type TerminalState,
 } from "../shared/terminal";
 import { LoginTyper } from "./loginTyper";
@@ -47,12 +49,13 @@ interface Session {
 const v = PROTOCOL_VERSION;
 const exec = promisify(execFile);
 
-/** One interactive terminal and separate script runs per thread. Output bypasses React. */
+/** Bounded interactive shells and separate script runs per thread. Output bypasses React. */
 export class Terminals {
   private readonly sessions = new Map<string, Session>();
   private readonly groups = new Set<number>();
   private readonly contexts = new Map<string, TerminalContext>();
   private stopping = false;
+  private adapter?: Promise<typeof import("node-pty")>;
 
   private readonly launch: (threadId: string, kind: TerminalKind) => Promise<TerminalLaunch>;
   private readonly send: (message: HostMessage) => void;
@@ -133,8 +136,7 @@ export class Terminals {
   takeContext(threadId: string): TerminalContextSend | null {
     const send = this.context(threadId).take();
     if (send) {
-      const session = this.primary(threadId);
-      if (session) session.capturing = false;
+      this.stopCapture(threadId);
       this.publishContext(threadId);
     }
     return send;
@@ -158,15 +160,13 @@ export class Terminals {
   handle(message: TerminalRequest): void | Promise<void> {
     if (message.type === "terminal-sharing") {
       this.context(message.threadId).setEnabled(message.enabled);
-      const session = this.primary(message.threadId);
-      if (session) session.capturing = false;
+      this.stopCapture(message.threadId);
       this.publishContext(message.threadId);
       return;
     }
     if (message.type === "terminal-discard") {
       this.context(message.threadId).discard();
-      const session = this.primary(message.threadId);
-      if (session) session.capturing = false;
+      this.stopCapture(message.threadId);
       this.publishContext(message.threadId);
       return;
     }
@@ -178,6 +178,24 @@ export class Terminals {
         ...this.context(message.threadId).preview(),
       });
       return;
+    }
+    if (message.type === "terminal-new") {
+      if (this.stopping) throw new Error("Tondo is stopping its terminals.");
+      const shells = [...this.sessions.values()].filter(
+        (session) => session.threadId === message.threadId && !session.state.script,
+      );
+      if (shells.some((session) => session.state.kind === "login"))
+        throw new Error("Close provider sign-in before opening another terminal.");
+      if (shells.length >= MAX_SHELL_TERMINALS)
+        throw new Error(
+          `Close a terminal before starting another. Each thread can keep ${MAX_SHELL_TERMINALS} shells.`,
+        );
+      if (message.split) {
+        const target = this.sessions.get(message.split.terminalId);
+        if (!target || target.threadId !== message.threadId || target.state.kind === "login")
+          throw new Error("The terminal to split is no longer available.");
+      }
+      return this.create(message.threadId, "shell", undefined, undefined, message.split);
     }
     if (message.type === "terminal-open")
       return this.open(message.threadId, message.kind, message.provider);
@@ -191,7 +209,7 @@ export class Terminals {
         this.detach(session);
         session.attachment = message.attachment;
         if (!session.exited) {
-          this.context(session.threadId).resize();
+          this.context(session.threadId).resize(session.state.id);
           session.pty?.resize(message.cols, message.rows);
         }
         this.enqueue(session, session.history.tail(TERMINAL_HISTORY_BYTES));
@@ -215,7 +233,7 @@ export class Terminals {
         break;
       case "terminal-resize":
         if (session.state.status === "running") {
-          this.context(session.threadId).resize();
+          this.context(session.threadId).resize(session.state.id);
           session.pty?.resize(message.cols, message.rows);
         }
         break;
@@ -226,6 +244,11 @@ export class Terminals {
         }
         break;
     }
+  }
+
+  private stopCapture(threadId: string): void {
+    for (const session of this.sessions.values())
+      if (session.threadId === threadId) session.capturing = false;
   }
 
   /** A reused terminal ignores `provider`: only a new pi can be typed into safely. An exited one is replaced. */
@@ -249,12 +272,25 @@ export class Terminals {
     kind: TerminalKind,
     provider?: string,
     script?: { name: string; launch: () => Promise<TerminalLaunch> },
+    split?: TerminalSplit,
   ): Promise<void> {
     const session: Session = {
       threadId,
       state: {
         id: randomUUID(),
         kind,
+        ...(!script && kind === "shell"
+          ? {
+              number:
+                1 +
+                Math.max(
+                  0,
+                  ...[...this.sessions.values()]
+                    .filter((item) => item.threadId === threadId)
+                    .map((item) => item.state.number ?? 0),
+                ),
+            }
+          : {}),
         status: "starting",
         error: null,
         exitCode: null,
@@ -280,8 +316,8 @@ export class Terminals {
     if (kind === "login" && provider !== undefined)
       session.typer = new LoginTyper(provider, (data) => session.pty?.write(data));
     this.sessions.set(session.state.id, session);
-    if (kind === "shell" && !script) this.context(threadId).newShell();
-    this.publish(session);
+    if (kind === "shell" && !script) this.context(threadId).newShell(session.state.id);
+    this.publish(session, split);
     session.started = this.start(session, script?.launch);
     return session.started;
   }
@@ -296,7 +332,7 @@ export class Terminals {
         : this.launch(session.threadId, session.state.kind));
       if (session.state.script)
         session.state = { ...session.state, script: { ...session.state.script, cwd: launch.cwd } };
-      const { spawn } = await import("node-pty");
+      const { spawn } = await (this.adapter ??= import("node-pty"));
       // node-pty doesn't throw for a missing cwd: the shell starts and exits with code 1.
       const folder = await stat(launch.cwd).then(
         (found) => found.isDirectory(),
@@ -325,7 +361,7 @@ export class Terminals {
         ) {
           const context = this.context(session.threadId);
           const pending = context.pending;
-          context.append(data, session.capturing);
+          context.append(data, session.capturing, session.state.id);
           // Only availability changes reach React, never the output stream.
           if (pending !== context.pending) this.publishContext(session.threadId);
         }
@@ -384,6 +420,7 @@ export class Terminals {
     this.detach(session);
     if (this.sessions.get(session.state.id) === session) {
       this.sessions.delete(session.state.id);
+      this.contexts.get(threadId)?.forgetShell(session.state.id);
       this.send({
         v,
         type: "terminal-state",
@@ -477,10 +514,16 @@ export class Terminals {
     session.paused = false;
   }
 
-  private publish(session: Session): void {
+  private publish(session: Session, split?: TerminalSplit): void {
     // node-pty can deliver an exit after close removed or replaced this session.
     if (this.sessions.get(session.state.id) !== session) return;
-    this.send({ v, type: "terminal-state", threadId: session.threadId, terminal: session.state });
+    this.send({
+      v,
+      type: "terminal-state",
+      threadId: session.threadId,
+      terminal: session.state,
+      ...(split ? { split } : {}),
+    });
   }
 
   private problem(session: Session, error: unknown): void {

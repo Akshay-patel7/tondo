@@ -353,7 +353,17 @@ export class Workspace {
           this.terminals.handle(message);
         });
         break;
+      case "terminal-new":
       case "terminal-open":
+        this.run(() => {
+          const row = this.row(message.threadId);
+          const started = this.terminals.handle(message);
+          // Keep terminal-only threads reachable when the user switches away.
+          this.store.revealThread(row.id);
+          this.sendSidebar();
+          return started;
+        });
+        break;
       case "terminal-close":
       case "terminal-attach":
       case "terminal-detach":

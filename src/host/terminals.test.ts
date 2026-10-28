@@ -60,6 +60,134 @@ const login = (terminals: Terminals, provider?: string) =>
 const writes = () => fake.write.mock.calls.map(([data]: unknown[]) => data);
 
 describe("terminal sessions", () => {
+  it("creates independent shells with targeted output, replay and backpressure", async () => {
+    const { terminals, messages, open } = setup();
+    const first = await open();
+    const firstData = fake.data;
+    await terminals.handle({
+      type: "terminal-new",
+      threadId: "thread",
+      split: { terminalId: first.terminalId, direction: "vertical" },
+    });
+    const event = messages.findLast((m) => m.type === "terminal-state");
+    if (event?.type !== "terminal-state" || !event.terminal) throw new Error("No second shell");
+    const second = { threadId: "thread", terminalId: event.terminal.id };
+    const secondData = fake.data;
+    expect(second.terminalId).not.toBe(first.terminalId);
+    expect(event.terminal.number).toBe(2);
+    expect(messages).toContainEqual(
+      expect.objectContaining({ split: { terminalId: first.terminalId, direction: "vertical" } }),
+    );
+    firstData("first only");
+    secondData("second only");
+    terminals.handle({
+      type: "terminal-attach",
+      ...first,
+      attachment: "first",
+      cols: 80,
+      rows: 24,
+    });
+    terminals.handle({
+      type: "terminal-attach",
+      ...second,
+      attachment: "second",
+      cols: 80,
+      rows: 24,
+    });
+    expect(
+      messages
+        .filter((m) => m.type === "terminal-output" && m.attachment === "first")
+        .map((m) => m.type === "terminal-output" && m.data)
+        .join(""),
+    ).toBe("first only");
+    expect(
+      messages
+        .filter((m) => m.type === "terminal-output" && m.attachment === "second")
+        .map((m) => m.type === "terminal-output" && m.data)
+        .join(""),
+    ).toBe("second only");
+    firstData("x".repeat(TERMINAL_WINDOW_BYTES * 2));
+    expect(fake.pause).toHaveBeenCalled();
+    secondData("still responsive");
+    expect(messages.at(-1)).toMatchObject({ attachment: "second", data: "still responsive" });
+    await terminals.handle({ type: "terminal-close", ...first });
+    const before = messages.length;
+    firstData("late");
+    expect(messages.length).toBe(before);
+    terminals.greet();
+    expect(messages.findLast((m) => m.type === "terminal-state")).toMatchObject({
+      terminal: { id: second.terminalId },
+    });
+    await terminals.closeAll();
+  });
+
+  it("bounds shells including pending starts and rejects foreign split targets", async () => {
+    const { terminals, messages, open } = setup();
+    const first = await open();
+    expect(() =>
+      terminals.handle({
+        type: "terminal-new",
+        threadId: "wrong",
+        split: { terminalId: first.terminalId, direction: "vertical" },
+      }),
+    ).toThrow("no longer available");
+    await Promise.all(
+      Array.from({ length: 7 }, () =>
+        terminals.handle({ type: "terminal-new", threadId: "thread" }),
+      ),
+    );
+    expect(messages.filter((m) => m.type === "terminal-state" && m.terminal?.error)).toEqual([]);
+    expect(fake.spawn).toHaveBeenCalledTimes(8);
+    expect(() => terminals.handle({ type: "terminal-new", threadId: "thread" })).toThrow(
+      "8 shells",
+    );
+    await terminals.closeAll();
+  });
+
+  it("stops capture in every shell after Send, Discard and sharing changes", async () => {
+    const { terminals, messages, open } = setup();
+    const first = await open();
+    const firstData = fake.data;
+    await terminals.handle({ type: "terminal-new", threadId: "thread" });
+    const state = messages.findLast((m) => m.type === "terminal-state");
+    if (state?.type !== "terminal-state" || !state.terminal) throw new Error("No shell");
+    const second = { threadId: "thread", terminalId: state.terminal.id };
+    const secondData = fake.data;
+    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
+    terminals.handle({ type: "terminal-write", ...first, data: "first\r" });
+    terminals.handle({ type: "terminal-write", ...second, data: "second\r" });
+    firstData("one\n");
+    secondData("two\n");
+    expect(terminals.takeContext("thread")?.text).toBe("one\ntwo\n");
+    firstData("not again");
+    secondData("not again");
+    expect(terminals.takeContext("thread")).toBeNull();
+    terminals.handle({ type: "terminal-write", ...second, data: "again\r" });
+    terminals.handle({ type: "terminal-discard", threadId: "thread" });
+    secondData("discarded");
+    expect(terminals.takeContext("thread")).toBeNull();
+    terminals.handle({ type: "terminal-write", ...first, data: "again\r" });
+    terminals.handle({ type: "terminal-write", ...second, data: "again\r" });
+    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: false });
+    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
+    firstData("disabled first");
+    secondData("disabled second");
+    expect(terminals.takeContext("thread")).toBeNull();
+    await terminals.closeAll();
+  });
+
+  it("keeps provider sign-in exclusive of interactive shells", async () => {
+    const { terminals, open } = setup();
+    const shell = await open();
+    expect(() => login(terminals)).toThrow("Close this thread");
+    await terminals.handle({ type: "terminal-close", ...shell });
+    await login(terminals);
+    expect(() => terminals.handle({ type: "terminal-new", threadId: "thread" })).toThrow(
+      "Close provider sign-in",
+    );
+    await terminals.closeAll();
+  });
+
   it("runs scripts in separate PTYs, preserves the shell and targets input and close by terminal id", async () => {
     const { terminals, messages, open } = setup();
     const shell = await open();

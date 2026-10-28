@@ -1,12 +1,14 @@
 // Drawer resizing follows ThreadTerminalDrawer.tsx in T3 Code at 53456bc0.
 // Copyright (c) 2026 T3 Tools Inc. MIT License.
-import { RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Columns2, Rows2, Plus, RefreshCw, SquareTerminal, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import {
+  MAX_SHELL_TERMINALS,
+  MAX_TERMINAL_PANES,
   TERMINAL_HISTORY_BYTES,
   TERMINAL_HISTORY_LINES,
   type TerminalEvent,
@@ -16,7 +18,9 @@ import { reloadPi, terminalCommand, useHost } from "../connection";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { readTerminal, selectTerminal } from "./store";
+import { readTerminal, selectTerminal, resizeTerminalSplit } from "./store";
+import { terminalRects, type TerminalLayout } from "./layout";
+import { TerminalPane, TerminalDivider } from "../ui/terminal-pane";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { GraphemeUnicode } from "./unicode";
 import { TerminalSharing } from "./TerminalSharing";
@@ -124,7 +128,10 @@ const ROW_HEIGHT = 16;
 const LOGIN_CHROME = 1 + 36 + (2 * 16 + 8) + 2 * 8;
 
 function terminalLabel(session: TerminalState): string {
-  return session.script?.name ?? (session.kind === "login" ? "Provider sign-in" : "Terminal");
+  return (
+    session.script?.name ??
+    (session.kind === "login" ? "Provider sign-in" : `Terminal ${session.number ?? 1}`)
+  );
 }
 
 function statusLabel(session: TerminalState): string {
@@ -138,10 +145,12 @@ export default function TerminalDrawer({
   threadId,
   session,
   sessions,
+  layout,
 }: {
   threadId: string;
   session: TerminalState;
   sessions: readonly TerminalState[];
+  layout: TerminalLayout;
 }) {
   const [height, setHeight] = useState(() =>
     session.kind === "login"
@@ -197,6 +206,26 @@ export default function TerminalDrawer({
       observer.observe(child);
     return () => observer.disconnect();
   }, [session.kind]);
+  useLayoutEffect(() => {
+    region.current
+      ?.querySelector<HTMLTextAreaElement>(
+        `[data-terminal-id="${layout.selected}"] .xterm-helper-textarea`,
+      )
+      ?.focus();
+  }, [layout.selected]);
+  const { panes, dividers } = terminalRects(layout.root);
+  const shellLimit = sessions.filter((item) => !item.script).length >= MAX_SHELL_TERMINALS;
+  const splitLimit = panes.length >= MAX_TERMINAL_PANES;
+  const create = (direction?: "vertical" | "horizontal") => {
+    if (shellLimit || (direction && splitLimit)) return;
+    if (direction === "horizontal")
+      setHeight((current) => clampHeight(Math.max(current, 440), max));
+    terminalCommand({
+      type: "terminal-new",
+      threadId,
+      ...(direction ? { split: { terminalId: session.id, direction } } : {}),
+    });
+  };
   const items = sessions.map((item, index) => ({
     value: item.id,
     label: `${terminalLabel(item)}${item.script ? ` · ${index + 1}` : ""}`,
@@ -251,7 +280,7 @@ export default function TerminalDrawer({
           className="h-1 w-8 rounded-full bg-control-border opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
         />
       </div>
-      <div className="flex h-9 shrink-0 items-center gap-2 ps-4 pe-2">
+      <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 py-1 ps-4 pe-2">
         <SquareTerminal aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         {sessions.length > 1 ? (
           <Select
@@ -282,7 +311,7 @@ export default function TerminalDrawer({
           </h2>
         )}
         <span
-          className="min-w-0 truncate font-mono text-xs text-faint-foreground"
+          className="min-w-0 flex-1 basis-0 truncate font-mono text-xs text-faint-foreground"
           title={session.script?.cwd || project}
         >
           {session.script?.cwd || project}
@@ -292,6 +321,44 @@ export default function TerminalDrawer({
         </span>
         {session.kind === "shell" && !session.script ? (
           <TerminalSharing threadId={threadId} />
+        ) : null}
+        {session.kind !== "login" ? (
+          <div className="flex shrink-0 items-center">
+            <TerminalAction
+              label="Split vertically"
+              hint={
+                splitLimit
+                  ? `At most ${MAX_TERMINAL_PANES} visible panes`
+                  : "Add a terminal to the right"
+              }
+              disabled={shellLimit || splitLimit}
+              onClick={() => create("vertical")}
+            >
+              <Columns2 aria-hidden />
+            </TerminalAction>
+            <TerminalAction
+              label="Split horizontally"
+              hint={
+                splitLimit ? `At most ${MAX_TERMINAL_PANES} visible panes` : "Add a terminal below"
+              }
+              disabled={shellLimit || splitLimit}
+              onClick={() => create("horizontal")}
+            >
+              <Rows2 aria-hidden />
+            </TerminalAction>
+            <TerminalAction
+              label="New terminal"
+              hint={
+                shellLimit
+                  ? `At most ${MAX_SHELL_TERMINALS} shells per thread`
+                  : "Open a shell in the focused pane. Keep its old shell running."
+              }
+              disabled={shellLimit}
+              onClick={() => create()}
+            >
+              <Plus aria-hidden />
+            </TerminalAction>
+          </div>
         ) : null}
         <Tooltip>
           <TooltipTrigger
@@ -305,7 +372,7 @@ export default function TerminalDrawer({
               />
             }
           >
-            <X aria-hidden />
+            <Trash2 aria-hidden />
           </TooltipTrigger>
           <TooltipContent>Stop this terminal and its commands</TooltipContent>
         </Tooltip>
@@ -327,15 +394,96 @@ export default function TerminalDrawer({
           </Button>
         </div>
       ) : null}
-      {session.error ? (
-        <p role="alert" className="px-4 pb-2 text-sm text-destructive">
-          {session.error}
-        </p>
-      ) : null}
-      {session.status !== "starting" ? (
-        <TerminalView threadId={threadId} terminalId={session.id} />
-      ) : null}
+      <div className="relative min-h-0 flex-1">
+        {panes.map((pane) => {
+          const item = sessions.find((candidate) => candidate.id === pane.terminalId);
+          if (!item) return null;
+          return (
+            <TerminalPane
+              key={item.id}
+              id={item.id}
+              label={terminalLabel(item)}
+              active={layout.selected === item.id}
+              divided={panes.length > 1}
+              style={{
+                left: `${pane.left}%`,
+                top: `${pane.top}%`,
+                width: `${pane.width}%`,
+                height: `${pane.height}%`,
+              }}
+              onSelect={() => selectTerminal(threadId, item.id)}
+            >
+              {item.error ? (
+                <p role="alert" className="px-2 text-sm text-destructive">
+                  {item.error}
+                </p>
+              ) : null}
+              {item.status !== "starting" ? (
+                <TerminalView threadId={threadId} terminalId={item.id} />
+              ) : null}
+            </TerminalPane>
+          );
+        })}
+        {dividers.map((divider) => {
+          const vertical = divider.direction === "vertical";
+          return (
+            <TerminalDivider
+              key={divider.id}
+              direction={divider.direction}
+              ratio={divider.ratio}
+              extent={vertical ? divider.width : divider.height}
+              style={
+                vertical
+                  ? {
+                      left: `calc(${divider.left + divider.width * divider.ratio}% - 3px)`,
+                      top: `${divider.top}%`,
+                      height: `${divider.height}%`,
+                    }
+                  : {
+                      top: `calc(${divider.top + divider.height * divider.ratio}% - 3px)`,
+                      left: `${divider.left}%`,
+                      width: `${divider.width}%`,
+                    }
+              }
+              onChange={(ratio) => resizeTerminalSplit(threadId, divider.id, ratio)}
+            />
+          );
+        })}
+      </div>
     </section>
+  );
+}
+
+function TerminalAction({
+  label,
+  hint,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  hint: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="faint-ghost"
+            size="icon"
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
   );
 }
 

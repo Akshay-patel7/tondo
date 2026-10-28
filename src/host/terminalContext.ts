@@ -2,6 +2,7 @@ import { TERMINAL_CONTEXT_CHARS, type TerminalContextPreview } from "../shared/t
 import { HistoryFilter } from "./terminalHistory";
 
 interface Part {
+  readonly source: string;
   readonly sequence: number;
   text: string;
 }
@@ -11,16 +12,20 @@ export interface TerminalContextSend extends TerminalContextPreview {
   readonly parts: readonly Part[];
 }
 
+interface Source {
+  filter: HistoryFilter;
+  carriageReturn: boolean;
+  line: string | null;
+  redraw: { line: string; prefix: string; matched: number } | null;
+}
+
 /** Pending shell text, not a screen emulator or a command-completion tracker. */
 export class TerminalContext {
-  private filter = new HistoryFilter(true);
+  private sources = new Map<string, Source>();
   private parts: Part[] = [];
   private sequence = 0;
   private epoch = 0;
   private truncated = false;
-  private carriageReturn = false;
-  private line: string | null = "";
-  private redraw: { line: string; prefix: string; matched: number } | null = null;
 
   enabled: boolean;
 
@@ -39,38 +44,51 @@ export class TerminalContext {
   }
 
   /** An unfinished control string from an old shell must not swallow a new shell's text. */
-  newShell(): void {
-    this.filter = new HistoryFilter(true);
-    this.carriageReturn = false;
-    this.line = "";
-    this.redraw = null;
+  newShell(id = "default"): void {
+    this.sources.set(id, {
+      filter: new HistoryFilter(true),
+      carriageReturn: false,
+      line: "",
+      redraw: null,
+    });
+  }
+
+  forgetShell(id: string): void {
+    this.sources.delete(id);
+  }
+
+  private source(id: string): Source {
+    if (!this.sources.has(id)) this.newShell(id);
+    return this.sources.get(id)!;
   }
 
   /** A resize can make the shell reprint its current input line without running anything. */
-  resize(): void {
-    if (this.line) this.redraw ??= { line: this.line, prefix: "", matched: 0 };
+  resize(id = "default"): void {
+    const source = this.source(id);
+    if (source.line) source.redraw ??= { line: source.line, prefix: "", matched: 0 };
   }
 
-  append(raw: string, capture = true): void {
+  append(raw: string, capture = true, id = "default"): void {
+    const source = this.source(id);
     // Parse even while sharing is off, so enabling midway through an OSC
     // string cannot expose its payload as plain text.
-    const plain = this.filter.push(raw);
-    const fresh = this.withoutRedraw(plain);
-    this.rememberLine(plain);
+    const plain = source.filter.push(raw);
+    const fresh = this.withoutRedraw(plain, source);
+    this.rememberLine(plain, source);
     if (!this.enabled || !capture) return;
     let text = "";
     for (const char of fresh) {
-      if (char === "\n" && this.carriageReturn) {
-        this.carriageReturn = false;
+      if (char === "\n" && source.carriageReturn) {
+        source.carriageReturn = false;
         continue;
       }
-      this.carriageReturn = char === "\r";
+      source.carriageReturn = char === "\r";
       if (char === "\r") text += "\n";
       else if (char === "\b") {
         if (text) text = Array.from(text).slice(0, -1).join("");
         else {
           const last = this.parts.at(-1);
-          if (last) last.text = Array.from(last.text).slice(0, -1).join("");
+          if (last?.source === id) last.text = Array.from(last.text).slice(0, -1).join("");
         }
       } else {
         const code = char.codePointAt(0)!;
@@ -80,8 +98,8 @@ export class TerminalContext {
     }
     if (text) {
       const last = this.parts.at(-1);
-      if (last && last.text.length + text.length <= 4_096) last.text += text;
-      else this.parts.push({ sequence: ++this.sequence, text });
+      if (last?.source === id && last.text.length + text.length <= 4_096) last.text += text;
+      else this.parts.push({ source: id, sequence: ++this.sequence, text });
     }
     this.bound();
   }
@@ -115,14 +133,14 @@ export class TerminalContext {
     this.epoch++;
     this.parts = [];
     this.truncated = false;
-    this.carriageReturn = false;
+    for (const source of this.sources.values()) source.carriageReturn = false;
   }
 
-  private withoutRedraw(plain: string): string {
-    if (!this.redraw) return plain;
+  private withoutRedraw(plain: string, source: Source): string {
+    if (!source.redraw) return plain;
     let fresh = "";
     for (const char of plain) {
-      const redraw = this.redraw;
+      const redraw = source.redraw;
       if (!redraw) fresh += char;
       else if (char === "\r" && redraw.matched === 0 && redraw.prefix.length < 256)
         redraw.prefix += char;
@@ -137,24 +155,24 @@ export class TerminalContext {
       } else {
         // No redraw, or different text: preserve real output, including a partial match.
         fresh += redraw.prefix + char;
-        this.redraw = null;
+        source.redraw = null;
       }
     }
     return fresh;
   }
 
-  private rememberLine(plain: string): void {
+  private rememberLine(plain: string, source: Source): void {
     const start = Math.max(plain.lastIndexOf("\n"), plain.lastIndexOf("\r"));
-    if (start >= 0) this.line = "";
-    if (this.line === null) return;
+    if (start >= 0) source.line = "";
+    if (source.line === null) return;
     for (const char of plain.slice(start + 1)) {
-      if (char === "\b") this.line = Array.from(this.line).slice(0, -1).join("");
+      if (char === "\b") source.line = Array.from(source.line).slice(0, -1).join("");
       else {
         const code = char.codePointAt(0)!;
-        if (char === "\t" || (code >= 0x20 && !(code >= 0x7f && code <= 0x9f))) this.line += char;
+        if (char === "\t" || (code >= 0x20 && !(code >= 0x7f && code <= 0x9f))) source.line += char;
       }
-      if (this.line.length > TERMINAL_CONTEXT_CHARS) {
-        this.line = null;
+      if (source.line.length > TERMINAL_CONTEXT_CHARS) {
+        source.line = null;
         break;
       }
     }

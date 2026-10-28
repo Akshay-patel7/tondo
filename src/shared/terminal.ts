@@ -4,6 +4,10 @@ export const TERMINAL_HISTORY_LINES = 50_000;
 /** Unacknowledged output. The PTY pauses until xterm has parsed it. */
 export const TERMINAL_WINDOW_BYTES = 64 * 1024;
 export const TERMINAL_CHUNK_CHARS = 4_096;
+/** Includes exited shells until the user deletes them. Script runs have their own limit. */
+export const MAX_SHELL_TERMINALS = 8;
+/** Bound simultaneous xterm buffers and GPU contexts. Hidden shells have no renderer. */
+export const MAX_TERMINAL_PANES = 4;
 /** Maximum plain text attached to one chat message, independent of terminal scrollback. */
 export const TERMINAL_CONTEXT_CHARS = 16_384;
 
@@ -19,9 +23,16 @@ export interface TerminalContextPreview {
 
 export type TerminalKind = "shell" | "login";
 
+export interface TerminalSplit {
+  readonly terminalId: string;
+  /** The divider direction: vertical is side by side, horizontal is stacked. */
+  readonly direction: "vertical" | "horizontal";
+}
+
 export interface TerminalState {
   readonly id: string;
   readonly kind: TerminalKind;
+  readonly number?: number;
   /** Present only on a dedicated project-script terminal. */
   readonly script?: { readonly name: string; readonly cwd: string };
   readonly status: "starting" | "running" | "exited" | "closing";
@@ -35,6 +46,7 @@ export type TerminalCommand =
   | { type: "terminal-discard"; threadId: string }
   | { type: "terminal-preview"; threadId: string }
   | { type: "terminal-open"; threadId: string; kind: TerminalKind }
+  | { type: "terminal-new"; threadId: string; split?: TerminalSplit }
   | { type: "terminal-close"; threadId: string; terminalId: string }
   | {
       type: "terminal-attach";
@@ -59,7 +71,7 @@ export type TerminalEvent =
   | ({ type: "terminal-context"; threadId: string } & TerminalContextState)
   | ({ type: "terminal-preview"; threadId: string } & TerminalContextPreview)
   | ({ type: "terminal-state"; threadId: string } & (
-      | { terminal: TerminalState }
+      | { terminal: TerminalState; split?: TerminalSplit }
       | { terminal: null; terminalId: string }
     ))
   | {

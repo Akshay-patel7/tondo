@@ -469,7 +469,10 @@ export function terminalCommand(message: TerminalCommand): void {
 export function openTerminal(kind: TerminalKind = "shell", provider?: string): void {
   const thread = useHost.getState().thread;
   if (!thread || thread.askingTrust) return;
-  const existing = useTerminals.getState().get(thread.id);
+  const existing = useTerminals
+    .getState()
+    .get(thread.id)
+    ?.find((session) => !session.script);
   if (existing) selectTerminal(thread.id, existing.id);
   // The host replaces an exited terminal, whatever its kind.
   if (existing?.status === "exited") {
@@ -490,7 +493,11 @@ export function openTerminal(kind: TerminalKind = "shell", provider?: string): v
     return;
   }
   if (existing) {
-    document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+    document
+      .querySelector<HTMLTextAreaElement>(
+        `[data-terminal-id="${existing.id}"] .xterm-helper-textarea`,
+      )
+      ?.focus();
     return;
   }
   send({

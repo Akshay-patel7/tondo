@@ -9,6 +9,13 @@ const commands: TerminalCommand[] = [
   { type: "terminal-preview", threadId: "thread" },
   { type: "terminal-discard", threadId: "thread" },
   { type: "terminal-open", threadId: "thread", kind: "shell" },
+  { type: "terminal-new", threadId: "thread" },
+  { type: "terminal-new", threadId: "thread", split: { terminalId: "pty", direction: "vertical" } },
+  {
+    type: "terminal-new",
+    threadId: "thread",
+    split: { terminalId: "pty", direction: "horizontal" },
+  },
   { type: "terminal-open", threadId: "thread", kind: "login" },
   { type: "terminal-close", ...session },
   { type: "terminal-write", ...session, data: "echo hello\r" },
@@ -21,6 +28,16 @@ it.each(commands)("validates $type and rejects extra fields", (command) => {
   expect(parseClientMessage({ v, ...command })).toEqual({ ok: true, message: { v, ...command } });
   expect(parseClientMessage({ v, ...command, cwd: "/tmp" }).ok).toBe(false);
   expect(parseClientMessage({ v, ...command, threadId: null }).ok).toBe(false);
+});
+it.each([
+  null,
+  [],
+  {},
+  { terminalId: "", direction: "vertical" },
+  { terminalId: "pty", direction: "diagonal" },
+  { terminalId: "pty", direction: "vertical", cwd: "/tmp" },
+])("rejects invalid splits %s", (split) => {
+  expect(parseClientMessage({ v, type: "terminal-new", threadId: "thread", split }).ok).toBe(false);
 });
 it.each([null, undefined, "true", 1, {}, []])("rejects invalid sharing flag %s", (enabled) => {
   expect(parseClientMessage({ v, type: "terminal-sharing", threadId: "thread", enabled }).ok).toBe(

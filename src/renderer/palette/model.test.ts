@@ -125,7 +125,7 @@ describe("paletteItems", () => {
       error: null,
       exitCode: null,
     };
-    useTerminals.setState(new Map([["a", running]]), true);
+    useTerminals.setState(new Map([["a", [running]]]), true);
     expect(terminalItem(paletteItems(input))).toMatchObject({
       label: "Close terminal",
       action: { type: "terminal", open: false },
