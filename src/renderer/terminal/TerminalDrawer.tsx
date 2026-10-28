@@ -16,7 +16,8 @@ import { reloadPi, terminalCommand, useHost } from "../connection";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { readTerminal } from "./store";
+import { readTerminal, selectTerminal } from "./store";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { GraphemeUnicode } from "./unicode";
 import { TerminalSharing } from "./TerminalSharing";
 
@@ -122,6 +123,10 @@ const ROW_HEIGHT = 16;
 // text-xs lines over pb-2, and the terminal's p-2 above and below.
 const LOGIN_CHROME = 1 + 36 + (2 * 16 + 8) + 2 * 8;
 
+function terminalLabel(session: TerminalState): string {
+  return session.script?.name ?? (session.kind === "login" ? "Provider sign-in" : "Terminal");
+}
+
 function statusLabel(session: TerminalState): string {
   if (session.status === "running") return "";
   if (session.status === "exited")
@@ -132,9 +137,11 @@ function statusLabel(session: TerminalState): string {
 export default function TerminalDrawer({
   threadId,
   session,
+  sessions,
 }: {
   threadId: string;
   session: TerminalState;
+  sessions: readonly TerminalState[];
 }) {
   const [height, setHeight] = useState(() =>
     session.kind === "login"
@@ -190,6 +197,10 @@ export default function TerminalDrawer({
       observer.observe(child);
     return () => observer.disconnect();
   }, [session.kind]);
+  const items = sessions.map((item, index) => ({
+    value: item.id,
+    label: `${terminalLabel(item)}${item.script ? ` · ${index + 1}` : ""}`,
+  }));
   const status = statusLabel(session);
   const failed = session.status === "exited" && session.exitCode !== null && session.exitCode !== 0;
   const close = () => {
@@ -242,16 +253,46 @@ export default function TerminalDrawer({
       </div>
       <div className="flex h-9 shrink-0 items-center gap-2 ps-4 pe-2">
         <SquareTerminal aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-        <h2 className="shrink-0 font-medium">
-          {session.kind === "login" ? "Provider sign-in" : "Terminal"}
-        </h2>
-        <span className="min-w-0 truncate font-mono text-xs text-faint-foreground" title={project}>
-          {project}
+        {sessions.length > 1 ? (
+          <Select
+            value={session.id}
+            items={items}
+            onValueChange={(id) => {
+              if (id) selectTerminal(threadId, id);
+            }}
+          >
+            <SelectTrigger
+              aria-label="Select terminal"
+              title={terminalLabel(session)}
+              className="w-48 shrink-0"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {items.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <h2 className="max-w-48 shrink-0 truncate font-medium" title={session.script?.name}>
+            {terminalLabel(session)}
+          </h2>
+        )}
+        <span
+          className="min-w-0 truncate font-mono text-xs text-faint-foreground"
+          title={session.script?.cwd || project}
+        >
+          {session.script?.cwd || project}
         </span>
         <span role="status" className="ml-auto flex shrink-0 items-center">
           {status ? <Badge variant={failed ? "destructive" : "secondary"}>{status}</Badge> : null}
         </span>
-        {session.kind === "shell" ? <TerminalSharing threadId={threadId} /> : null}
+        {session.kind === "shell" && !session.script ? (
+          <TerminalSharing threadId={threadId} />
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={

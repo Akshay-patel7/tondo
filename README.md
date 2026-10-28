@@ -58,14 +58,15 @@ These rules come from studying how T3 Code stays fast:
 
 Tondo shows a problem with pi where it happens. If it can't find pi, or finds one older than 0.87.1, the thread shows how to install or update pi, with Choose pi… and Check again. If pi has no provider credentials, the thread offers a sign-in terminal, and closing that terminal restarts the thread's pi so the new models show up. A project whose `.pi` settings need trust asks before pi starts, and Tondo remembers the answer.
 
-A new thread opens its composer immediately but stays out of the sidebar until you type a message or attach an image. Unsent drafts stay with their threads across navigation and restart.
+A new thread opens its composer immediately but stays out of the sidebar until you type a message, attach an image or run a project script. Unsent drafts stay with their threads across navigation and restart.
 
-Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has five sections:
+Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has six sections:
 
 - **Appearance:** System, Light or Dark, with Default, Slate, Ocean or Rose colors. Each palette has light and dark versions. Expand thinking sections opens every section by default, including past replies. It starts off, and individual sections can still be toggled.
 - **pi:** the version and path in use. Choose a pi, go back to the one on your PATH, open pi's settings files, or review and apply pi and package updates.
 - **Accounts:** the providers pi is signed in to and how each one signs in, read from pi's `auth.json`. Tokens are never shown. When the thread on screen has the usage line that pi-claude-subscription-connector publishes, it shows here too. Sign in with Claude opens the sign-in terminal straight on Anthropic; Sign in to a provider opens pi's general sign-in menu. The header offers sign-in only while no provider is configured.
 - **Threads:** the default model and thinking level for new threads, with an option to leave either choice to pi. Open a thread to list available models. Existing sessions keep their choices, and pi adjusts thinking to the model's supported levels. Also controls how many pi processes may run at once (1 to 12, default 4), and how many idle minutes pass before a hidden thread's pi stops (1 to 240, default 10). Process limit changes apply at once. Choose the IDE used by the thread header here too.
+- **Project scripts:** per-project names and shell commands, such as Build app and `pnpm build`. Run them from the thread header in its displayed checkout.
 - **Shortcuts:** rebind or turn off the app shortcuts, with conflicts refused. The composer and dialog keys are fixed, because they follow pi's terminal UI.
 
 Tondo saves these in `settings.json` in its app data folder.
@@ -76,9 +77,17 @@ Updating requires all threads to be idle and all integrated terminals to be clos
 
 Everything works from the keyboard. Tab moves between the sidebar, the transcript, the composer and the panels. In the sidebar and the Git menu, the arrow keys, Home and End move, and Shift+F10 opens a row's menu. Escape closes a panel and puts focus back where it was. Every control has a name for screen readers.
 
+## Project scripts
+
+In Settings > Project scripts, choose a project and add a name and command. The first script appears as a one-click button in the thread header. Its chevron lists every script and opens configuration.
+
+Each click starts a separate integrated terminal in the folder shown in the header, including a detected agent worktree. Local threads use their local checkout; managed worktree threads use their worktree unless agent activity points to another checkout in the same repository. The host resolves the folder and saved command. Existing shells and sign-in terminals are untouched.
+
+Commands run through your configured shell with the login environment, with live output and the exit code kept in the terminal. The terminal picker switches between runs and the normal shell. Close terminal stops only the selected run and its descendants. Keep up to 32 scripts per project and 8 script terminals per thread; close an old run to make room. Script output is not shared with chat. Settings survive restart; running scripts and terminal history do not.
+
 ## Git actions
 
-The thread title has its own line above the folder and branch. When the agent uses another worktree in the same repository, the header shows that folder and branch instead. Open in IDE follows this detected checkout; terminals, Changes and Git actions stay on the thread's original checkout. Detection uses literal paths in the agent's tools, not arbitrary shell programs.
+The thread title has its own line above the folder and branch. When the agent uses another worktree in the same repository, the header shows that folder and branch instead. Open in IDE and project scripts follow this detected checkout; the normal terminal, Changes and Git actions stay on the thread's original checkout. Detection uses literal paths in the agent's tools, not arbitrary shell programs.
 
 Settings > Threads > Open in IDE offers VS Code, Cursor, Windsurf and Zed, or a custom executable. macOS presets open the installed application without requiring its optional command-line tool. Linux presets and custom executables use the login shell's PATH. A custom executable can also be an absolute path, without arguments. The folder is passed as one argument, and the IDE stays open when Tondo quits.
 
@@ -121,7 +130,7 @@ Images send only when pi is idle. pi 0.87.1's queue APIs return text without att
 
 pi doesn't lock session files. If the same session is open in terminal pi and in Tondo at once, both append to it and their entries interleave.
 
-A terminal stays alive when you switch threads. Close stops its shell and the jobs still descended from it; quitting the app closes its terminals first. Terminal history stays in memory, not on disk. There is one terminal per thread, so close its shell before opening provider sign-in there. The sign-in terminal uses `--no-session` and the same pi profile as the chat processes. After changing credentials, use Refresh models in that drawer, or `/reload` in each other open thread, while pi is idle. Development runs sign in only to the scratch profile under `.dev/userData/pi-agent`, not your real pi profile.
+A terminal stays alive when you switch threads. Close stops its shell and the jobs still descended from it; quitting the app closes its terminals first. Terminal history stays in memory, not on disk. There is one normal shell or provider sign-in terminal per thread, plus separate project-script terminals. Close the normal shell before opening provider sign-in there. The sign-in terminal uses `--no-session` and the same pi profile as the chat processes. After changing credentials, use Refresh models in that drawer, or `/reload` in each other open thread, while pi is idle. Development runs sign in only to the scratch profile under `.dev/userData/pi-agent`, not your real pi profile.
 
 On Linux, no app shortcut works while the terminal has focus: Ctrl+K, Ctrl+N, Ctrl+1 to Ctrl+9 and the rest go to the shell. The macOS app menu has no Settings… item yet. Use ⌘, or the gear. Screen-reader names are checked automatically, but VoiceOver and Orca haven't been tried.
 

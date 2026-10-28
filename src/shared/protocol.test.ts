@@ -11,6 +11,29 @@ function rejection(data: unknown): string {
 }
 
 describe("parseClientMessage", () => {
+  it("runs saved project scripts by identity only and validates script settings", () => {
+    const message = { v, type: "run-project-script", threadId: "thread", scriptId: "build" };
+    expect(parseClientMessage(message)).toEqual({ ok: true, message });
+    for (const extra of [
+      { threadId: "" },
+      { scriptId: "" },
+      { scriptId: 3 },
+      { command: "evil" },
+      { cwd: "/tmp" },
+      { projectId: 1 },
+    ]) {
+      expect(parseClientMessage({ ...message, ...extra }).ok).toBe(false);
+    }
+    const patch = {
+      projectScripts: {
+        "/work": [{ id: "build", name: "Build app", command: "pnpm build && echo done" }],
+      },
+    };
+    expect(parseClientMessage({ v, type: "set-settings", patch }).ok).toBe(true);
+    expect(
+      rejection({ v, type: "set-settings", patch: { projectScripts: { relative: [] } } }),
+    ).toContain("projectScripts");
+  });
   it("opens an IDE only by thread id and validates saved executable settings", () => {
     expect(parseClientMessage({ v, type: "open-ide", threadId: "thread" }).ok).toBe(true);
     for (const extra of [{ threadId: "" }, { path: "/tmp" }, { command: "code" }, { args: [] }]) {
@@ -561,8 +584,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 31, which adds the IDE setting and thread launch request", () => {
-    expect(PROTOCOL_VERSION).toBe(31);
+  it("speaks version 32, which adds project scripts and separate script terminals", () => {
+    expect(PROTOCOL_VERSION).toBe(32);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

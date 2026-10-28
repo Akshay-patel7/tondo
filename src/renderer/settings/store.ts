@@ -2,7 +2,13 @@
 import { create } from "zustand";
 import { requestPiConfigFiles, useHost } from "../connection";
 
-export type SettingsSection = "appearance" | "pi" | "accounts" | "threads" | "shortcuts";
+export type SettingsSection =
+  | "appearance"
+  | "pi"
+  | "accounts"
+  | "threads"
+  | "scripts"
+  | "shortcuts";
 
 export const useSettingsPage = create<{ open: boolean; section: SettingsSection }>()(() => ({
   open: false,

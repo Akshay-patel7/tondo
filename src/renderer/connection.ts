@@ -42,7 +42,7 @@ import { receiveEvents, showThread } from "./thread/store";
 import { addToast } from "./toasts/store";
 import type { AppSettings, SettingsPatch } from "../shared/settings";
 import type { TerminalCommand, TerminalKind } from "../shared/terminal";
-import { receiveTerminal, resetTerminals, useTerminals } from "./terminal/store";
+import { receiveTerminal, resetTerminals, selectTerminal, useTerminals } from "./terminal/store";
 
 type Connection = "connecting" | "connected" | "reconnecting";
 
@@ -455,6 +455,12 @@ function fail(message: string): void {
   );
 }
 
+export function runProjectScript(scriptId: string): void {
+  const thread = useHost.getState().thread;
+  if (thread && !thread.askingTrust)
+    send({ v, type: "run-project-script", threadId: thread.id, scriptId });
+}
+
 export function terminalCommand(message: TerminalCommand): void {
   send({ v, ...message });
 }
@@ -464,6 +470,7 @@ export function openTerminal(kind: TerminalKind = "shell", provider?: string): v
   const thread = useHost.getState().thread;
   if (!thread || thread.askingTrust) return;
   const existing = useTerminals.getState().get(thread.id);
+  if (existing) selectTerminal(thread.id, existing.id);
   // The host replaces an exited terminal, whatever its kind.
   if (existing?.status === "exited") {
     send({

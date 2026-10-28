@@ -365,7 +365,7 @@ test("the header and IDE follow agent checkouts without rerouting terminals or G
   await expect(gitPill(page)).toContainText("Local");
   await expect(active()).toHaveAttribute(
     "title",
-    `Agent activity in ${checkout}. Open in IDE uses this folder. Terminal, Changes and Git actions still use ${project}.`,
+    `Agent activity in ${checkout}. Open in IDE and project scripts use this folder. Terminal, Changes and Git actions still use ${project}.`,
   );
   await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
   await expect.poll(() => calls().length).toBe(2);

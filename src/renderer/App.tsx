@@ -5,7 +5,7 @@ import { runAppCommand } from "./commands";
 import { Composer } from "./composer/Composer";
 import { QueueList } from "./composer/QueueList";
 import { checkPiUpdates, useHost } from "./connection";
-import { useTerminals } from "./terminal/store";
+import { useTerminals, useScriptTerminals, useTerminalSelection } from "./terminal/store";
 import { DialogPanel } from "./extensionUi/DialogPanel";
 import { DiffPanel, useDiffPanel } from "./diffs/DiffPanel";
 import { useExtensionUi } from "./extensionUi/store";
@@ -144,7 +144,15 @@ function Body() {
 function Thread() {
   const threadId = useHost((host) => host.thread?.id);
   const threadKey = useThreadKey((key) => key);
-  const terminal = useTerminals((terminals) => (threadId ? terminals.get(threadId) : undefined));
+  const primary = useTerminals((terminals) => (threadId ? terminals.get(threadId) : undefined));
+  const scripts = useScriptTerminals((terminals) =>
+    threadId ? terminals.get(threadId) : undefined,
+  );
+  const selected = useTerminalSelection((selection) =>
+    threadId ? selection.get(threadId) : undefined,
+  );
+  const sessions = [...(primary ? [primary] : []), ...(scripts ?? [])];
+  const terminal = sessions.find((session) => session.id === selected) ?? sessions.at(-1);
   const asking = useExtensionUi((ui) => ui.dialogs.length > 0);
   const changesOpen = useDiffPanel((open) => open);
   useChangesPanelShown(changesOpen);
@@ -189,7 +197,12 @@ function Thread() {
               </p>
             }
           >
-            <TerminalDrawer key={terminal.id} threadId={threadId} session={terminal} />
+            <TerminalDrawer
+              key={terminal.id}
+              threadId={threadId}
+              session={terminal}
+              sessions={sessions}
+            />
           </Suspense>
         ) : null}
       </div>

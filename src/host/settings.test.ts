@@ -30,6 +30,44 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+describe("project scripts", () => {
+  const script = { id: "build", name: "Build app", command: "pnpm build" };
+  it("defaults old profiles and merges, edits and clears only the named project", () => {
+    writeFileSync(file, JSON.stringify({ later: 7, theme: "dark" }));
+    expect(readSettings(file).projectScripts).toEqual({});
+    updateSettings(file, { projectScripts: { "/work/a": [script] } });
+    updateSettings(file, { projectScripts: { "/work/b": [{ ...script, command: "npm test" }] } });
+    expect(readSettings(file).projectScripts).toEqual({
+      "/work/a": [script],
+      "/work/b": [{ ...script, command: "npm test" }],
+    });
+    updateSettings(file, { projectScripts: { "/work/a": [] } });
+    expect(readSettings(file).projectScripts["/work/a"]).toEqual([]);
+    expect(readSettings(file).projectScripts["/work/b"]).toHaveLength(1);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ later: 7, theme: "dark" });
+  });
+
+  it("rejects invalid scripts atomically and defaults them leniently", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({
+        projectScripts: { "/work": [{ ...script, command: "bad\u0000command" }] },
+        theme: "dark",
+      }),
+    );
+    expect(() => readSettings(file)).toThrow("projectScripts");
+    expect(readSettingsLeniently(file)).toMatchObject({
+      settings: { projectScripts: {}, theme: "dark" },
+      problem: expect.stringContaining("projectScripts"),
+    });
+    writeFileSync(file, "{}");
+    expect(() => updateSettings(file, { projectScripts: { "/work": [script, script] } })).toThrow(
+      "projectScripts",
+    );
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+});
+
 describe("IDE settings", () => {
   it("defaults old profiles, persists presets and custom executables and keeps unrelated keys", () => {
     writeFileSync(file, JSON.stringify({ later: 7, theme: "dark" }));
@@ -71,6 +109,7 @@ describe("readSettings", () => {
     expect(readSettings(file)).toEqual({
       piPath: null,
       ideCommand: "code",
+      projectScripts: {},
       worktreeDirectory: null,
       defaultModel: null,
       defaultThinkingLevel: null,
@@ -101,6 +140,7 @@ describe("readSettings", () => {
     expect(readSettings(file)).toEqual({
       piPath: "/opt/pi/bin/pi",
       ideCommand: "code",
+      projectScripts: {},
       worktreeDirectory: null,
       defaultModel: null,
       defaultThinkingLevel: null,
@@ -224,6 +264,7 @@ describe("readSettingsLeniently", () => {
       settings: {
         piPath: "/opt/pi/bin/pi",
         ideCommand: "code",
+        projectScripts: {},
         worktreeDirectory: null,
         defaultModel: null,
         defaultThinkingLevel: null,

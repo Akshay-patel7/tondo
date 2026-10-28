@@ -20,6 +20,7 @@ import {
 import { formatChord, parseChord, shortcutProblems } from "../shared/shortcuts";
 import { canonical } from "./trust";
 import { isIdeCommand } from "../shared/ide";
+import { isProjectScripts } from "../shared/projectScripts";
 
 export interface Settings extends AppSettings {
   /** Your answers to whether to trust a project, by the project folder's realpath. */
@@ -87,6 +88,12 @@ export function updateSettings(file: string, patch: SettingsPatch): Settings {
     if (patch.defaultThinkingLevel !== undefined)
       next.defaultThinkingLevel = patch.defaultThinkingLevel;
     if (patch.ideCommand !== undefined) next.ideCommand = patch.ideCommand;
+    if (patch.projectScripts !== undefined) {
+      next.projectScripts = {
+        ...(isObject(saved.projectScripts) ? saved.projectScripts : {}),
+        ...patch.projectScripts,
+      };
+    }
     if (patch.theme !== undefined) next.theme = patch.theme;
     if (patch.palette !== undefined) next.palette = patch.palette;
     if (patch.expandThinking !== undefined) next.expandThinking = patch.expandThinking;
@@ -195,6 +202,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   const {
     piPath,
     ideCommand = DEFAULT_SETTINGS.ideCommand,
+    projectScripts = {},
     worktreeDirectory,
     defaultModel = null,
     defaultThinkingLevel = null,
@@ -209,6 +217,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   } = saved;
   if (!isIdeCommand(ideCommand))
     report("has an ideCommand that isn't an executable name or absolute path");
+  if (!isProjectScripts(projectScripts)) report("has invalid projectScripts");
   let pi: string | null = null;
   if (piPath !== undefined) {
     if (typeof piPath === "string" && path.isAbsolute(piPath)) pi = piPath;
@@ -295,6 +304,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   return {
     piPath: pi,
     ideCommand: isIdeCommand(ideCommand) ? ideCommand : DEFAULT_SETTINGS.ideCommand,
+    projectScripts: isProjectScripts(projectScripts) ? projectScripts : {},
     worktreeDirectory: worktrees,
     defaultModel: isDefaultModel(defaultModel) ? defaultModel : null,
     defaultThinkingLevel: isThinkingLevel(defaultThinkingLevel) ? defaultThinkingLevel : null,

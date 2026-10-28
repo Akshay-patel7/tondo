@@ -22,6 +22,8 @@ export type TerminalKind = "shell" | "login";
 export interface TerminalState {
   readonly id: string;
   readonly kind: TerminalKind;
+  /** Present only on a dedicated project-script terminal. */
+  readonly script?: { readonly name: string; readonly cwd: string };
   readonly status: "starting" | "running" | "exited" | "closing";
   readonly error: string | null;
   readonly exitCode: number | null;
@@ -56,7 +58,10 @@ export type TerminalCommand =
 export type TerminalEvent =
   | ({ type: "terminal-context"; threadId: string } & TerminalContextState)
   | ({ type: "terminal-preview"; threadId: string } & TerminalContextPreview)
-  | { type: "terminal-state"; threadId: string; terminal: TerminalState | null }
+  | ({ type: "terminal-state"; threadId: string } & (
+      | { terminal: TerminalState }
+      | { terminal: null; terminalId: string }
+    ))
   | {
       type: "terminal-output";
       threadId: string;

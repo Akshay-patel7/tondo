@@ -24,6 +24,7 @@ import {
 import { toggleDiffPanel, useDiffPanel } from "../diffs/store";
 import { folderName } from "../format";
 import { GitActions } from "../git/GitActions";
+import { ProjectScripts } from "./ProjectScripts";
 import { togglePalette } from "../palette/store";
 import { isMac } from "../platform";
 import { closeSettings, useSettingsPage } from "../settings/store";
@@ -145,6 +146,7 @@ function ThreadHeader({ project }: { project: string }) {
             Sign in<span className="@max-md:sr-only"> to a provider</span>
           </Button>
         ) : null}
+        <ProjectScripts key={`scripts-${threadId}`} />
         <IdeButton project={project} />
         {/* openTerminal replaces a terminal that has exited with a new one. */}
         <Button
@@ -178,7 +180,7 @@ function Breadcrumb({ project }: { project: string }) {
       aria-label={activity ? "Agent checkout" : "Thread checkout"}
       title={
         activity
-          ? `Agent activity in ${root}. Open in IDE uses this folder. Terminal, Changes and Git actions still use ${project}.`
+          ? `Agent activity in ${root}. Open in IDE and project scripts use this folder. Terminal, Changes and Git actions still use ${project}.`
           : undefined
       }
       className="flex min-w-0 items-center gap-2 text-xs text-faint-foreground"

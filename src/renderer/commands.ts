@@ -17,7 +17,7 @@ import type { AppCommand } from "./shortcuts";
 import { toggleSidebarShown } from "./sidebar/layout";
 import { stepThread, threadOrder } from "./sidebar/model";
 import { startRename } from "./sidebar/store";
-import { useTerminals } from "./terminal/store";
+import { currentTerminal } from "./terminal/store";
 
 /** Starts a thread in the open thread's project, or else the first project, or else adds one. */
 export function newThreadHere(): void {
@@ -111,7 +111,7 @@ export function runPaletteAction(action: PaletteAction): void {
 /** Closes the open thread's terminal, if it has one. */
 function closeTerminal(): void {
   const { thread } = useHost.getState();
-  const terminal = thread ? useTerminals.getState().get(thread.id) : undefined;
+  const terminal = thread ? currentTerminal(thread.id) : undefined;
   if (thread && terminal) {
     terminalCommand({ type: "terminal-close", threadId: thread.id, terminalId: terminal.id });
   }

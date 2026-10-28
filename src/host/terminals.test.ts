@@ -60,6 +60,94 @@ const login = (terminals: Terminals, provider?: string) =>
 const writes = () => fake.write.mock.calls.map(([data]: unknown[]) => data);
 
 describe("terminal sessions", () => {
+  it("runs scripts in separate PTYs, preserves the shell and targets input and close by terminal id", async () => {
+    const { terminals, messages, open } = setup();
+    const shell = await open();
+    const shellData = fake.data;
+    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
+    await terminals.openScript("thread", "Build", async () => ({
+      ...launch,
+      args: ["-i", "-c", "printf build"],
+      cwd: os.tmpdir(),
+    }));
+    const first = messages.findLast((m) => m.type === "terminal-state");
+    if (first?.type !== "terminal-state" || !first.terminal) throw new Error("No script");
+    const script = { threadId: "thread", terminalId: first.terminal.id };
+    const scriptData = fake.data;
+    expect(first.terminal.script).toEqual({ name: "Build", cwd: os.tmpdir() });
+    expect(terminals.scriptDirectories()).toEqual([os.tmpdir()]);
+    expect(script.terminalId).not.toBe(shell.terminalId);
+    expect(fake.spawn).toHaveBeenLastCalledWith(
+      "/bin/sh",
+      ["-i", "-c", "printf build"],
+      expect.objectContaining({ cwd: os.tmpdir() }),
+    );
+    scriptData("private build output\n");
+    expect(terminals.takeContext("thread")).toBeNull();
+    terminals.handle({ type: "terminal-write", ...shell, data: "printf hello\r" });
+    shellData("hello\n");
+    expect(terminals.takeContext("thread")?.text).toBe("hello\n");
+    terminals.handle({ type: "terminal-write", ...script, threadId: "wrong", data: "bad" });
+    expect(writes()).not.toContain("bad");
+    await terminals.handle({ type: "terminal-close", ...script });
+    expect(terminals.scriptDirectories()).toEqual([]);
+    expect(terminals.has("thread")).toBe(true);
+    await terminals.handle({ type: "terminal-open", threadId: "thread", kind: "shell" });
+    expect(fake.spawn).toHaveBeenCalledTimes(2);
+    expect(messages.at(-1)).toMatchObject({ terminal: { id: shell.terminalId } });
+    const count = messages.length;
+    terminals.greet();
+    expect(
+      messages
+        .slice(count)
+        .some((m) => m.type === "terminal-state" && m.terminal?.id === script.terminalId),
+    ).toBe(false);
+    await terminals.closeAll();
+    expect(terminals.has("thread")).toBe(false);
+  });
+
+  it("keeps repeated script runs separate, bounds retained terminals and closes every run for a thread", async () => {
+    const { terminals, messages } = setup();
+    await Promise.all(
+      Array.from({ length: 8 }, () => terminals.openScript("thread", "Build", async () => launch)),
+    );
+    expect(
+      new Set(
+        messages.flatMap((m) => (m.type === "terminal-state" && m.terminal ? [m.terminal.id] : [])),
+      ).size,
+    ).toBe(8);
+    expect(() => terminals.openScript("thread", "Build", async () => launch)).toThrow(
+      "Close a script terminal",
+    );
+    await terminals.close("thread");
+    expect(terminals.has("thread")).toBe(false);
+    expect(messages.filter((m) => m.type === "terminal-state" && !m.terminal)).toHaveLength(8);
+  });
+
+  it("reports script launch errors and refuses a pending script spawn after close", async () => {
+    const { terminals, messages } = setup();
+    await terminals.openScript("thread", "Build", async () => {
+      throw new Error("Trust required");
+    });
+    expect(messages.at(-1)).toMatchObject({
+      terminal: { status: "exited", error: "Trust required", script: { name: "Build" } },
+    });
+    await terminals.close("thread");
+    let release!: (value: typeof launch) => void;
+    const opening = terminals.openScript(
+      "thread",
+      "Build",
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const closing = terminals.close("thread");
+    release(launch);
+    await Promise.all([opening, closing]);
+    expect(fake.spawn).not.toHaveBeenCalled();
+    expect(terminals.has("thread")).toBe(false);
+  });
   it("captures opted-in shell output without streaming it through React, and keeps it after close", async () => {
     const { terminals, messages, open } = setup();
     const session = await open();

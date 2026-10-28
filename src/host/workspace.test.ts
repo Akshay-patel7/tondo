@@ -141,6 +141,7 @@ beforeEach(() => {
     discover: async () => ({ found: false }),
     captureLoginEnv: async () => gitEnv,
     needsTrustAnswer: async () => false,
+    terminalLaunch: async (cwd: string) => ({ command: "/bin/sh", args: ["-i"], cwd, env: gitEnv }),
     sessionFolder: async () => ({ dir: path.join(dir, "sessions"), shared: true }),
   };
   workspace = new Workspace({
@@ -494,6 +495,77 @@ describe("settings messages", () => {
     const greeted = next((message) => message.type === "settings");
     workspace.greet();
     expect(await greeted).toMatchObject({ settings: { theme: "dark", palette: "ocean" } });
+  });
+});
+
+describe("project scripts", () => {
+  it.each([false, true])(
+    "resolves scripts by sidebar project and launches the requested checkout without starting pi, managed: %s",
+    async (managed) => {
+      const project = repository("script-project", []);
+      const checkout = managed ? repository("script-worktree", []) : project;
+      const { id: projectId } = store.addProject(project, 1);
+      store.addThread({ id: "script-thread", projectId, sessionFile: null, createdAt: 1 }, false);
+      if (managed)
+        store.addWorktree({
+          root: null,
+          path: checkout,
+          repository: project,
+          branch: "topic",
+          threadId: "script-thread",
+        });
+      const script = {
+        id: "build",
+        name: "Build app",
+        command: 'printf "%s\\n" "$PWD" && echo done',
+      };
+      updateSettings(settingsFile, { projectScripts: { [project]: [script] } });
+      const start = vi.spyOn(Terminals.prototype, "openScript").mockResolvedValueOnce(undefined);
+      workspace.handle({
+        v,
+        type: "run-project-script",
+        threadId: "script-thread",
+        scriptId: "build",
+      });
+      expect(store.thread("script-thread")?.visible).toBe(true);
+      expect(start).toHaveBeenCalledWith("script-thread", "Build app", expect.any(Function));
+      expect(await start.mock.calls[0]![2]()).toMatchObject({
+        command: "/bin/sh",
+        args: ["-i", "-c", script.command],
+        cwd: checkout,
+        env: { HOME: dir },
+      });
+      expect(threads).toHaveLength(0);
+    },
+  );
+
+  it("rejects unknown or another project's script and broadcasts saved lists on reconnect", async () => {
+    const project = store.addProject(dir, 1);
+    addThread(project.id, "script-thread");
+    const script = { id: "build", name: "Build", command: "echo done" };
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({
+      v,
+      type: "set-settings",
+      patch: { projectScripts: { "/another-project": [script] } },
+    });
+    expect(await changed).toMatchObject({
+      settings: { projectScripts: { "/another-project": [script] } },
+      error: null,
+    });
+    const error = next(isError);
+    workspace.handle({
+      v,
+      type: "run-project-script",
+      threadId: "script-thread",
+      scriptId: "build",
+    });
+    expect(await error).toMatchObject({ message: expect.stringContaining("no longer exists") });
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({
+      settings: { projectScripts: { "/another-project": [script] } },
+    });
   });
 });
 
@@ -921,6 +993,15 @@ async function removeManagedThread(id: string, force = false): Promise<HostMessa
 }
 
 describe("worktree creation alongside a busy checkout", () => {
+  it("protects a script's actual agent checkout even when its owning thread uses another folder", async () => {
+    const { id, checkout, thread } = await managedSession();
+    vi.spyOn(Terminals.prototype, "scriptDirectories").mockReturnValue([checkout]);
+    expect(await removeManagedThread(id)).toMatchObject({
+      error: expect.stringContaining("Close terminals in this checkout"),
+    });
+    expect(existsSync(checkout)).toBe(true);
+    expect(thread.close).not.toHaveBeenCalled();
+  });
   it.each(["turn", "checkpoint"])(
     "creates a separate checkout during a background %s",
     async (busy) => {

@@ -1,6 +1,7 @@
 // Tondo's own settings as the page sees them. The host reads and writes them
 // in settings.json in the app data folder, and checks every change.
 
+import type { ProjectScripts } from "./projectScripts";
 import type { ThinkingLevel } from "./protocol";
 
 export const THINKING_LABELS: Readonly<Record<ThinkingLevel, string>> = {
@@ -112,6 +113,7 @@ export interface AppSettings {
   readonly piPath: string | null;
   /** IDE preset command or custom executable used by Open in IDE. */
   readonly ideCommand: string;
+  readonly projectScripts: ProjectScripts;
   /** Parent folder for new managed worktrees, or null to use <userData>/worktrees. */
   readonly worktreeDirectory: string | null;
   /** Overrides for new sessions only. null leaves the choice to pi. */
@@ -131,6 +133,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   piPath: null,
   ideCommand: "code",
+  projectScripts: {},
   worktreeDirectory: null,
   defaultModel: null,
   defaultThinkingLevel: null,
@@ -146,6 +149,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 /** A change to the settings. Only the fields present change. */
 export interface SettingsPatch {
   readonly ideCommand?: string;
+  /** Only the named projects change; an empty list removes their scripts. */
+  readonly projectScripts?: ProjectScripts;
   readonly defaultModel?: DefaultModel | null;
   readonly defaultThinkingLevel?: ThinkingLevel | null;
   readonly theme?: ThemeSetting;

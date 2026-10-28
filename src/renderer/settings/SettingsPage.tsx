@@ -5,6 +5,7 @@ import {
   Cpu,
   Keyboard,
   KeyRound,
+  Play,
   SquareTerminal,
   Sun,
   type LucideIcon,
@@ -21,12 +22,14 @@ import { PiSettings } from "./PiSettings";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { closeSettings, takeSettingsOpener, useSettingsPage, type SettingsSection } from "./store";
 import { ThreadSettings } from "./ThreadSettings";
+import { ProjectScriptsSettings } from "./ProjectScriptsSettings";
 
 const SECTIONS: readonly SettingsSection[] = [
   "appearance",
   "pi",
   "accounts",
   "threads",
+  "scripts",
   "shortcuts",
 ];
 
@@ -56,6 +59,11 @@ const SECTION_INFO: Readonly<
     icon: Cpu,
     description:
       "Each thread runs its own pi. Tondo stops the ones you aren't using, so they don't fill your memory.",
+  },
+  scripts: {
+    title: "Project scripts",
+    icon: Play,
+    description: "Named shell commands for each project. Run them from the top of any thread.",
   },
   shortcuts: {
     title: "Shortcuts",
@@ -214,6 +222,8 @@ function Section({ section }: { section: SettingsSection }) {
       return <AccountsSettings />;
     case "threads":
       return <ThreadSettings />;
+    case "scripts":
+      return <ProjectScriptsSettings />;
     case "shortcuts":
       return <ShortcutSettings />;
   }

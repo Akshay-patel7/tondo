@@ -6,7 +6,7 @@ import type { OpenThread, SidebarProject, SidebarThread } from "../../shared/pro
 import type { ShortcutCommand } from "../../shared/settings";
 import { folderName } from "../format";
 import { shortcutLabelFor } from "../shortcuts";
-import { useTerminals } from "../terminal/store";
+import { currentTerminal } from "../terminal/store";
 
 export type PaletteAction =
   | { readonly type: "new-thread"; readonly projectId: number }
@@ -79,7 +79,7 @@ export function paletteItems({
   // asks whether to trust its folder can't have one. Like the shortcuts, the
   // terminal's state is read from its store as the palette lists it.
   if (open && !open.askingTrust) {
-    const terminalOpen = useTerminals.getState().has(open.id);
+    const terminalOpen = currentTerminal(open.id) !== undefined;
     action("terminal", terminalOpen ? "Close terminal" : "Open terminal", "", "", {
       type: "terminal",
       open: !terminalOpen,

@@ -569,22 +569,40 @@ export class Workspace {
       case "reload":
         this.run(() => this.running(message.threadId).reload());
         break;
+      case "run-project-script":
+        this.run(() => {
+          const row = this.row(message.threadId);
+          const project = this.project(row.projectId);
+          const script = this.supervisor
+            .settings()
+            .projectScripts[project.path]?.find((item) => item.id === message.scriptId);
+          if (!script)
+            throw new Error(
+              "That project script no longer exists. Check Settings > Project scripts.",
+            );
+          const started = this.terminals.openScript(row.id, script.name, async () => {
+            const cwd = await this.headerCheckout(row);
+            if (await this.supervisor.needsTrustAnswer(this.checkout(row)))
+              throw new Error("Answer the project's trust question before running a script.");
+            const launch = await this.supervisor.terminalLaunch(cwd, "shell");
+            this.row(row.id);
+            if (this.gitMutation)
+              throw new Error("Wait for the Git action before running a script.");
+            return { ...launch, args: ["-i", "-c", script.command] };
+          });
+          // A script-only thread must remain reachable after you switch away.
+          this.store.revealThread(row.id);
+          this.sendSidebar();
+          return started;
+        });
+        break;
       case "open-ide":
         this.run(async () => {
           if (this.gitMutation) throw new Error("Wait for the Git action before opening the IDE.");
-          const cwd = this.checkout(this.row(message.threadId));
-          const thread = this.live.get(message.threadId);
-          const status = thread ? await this.git.status(cwd, false) : null;
-          const activity =
-            status?.root && thread
-              ? await agentCheckout(this.git, cwd, status.root, thread.state)
-              : null;
+          const cwd = await this.headerCheckout(this.row(message.threadId));
           const { ideCommand } = this.supervisor.settings();
-          await openIde(
-            ideCommand,
-            activity?.root ?? cwd,
-            await this.supervisor.captureLoginEnv(),
-            (error) => this.toast("error", error.message),
+          await openIde(ideCommand, cwd, await this.supervisor.captureLoginEnv(), (error) =>
+            this.toast("error", error.message),
           ).catch((error: unknown) => this.toast("error", messageOf(error)));
         });
         break;
@@ -707,6 +725,7 @@ export class Workspace {
     const {
       piPath,
       ideCommand,
+      projectScripts,
       worktreeDirectory,
       theme,
       palette,
@@ -724,6 +743,7 @@ export class Workspace {
       settings: {
         piPath,
         ideCommand,
+        projectScripts,
         worktreeDirectory,
         theme,
         palette,
@@ -1156,6 +1176,17 @@ export class Workspace {
     return this.worktrees.forThread(row.id)?.path ?? this.project(row.projectId).path;
   }
 
+  /** User-triggered header actions follow observed agent activity without moving the thread. */
+  private async headerCheckout(row: StoredThread): Promise<string> {
+    if (this.gitMutation) throw new Error("Wait for the Git action before using the checkout.");
+    const cwd = this.checkout(row);
+    const thread = this.live.get(row.id);
+    const status = thread ? await this.git.status(cwd, false) : null;
+    const activity =
+      status?.root && thread ? await agentCheckout(this.git, cwd, status.root, thread.state) : null;
+    return activity?.root ?? cwd;
+  }
+
   private refreshGit(fresh = false): void {
     clearTimeout(this.gitTimer);
     const generation = ++this.gitGeneration;
@@ -1250,7 +1281,10 @@ export class Workspace {
         // The pool may have stopped a background thread's pi while its shell lives on.
         const terminalRows = this.store.threads().filter((stored) => this.terminals.has(stored.id));
         const terminalRoots = await Promise.all(
-          terminalRows.map((stored) => checkpointRoot(this.checkout(stored))),
+          [
+            ...terminalRows.map((stored) => this.checkout(stored)),
+            ...this.terminals.scriptDirectories(),
+          ].map((folder) => checkpointRoot(folder)),
         );
         if (terminalRoots.includes(status.root))
           throw new Error(

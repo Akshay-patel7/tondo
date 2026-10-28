@@ -10,6 +10,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
 import { isIdeCommand } from "./ide";
+import { isProjectScripts, type ProjectScripts } from "./projectScripts";
 import type { HistoryIndex, HistoryPage, HistoryPreview } from "./history";
 import { isLocalFileLink, type FilePreview } from "./filePreview";
 import type { PickedFiles } from "./attachments";
@@ -40,7 +41,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 31;
+export const PROTOCOL_VERSION = 32;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -308,6 +309,7 @@ export type ClientMessage = Versioned<
   | { type: "open-thread"; threadId: string }
   /** Open the saved IDE in the host-resolved checkout. No page-supplied command or path. */
   | { type: "open-ide"; threadId: string }
+  | { type: "run-project-script"; threadId: string; scriptId: string }
   | { type: "rename-thread"; threadId: string; name: string }
   | { type: "pin-thread"; threadId: string; pinned: boolean }
   | { type: "mark-unread"; threadId: string }
@@ -639,6 +641,14 @@ export function parseClientMessage(data: unknown): ParseResult {
         );
       }
       return exactly(message, { v, type, projectId: projectId as number, collapsed });
+    }
+    case "run-project-script": {
+      const bad = badThreadId(type, threadId);
+      if (bad) return invalid(bad);
+      const { scriptId } = message;
+      if (typeof scriptId !== "string" || !/^[a-zA-Z0-9-]{1,64}$/.test(scriptId))
+        return invalid("run-project-script: invalid scriptId");
+      return exactly(message, { v, type, threadId: threadId as string, scriptId });
     }
     case "open-thread":
     case "open-ide":
@@ -1042,6 +1052,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
         "shortcuts",
         "piPath",
         "ideCommand",
+        "projectScripts",
         "worktreeDirectory",
       ].includes(key),
   );
@@ -1057,6 +1068,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     shortcuts,
     piPath,
     ideCommand,
+    projectScripts,
     worktreeDirectory,
   } = patch;
   const parsed: {
@@ -1070,8 +1082,14 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
     ideCommand?: string;
+    projectScripts?: ProjectScripts;
     worktreeDirectory?: string | null;
   } = {};
+  if (projectScripts !== undefined) {
+    if (!isProjectScripts(projectScripts))
+      return "projectScripts must contain valid named scripts by absolute project folder";
+    parsed.projectScripts = projectScripts;
+  }
   if (ideCommand !== undefined) {
     if (!isIdeCommand(ideCommand)) return "ideCommand must be an executable name or absolute path";
     parsed.ideCommand = ideCommand;

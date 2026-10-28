@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { IPty } from "node-pty";
+import { MAX_SCRIPT_TERMINALS } from "../shared/projectScripts";
 import { PROTOCOL_VERSION, type HostMessage, type TerminalRequest } from "../shared/protocol";
 import {
   TERMINAL_CHUNK_CHARS,
@@ -46,7 +47,7 @@ interface Session {
 const v = PROTOCOL_VERSION;
 const exec = promisify(execFile);
 
-/** One terminal per thread. Output bypasses React and pauses at the parser's acknowledgement window. */
+/** One interactive terminal and separate script runs per thread. Output bypasses React. */
 export class Terminals {
   private readonly sessions = new Map<string, Session>();
   private readonly groups = new Set<number>();
@@ -75,7 +76,32 @@ export class Terminals {
   }
 
   has(threadId: string): boolean {
-    return this.sessions.has(threadId);
+    return [...this.sessions.values()].some((session) => session.threadId === threadId);
+  }
+
+  /** Script runs can target an agent checkout different from their thread's original folder. */
+  scriptDirectories(): string[] {
+    return [...this.sessions.values()].flatMap((session) =>
+      session.state.script?.cwd ? [session.state.script.cwd] : [],
+    );
+  }
+
+  private primary(threadId: string): Session | undefined {
+    return [...this.sessions.values()].find(
+      (session) => session.threadId === threadId && !session.state.script,
+    );
+  }
+
+  openScript(threadId: string, name: string, launch: () => Promise<TerminalLaunch>): Promise<void> {
+    if (this.stopping) throw new Error("Tondo is stopping its terminals.");
+    const count = [...this.sessions.values()].filter(
+      (session) => session.threadId === threadId && session.state.script,
+    ).length;
+    if (count >= MAX_SCRIPT_TERMINALS)
+      throw new Error(
+        `Close a script terminal before starting another. Each thread can keep ${MAX_SCRIPT_TERMINALS}.`,
+      );
+    return this.create(threadId, "shell", undefined, { name, launch });
   }
 
   greet(): void {
@@ -107,7 +133,7 @@ export class Terminals {
   takeContext(threadId: string): TerminalContextSend | null {
     const send = this.context(threadId).take();
     if (send) {
-      const session = this.sessions.get(threadId);
+      const session = this.primary(threadId);
       if (session) session.capturing = false;
       this.publishContext(threadId);
     }
@@ -132,14 +158,14 @@ export class Terminals {
   handle(message: TerminalRequest): void | Promise<void> {
     if (message.type === "terminal-sharing") {
       this.context(message.threadId).setEnabled(message.enabled);
-      const session = this.sessions.get(message.threadId);
+      const session = this.primary(message.threadId);
       if (session) session.capturing = false;
       this.publishContext(message.threadId);
       return;
     }
     if (message.type === "terminal-discard") {
       this.context(message.threadId).discard();
-      const session = this.sessions.get(message.threadId);
+      const session = this.primary(message.threadId);
       if (session) session.capturing = false;
       this.publishContext(message.threadId);
       return;
@@ -155,12 +181,12 @@ export class Terminals {
     }
     if (message.type === "terminal-open")
       return this.open(message.threadId, message.kind, message.provider);
-    const session = this.sessions.get(message.threadId);
-    // A late write, resize or cleanup from a disposed view must not reach its replacement.
-    if (!session || session.state.id !== message.terminalId) return;
+    const session = this.sessions.get(message.terminalId);
+    // A late write, resize or cleanup must not reach a different terminal or thread.
+    if (!session || session.threadId !== message.threadId) return;
     switch (message.type) {
       case "terminal-close":
-        return this.close(message.threadId);
+        return this.closeSession(session);
       case "terminal-attach": {
         this.detach(session);
         session.attachment = message.attachment;
@@ -205,19 +231,35 @@ export class Terminals {
   /** A reused terminal ignores `provider`: only a new pi can be typed into safely. An exited one is replaced. */
   private open(threadId: string, kind: TerminalKind, provider?: string): Promise<void> {
     if (this.stopping) throw new Error("Tondo is stopping its terminals.");
-    const existing = this.sessions.get(threadId);
+    const existing = this.primary(threadId);
     // An exited terminal runs nothing, so opening one replaces it.
     if (existing?.state.status === "exited")
-      return this.close(threadId).then(() => this.open(threadId, kind, provider));
+      return this.closeSession(existing).then(() => this.open(threadId, kind, provider));
     if (existing) {
       if (existing.state.kind !== kind)
         throw new Error("Close this thread's terminal before opening a different one.");
       this.publish(existing);
       return existing.started;
     }
+    return this.create(threadId, kind, provider);
+  }
+
+  private create(
+    threadId: string,
+    kind: TerminalKind,
+    provider?: string,
+    script?: { name: string; launch: () => Promise<TerminalLaunch> },
+  ): Promise<void> {
     const session: Session = {
       threadId,
-      state: { id: randomUUID(), kind, status: "starting", error: null, exitCode: null },
+      state: {
+        id: randomUUID(),
+        kind,
+        status: "starting",
+        error: null,
+        exitCode: null,
+        ...(script ? { script: { name: script.name, cwd: "" } } : {}),
+      },
       history: new TerminalHistory(),
       input: new HistoryFilter(true, (sequence) => {
         if (sequence === "\u001b[200~") {
@@ -237,16 +279,23 @@ export class Terminals {
     };
     if (kind === "login" && provider !== undefined)
       session.typer = new LoginTyper(provider, (data) => session.pty?.write(data));
-    this.sessions.set(threadId, session);
-    if (kind === "shell") this.context(threadId).newShell();
+    this.sessions.set(session.state.id, session);
+    if (kind === "shell" && !script) this.context(threadId).newShell();
     this.publish(session);
-    session.started = this.start(session);
+    session.started = this.start(session, script?.launch);
     return session.started;
   }
 
-  private async start(session: Session): Promise<void> {
+  private async start(
+    session: Session,
+    scriptLaunch?: () => Promise<TerminalLaunch>,
+  ): Promise<void> {
     try {
-      const launch = await this.launch(session.threadId, session.state.kind);
+      const launch = await (scriptLaunch
+        ? scriptLaunch()
+        : this.launch(session.threadId, session.state.kind));
+      if (session.state.script)
+        session.state = { ...session.state, script: { ...session.state.script, cwd: launch.cwd } };
       const { spawn } = await import("node-pty");
       // node-pty doesn't throw for a missing cwd: the shell starts and exits with code 1.
       const folder = await stat(launch.cwd).then(
@@ -269,7 +318,11 @@ export class Terminals {
       pty.onData((data) => {
         session.history.append(data);
         session.typer?.output(data);
-        if (session.state.kind === "shell" && this.sessions.get(session.threadId) === session) {
+        if (
+          session.state.kind === "shell" &&
+          !session.state.script &&
+          this.sessions.get(session.state.id) === session
+        ) {
           const context = this.context(session.threadId);
           const pending = context.pending;
           context.append(data, session.capturing);
@@ -299,12 +352,19 @@ export class Terminals {
 
   async closeAll(): Promise<void> {
     this.stopping = true;
-    await Promise.all([...this.sessions.keys()].map((id) => this.close(id)));
+    await Promise.all([...this.sessions.values()].map((session) => this.closeSession(session)));
   }
 
   async close(threadId: string): Promise<void> {
-    const session = this.sessions.get(threadId);
-    if (!session) return;
+    await Promise.all(
+      [...this.sessions.values()]
+        .filter((session) => session.threadId === threadId)
+        .map((session) => this.closeSession(session)),
+    );
+  }
+
+  private async closeSession(session: Session): Promise<void> {
+    const { threadId } = session;
     session.state = { ...session.state, status: "closing" };
     session.typer?.stop();
     this.publish(session);
@@ -322,9 +382,15 @@ export class Terminals {
       throw error;
     }
     this.detach(session);
-    if (this.sessions.get(threadId) === session) {
-      this.sessions.delete(threadId);
-      this.send({ v, type: "terminal-state", threadId, terminal: null });
+    if (this.sessions.get(session.state.id) === session) {
+      this.sessions.delete(session.state.id);
+      this.send({
+        v,
+        type: "terminal-state",
+        threadId,
+        terminal: null,
+        terminalId: session.state.id,
+      });
     }
   }
 
@@ -413,7 +479,7 @@ export class Terminals {
 
   private publish(session: Session): void {
     // node-pty can deliver an exit after close removed or replaced this session.
-    if (this.sessions.get(session.threadId) !== session) return;
+    if (this.sessions.get(session.state.id) !== session) return;
     this.send({ v, type: "terminal-state", threadId: session.threadId, terminal: session.state });
   }
 
