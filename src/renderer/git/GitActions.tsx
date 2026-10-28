@@ -107,11 +107,12 @@ export function GitActions() {
       <SplitButton className="app-no-drag">
         <SplitButtonMain
           ref={main}
+          title="Commit & push"
           disabled={!can.commit || !can.push}
           onClick={() => open("commit", "main", "push")}
         >
           {busy ? <Spinner size="sm" /> : <GitCommitHorizontal aria-hidden />}
-          <span className="@max-2xl:sr-only">Commit &amp; push</span>
+          <span className="@max-4xl:sr-only">Commit &amp; push</span>
         </SplitButtonMain>
         <DropdownMenu>
           <DropdownMenuTrigger

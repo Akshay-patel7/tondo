@@ -205,7 +205,7 @@ async function expectHeaderFits(page: Page, state: string): Promise<void> {
 
 test("a long folder name gives way to the thread's title and the header's buttons", async () => {
   const page = await launch(gitProject(LONG_NAME));
-  const folder = page.locator("header span[title]");
+  const folder = page.locator("header").getByText(LONG_NAME, { exact: true });
   await expect(folder).toHaveText(LONG_NAME);
   await expectHeaderFits(page, "the default size");
 
@@ -228,7 +228,10 @@ test("a long folder name gives way to the thread's title and the header's button
 for (const size of ["default", "minimum", "zoomed"] as const) {
   test(`a long thread title leaves room for the branch and usable header controls at ${size} size`, async () => {
     mkdirSync(SHOTS, { recursive: true });
-    const page = await launch(gitProject("project"));
+    const project = gitProject("project");
+    const branchName = "docs/phase-22-cancelled-plan-docs-with-a-long-branch-name";
+    execFileSync("git", ["checkout", "-b", branchName], { cwd: project, env, stdio: "pipe" });
+    const page = await launch(project);
     await page.emulateMedia({ colorScheme: "dark" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -249,7 +252,7 @@ for (const size of ["default", "minimum", "zoomed"] as const) {
     await input.press("Enter");
     await expect(header.getByRole("heading")).toHaveText(title);
     await expect(threads(page).getByRole("button", { name: title, exact: true })).toBeVisible();
-    const branch = header.locator("span").filter({ hasText: /^Branch main$/ });
+    const branch = header.getByText(`Branch ${branchName}`, { exact: true });
     await expect(branch).toBeVisible();
 
     if (size !== "default") await minimumSize(tondo!);
@@ -263,7 +266,9 @@ for (const size of ["default", "minimum", "zoomed"] as const) {
             .getByRole("button", { name: "Terminal", exact: true })
             .boundingBox();
           return (
-            titleBox!.x + titleBox!.width <= branchBox!.x &&
+            titleBox!.height > 0 &&
+            titleBox!.width >= 120 &&
+            titleBox!.y + titleBox!.height <= branchBox!.y &&
             branchBox!.x + branchBox!.width <= terminalBox!.x
           );
         },

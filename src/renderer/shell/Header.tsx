@@ -47,7 +47,7 @@ export function Header({ sidebarHidden }: { sidebarHidden: boolean }) {
     // with every new title. With a thread open, the rest of the page's layer
     // is one solid color, which needs no tiles.
     <header
-      className={`app-drag @container flex h-11 shrink-0 items-center border-b border-border pr-3 text-sm will-change-transform ${
+      className={`app-drag @container flex shrink-0 items-center border-b border-border pr-3 text-sm will-change-transform ${mode === "thread" ? "h-14" : "h-11"} ${
         sidebarHidden && isMac ? "pl-20" : mode === "settings" ? "pl-4" : "pl-6"
       } ${mode === "settings" ? "gap-2" : "gap-3"}`}
     >
@@ -125,9 +125,15 @@ function ThreadHeader({ project }: { project: string }) {
   }, [needsSignIn]);
   return (
     <>
-      {title === undefined ? null : <h1 className="min-w-0 truncate font-medium">{title}</h1>}
-      <Breadcrumb project={project} />
-      {/* Below 672px, as beside the Changes panel, the buttons keep their icons and lose their labels. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {title === undefined ? null : (
+          <h1 title={title} className="truncate font-medium">
+            {title}
+          </h1>
+        )}
+        <Breadcrumb project={project} />
+      </div>
+      {/* Shorten controls before they crowd the thread name. */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* Once a provider is set up, Settings > Accounts signs in to another. */}
         {needsSignIn && noneSaved ? (
@@ -137,9 +143,14 @@ function ThreadHeader({ project }: { project: string }) {
           </Button>
         ) : null}
         {/* openTerminal replaces a terminal that has exited with a new one. */}
-        <Button variant="ghost" onClick={() => openTerminal("shell")} className="app-no-drag">
+        <Button
+          variant="ghost"
+          title="Terminal"
+          onClick={() => openTerminal("shell")}
+          className="app-no-drag"
+        >
           <Terminal aria-hidden />
-          <span className="@max-2xl:sr-only">Terminal</span>
+          <span className="@max-4xl:sr-only">Terminal</span>
         </Button>
         <ChangesButton />
         {/* Keyed by thread, so a dialog left open belongs to the thread that opened it. */}
@@ -149,45 +160,43 @@ function ThreadHeader({ project }: { project: string }) {
   );
 }
 
-/**
- * The thread's folder and its branch. The folder name gets only the room the
- * title leaves, so a long one gives way first. The branch is a separate
- * header item that reserves its width before the title and folder shrink.
- */
+/** The title has its own line; each checkout detail truncates within the line below. */
 function Breadcrumb({ project }: { project: string }) {
   const branch = useGit((git) =>
     git.status?.root ? (git.status.branch ?? "Detached HEAD") : null,
   );
   const activity = useGit((git) => git.agentCheckout);
   return (
-    <>
+    <div className="flex min-w-0 items-center gap-2">
       <span
         title={project}
-        className="min-w-0 max-w-fit flex-1 truncate text-xs text-faint-foreground"
+        className="min-w-0 max-w-40 shrink truncate text-xs text-faint-foreground"
       >
         {folderName(project)}
       </span>
       {branch === null ? null : (
-        <span className="flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap text-faint-foreground">
+        <span className="flex min-w-0 max-w-fit flex-1 items-center gap-1.5 text-xs text-faint-foreground">
           <span aria-hidden>/</span>
-          <span className="flex items-center gap-1 font-mono text-muted-foreground">
-            <GitBranch aria-hidden className="size-3" />
-            <span className="sr-only">Branch </span>
-            {branch}
+          <span className="flex min-w-0 items-center gap-1 font-mono text-muted-foreground">
+            <GitBranch aria-hidden className="size-3 shrink-0" />
+            <span className="truncate">
+              <span className="sr-only">Branch </span>
+              {branch}
+            </span>
           </span>
         </span>
       )}
       {activity ? (
         <Badge
           variant="outline"
-          className="min-w-0 max-w-64 shrink"
+          className="min-w-0 max-w-[45%] shrink"
           title={`Agent activity in ${activity.root}. Terminal, Changes and Git actions still use ${project}.`}
         >
           <FolderGit2 aria-hidden />
           <span className="truncate">Agent worktree: {activity.branch ?? "Detached HEAD"}</span>
         </Badge>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -210,12 +219,12 @@ function ChangesButton() {
       aria-pressed={changesOpen}
       disabled={updating}
       aria-describedby={stats ? statsId : undefined}
-      title={stats?.error ? `Couldn't count the latest turn's changes: ${stats.error}` : undefined}
+      title={stats?.error ? `Couldn't count the latest turn's changes: ${stats.error}` : "Changes"}
       onClick={toggleDiffPanel}
       className="app-no-drag"
     >
       <GitCompareArrows aria-hidden />
-      <span className="@max-2xl:sr-only">Changes</span>
+      <span className="@max-4xl:sr-only">Changes</span>
       {/* The counts describe the button rather than name it, so it stays "Changes". */}
       {counts ? (
         <span aria-hidden className="font-mono text-2xs">
