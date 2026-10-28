@@ -11,6 +11,31 @@ function rejection(data: unknown): string {
 }
 
 describe("parseClientMessage", () => {
+  it("opens an IDE only by thread id and validates saved executable settings", () => {
+    expect(parseClientMessage({ v, type: "open-ide", threadId: "thread" }).ok).toBe(true);
+    for (const extra of [{ threadId: "" }, { path: "/tmp" }, { command: "code" }, { args: [] }]) {
+      expect(parseClientMessage({ v, type: "open-ide", threadId: "thread", ...extra }).ok).toBe(
+        false,
+      );
+    }
+    for (const ideCommand of ["code", "cursor", "/opt/My IDE/editor"]) {
+      const message = { v, type: "set-settings", patch: { ideCommand } };
+      expect(parseClientMessage(message)).toEqual({ ok: true, message });
+    }
+    for (const ideCommand of [
+      null,
+      5,
+      "",
+      "code --wait",
+      "./editor",
+      "-a",
+      "bad\ncommand",
+      "a".repeat(4097),
+    ]) {
+      expect(rejection({ v, type: "set-settings", patch: { ideCommand } })).toContain("ideCommand");
+    }
+  });
+
   it("history requests accept bounded identities, never file paths or arbitrary fields", () => {
     for (const type of ["history-index", "history-preview", "history-page"]) {
       const message = {
@@ -536,8 +561,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 30, which adds new-session model and thinking defaults", () => {
-    expect(PROTOCOL_VERSION).toBe(30);
+  it("speaks version 31, which adds the IDE setting and thread launch request", () => {
+    expect(PROTOCOL_VERSION).toBe(31);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

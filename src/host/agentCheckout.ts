@@ -1,5 +1,5 @@
-// Display-only evidence of tools using another checkout. Never adopt it into
-// the ownership ledger or change where pi, terminals or Git actions run.
+// Evidence for the header and the user-triggered IDE action. Never adopt it
+// into the ownership ledger or change where pi, terminals or Git actions run.
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentCheckout } from "../shared/git";
@@ -67,7 +67,7 @@ export function toolDirectory(
     }
   }
   // Don't mistake a directory change hidden in a compound command for a tool
-  // running in pi's starting folder. Unsupported forms leave no activity badge.
+  // running in pi's starting folder. Unsupported forms leave no detected checkout.
   if (/\b(?:cd|pushd|popd)\s|\s-C\s/.test(command)) return null;
   return directory;
 }

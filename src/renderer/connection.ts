@@ -976,6 +976,11 @@ export function updateSettings(patch: SettingsPatch): void {
   send({ v, type: "set-settings", patch });
 }
 
+/** Opens the saved IDE in the detected agent checkout, or the thread's own folder. */
+export function openThreadIde(): void {
+  send({ v, type: "open-ide", threadId: requireShownId() });
+}
+
 /** Shows the file dialog for picking the pi program. */
 export function choosePiPath(): void {
   send({ v, type: "choose-pi-path" });

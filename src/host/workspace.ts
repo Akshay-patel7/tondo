@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { Git } from "./git";
+import { openIde } from "./ide";
 import { agentCheckout } from "./agentCheckout";
 import { GitCommands } from "./gitCommand";
 import { PiUpdatesService } from "./piUpdates";
@@ -568,6 +569,25 @@ export class Workspace {
       case "reload":
         this.run(() => this.running(message.threadId).reload());
         break;
+      case "open-ide":
+        this.run(async () => {
+          if (this.gitMutation) throw new Error("Wait for the Git action before opening the IDE.");
+          const cwd = this.checkout(this.row(message.threadId));
+          const thread = this.live.get(message.threadId);
+          const status = thread ? await this.git.status(cwd, false) : null;
+          const activity =
+            status?.root && thread
+              ? await agentCheckout(this.git, cwd, status.root, thread.state)
+              : null;
+          const { ideCommand } = this.supervisor.settings();
+          await openIde(
+            ideCommand,
+            activity?.root ?? cwd,
+            await this.supervisor.captureLoginEnv(),
+            (error) => this.toast("error", error.message),
+          ).catch((error: unknown) => this.toast("error", messageOf(error)));
+        });
+        break;
       case "reveal":
         this.run(() => {
           if (!this.offered.has(message.path)) {
@@ -686,6 +706,7 @@ export class Workspace {
     if (problem !== null) this.offered.add(this.supervisor.settingsFile);
     const {
       piPath,
+      ideCommand,
       worktreeDirectory,
       theme,
       palette,
@@ -702,6 +723,7 @@ export class Workspace {
       // The page applies the same saved palette that main receives for its window.
       settings: {
         piPath,
+        ideCommand,
         worktreeDirectory,
         theme,
         palette,

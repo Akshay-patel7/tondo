@@ -19,6 +19,7 @@ import {
 } from "../ui/number-field";
 import { Footnote, Loading, SettingsRow, SubHeading } from "./rows";
 import { ThreadDefaults } from "./ThreadDefaults";
+import { IdeSettings } from "./IdeSettings";
 
 export function ThreadSettings() {
   const settings = useHost((host) => host.settings);
@@ -27,6 +28,8 @@ export function ThreadSettings() {
   return (
     <>
       <ThreadDefaults settings={settings} />
+      <SubHeading title="Open in IDE" description="Choose the editor used by the thread header." />
+      <IdeSettings key={settings.ideCommand} command={settings.ideCommand} />
       <SubHeading
         title="Process limits"
         description="Control how many idle threads keep pi running."

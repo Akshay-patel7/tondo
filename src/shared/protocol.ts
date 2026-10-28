@@ -9,6 +9,7 @@ import type {
   SlashCommandSource,
 } from "@earendil-works/pi-coding-agent";
 import type { FileIndex } from "./files";
+import { isIdeCommand } from "./ide";
 import type { HistoryIndex, HistoryPage, HistoryPreview } from "./history";
 import { isLocalFileLink, type FilePreview } from "./filePreview";
 import type { PickedFiles } from "./attachments";
@@ -39,7 +40,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 30;
+export const PROTOCOL_VERSION = 31;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -305,6 +306,8 @@ export type ClientMessage = Versioned<
   | { type: "new-thread"; projectId: number }
   /** Put a thread on screen, starting its pi if it isn't running. */
   | { type: "open-thread"; threadId: string }
+  /** Open the saved IDE in the host-resolved checkout. No page-supplied command or path. */
+  | { type: "open-ide"; threadId: string }
   | { type: "rename-thread"; threadId: string; name: string }
   | { type: "pin-thread"; threadId: string; pinned: boolean }
   | { type: "mark-unread"; threadId: string }
@@ -638,6 +641,7 @@ export function parseClientMessage(data: unknown): ParseResult {
       return exactly(message, { v, type, projectId: projectId as number, collapsed });
     }
     case "open-thread":
+    case "open-ide":
     case "mark-unread":
     case "delete-thread":
     case "stop":
@@ -1037,6 +1041,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
         "panelWidths",
         "shortcuts",
         "piPath",
+        "ideCommand",
         "worktreeDirectory",
       ].includes(key),
   );
@@ -1051,6 +1056,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     panelWidths,
     shortcuts,
     piPath,
+    ideCommand,
     worktreeDirectory,
   } = patch;
   const parsed: {
@@ -1063,8 +1069,13 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     panelWidths?: Partial<PanelWidths>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
     piPath?: string | null;
+    ideCommand?: string;
     worktreeDirectory?: string | null;
   } = {};
+  if (ideCommand !== undefined) {
+    if (!isIdeCommand(ideCommand)) return "ideCommand must be an executable name or absolute path";
+    parsed.ideCommand = ideCommand;
+  }
   if (theme !== undefined) {
     if (!isThemeSetting(theme))
       return `theme must be "system", "light" or "dark", not ${describe(theme)}`;

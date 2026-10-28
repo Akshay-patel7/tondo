@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { bringToFront, captureOpenExternal, launchTondo, type Tondo } from "./launch";
 import { piGroup, piGroups } from "./processes";
+import { expectPicked, pickOption, pickerOptions } from "./ui";
 import {
   addProject,
   answerFolderDialog,
@@ -87,10 +88,13 @@ test.afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function start(responses = [bashCall("pwd | tee cwd-proof.txt"), reply("Path recorded.")]) {
+async function start(
+  responses = [bashCall("pwd | tee cwd-proof.txt"), reply("Path recorded.")],
+  settings: Record<string, unknown> = {},
+) {
   const profileDir = path.join(dir, "profile");
   mkdirSync(profileDir);
-  tondo = await launchWithPi({ workDir: dir, profileDir, env, script: { responses } });
+  tondo = await launchWithPi({ workDir: dir, profileDir, env, settings, script: { responses } });
   await bringToFront(tondo);
   await addProject(tondo, project);
   await waitForPi(tondo.page);
@@ -200,35 +204,192 @@ function worktreePath(): string {
   return field.slice(9);
 }
 
-test("the header follows agent branch changes and labels external worktree activity without rerouting the thread", async () => {
+/** Records real IDE launches without opening an installed IDE. */
+function recordingIde() {
+  const executable = path.join(bin, "my IDE's launcher");
+  const record = path.join(dir, "ide.jsonl");
+  writeFileSync(
+    executable,
+    `#!${process.execPath}\nconst fs = require("node:fs"); fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), home: process.env.HOME }) + "\\n");\n`,
+  );
+  chmodSync(executable, 0o755);
+  const calls = (): { args: string[]; cwd: string; home: string }[] =>
+    existsSync(record)
+      ? readFileSync(record, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+      : [];
+  return { executable, calls };
+}
+
+test("the saved IDE opens each thread's checkout, survives restart and reports launch failures", async () => {
+  test.setTimeout(90_000);
+  const { executable, calls } = recordingIde();
+  const app = await start([reply("Ready.")]);
+  let { page } = app;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const settingsFile = path.join(app.profileDir, "settings.json");
+  const savedIde = () => JSON.parse(readFileSync(settingsFile, "utf8")).ideCommand;
+  await send(page, "Open this local thread");
+  await waitForIdle(page);
+
+  await page.keyboard.press("ControlOrMeta+Comma");
+  const settings = page.getByRole("region", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Threads", exact: true }).click();
+  await expectPicked(settings, "IDE", "code");
+  expect(await pickerOptions(settings, "IDE")).toEqual([
+    "VS Code",
+    "Cursor",
+    "Windsurf",
+    "Zed",
+    "Custom executable",
+  ]);
+  const chooseIde = async (label: string, command: string) => {
+    await pickOption(settings, "IDE", label);
+    await expect.poll(savedIde).toBe(command);
+  };
+  await chooseIde("Cursor", "cursor");
+  await chooseIde("Windsurf", "windsurf");
+  await chooseIde("Zed", "zed");
+  await chooseIde("VS Code", "code");
+  await pickOption(settings, "IDE", "Custom executable");
+  const input = settings.getByRole("textbox", { name: "IDE executable", exact: true });
+  await input.fill("code --wait");
+  await input.press("Enter");
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(savedIde()).toBe("code");
+  await input.fill(executable);
+  await input.press("Enter");
+  await expect.poll(savedIde).toBe(executable);
+  await expect(input).toHaveValue(executable);
+  await captureThemes(page, "ide-settings");
+  await page.locator("header").getByRole("button", { name: "Back", exact: true }).click();
+
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(1);
+  expect(calls()[0]).toEqual({ args: [project], cwd: project, home: dir });
+  await gitAction(page, "New worktree");
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Branch name", { exact: true }).fill("ide/worktree");
+  await submit("Create worktree thread");
+  await expectBranch(page, "ide/worktree");
+  await waitForPi(page);
+  const checkout = worktreePath();
+  await send(page, "Open this worktree thread");
+  await waitForIdle(page);
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(2);
+  expect(calls()[1]).toEqual({ args: [checkout], cwd: checkout, home: dir });
+  expect(git(project, "branch", "--show-current")).toBe("main");
+
+  await threads(page).getByRole("button", { name: "Open this local thread", exact: true }).click();
+  await expectBranch(page, "main");
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(3);
+  expect(calls()[2]!.cwd).toBe(project);
+  await threads(page)
+    .getByRole("button", { name: "Open this worktree thread", exact: true })
+    .click();
+  await page.reload();
+  await waitForPi(page);
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(4);
+  expect(calls()[3]!.cwd).toBe(checkout);
+  await app.close();
+
+  tondo = await launchTondo({ profileDir: app.profileDir, env });
+  page = tondo.page;
+  await bringToFront(tondo);
+  await waitForPi(page);
+  await expectBranch(page, "ide/worktree");
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(5);
+  expect(calls()[4]!.cwd).toBe(checkout);
+  await page.keyboard.press("ControlOrMeta+Comma");
+  const restarted = page.getByRole("region", { name: "Settings", exact: true });
+  await restarted.getByRole("button", { name: "Threads", exact: true }).click();
+  await expectPicked(restarted, "IDE", "custom");
+  await expect(restarted.getByRole("textbox", { name: "IDE executable", exact: true })).toHaveValue(
+    executable,
+  );
+  const missing = path.join(dir, "no-such-ide");
+  await restarted.getByRole("textbox", { name: "IDE executable", exact: true }).fill(missing);
+  await restarted.getByRole("textbox", { name: "IDE executable", exact: true }).press("Enter");
+  await expect.poll(savedIde).toBe(missing);
+  await page.locator("header").getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect(page.getByText(/Couldn't open IDE.*ENOENT/)).toBeVisible();
+  expect(calls()).toHaveLength(5);
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+  expect(errors).toEqual([]);
+});
+
+test("the header and IDE follow agent checkouts without rerouting terminals or Git actions", async () => {
   const checkout = path.join(dir, "agent's worktree");
   const release = path.join(dir, "release-agent");
-  const app = await start([
-    bashCall("git switch -c agent/local"),
-    reply("Local branch ready."),
-    bashCall(`git worktree add -b agent/topic ${JSON.stringify(checkout)}`),
-    bashCall(`cd ${JSON.stringify(checkout)} && pwd && ${waitForFileCommand(release)}`),
-    reply("Agent worktree used."),
-    bashCall(`git -C ${JSON.stringify(checkout)} switch -c agent/next`),
-    reply("Agent branch changed."),
-  ]);
+  const { executable, calls } = recordingIde();
+  const agentBranch = "agent/a-worktree-branch-name-long-enough-to-reproduce-the-header-squeeze";
+  const title =
+    "Do your work in a separate worktree and keep this deliberately long thread name readable";
+  const app = await start(
+    [
+      bashCall("git switch -c agent/local"),
+      reply("Local branch ready."),
+      bashCall(`git worktree add -b ${agentBranch} ${JSON.stringify(checkout)}`),
+      bashCall(`cd ${JSON.stringify(checkout)} && pwd && ${waitForFileCommand(release)}`),
+      reply("Agent worktree used."),
+      bashCall(`git -C ${JSON.stringify(checkout)} switch -c agent/next`),
+      reply("Agent branch changed."),
+    ],
+    { ideCommand: executable },
+  );
   let { page } = app;
-  const badge = () => page.locator("header").getByText(/^Agent worktree:/);
-  await send(page, "Make a local branch");
+  const active = () =>
+    page.locator("header").getByRole("group", { name: "Agent checkout", exact: true });
+  await send(page, title);
   await expect(page.getByText("Local branch ready.", { exact: true })).toBeVisible();
   await expectBranch(page, "agent/local");
-  await expect(badge()).toHaveCount(0);
+  await expect(active()).toHaveCount(0);
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(1);
+  expect(calls()[0]!.cwd).toBe(project);
 
   await send(page, "Use an agent worktree");
-  await expect(badge()).toHaveText("Agent worktree: agent/topic");
+  await expect(active()).toBeVisible();
+  await expect(active().getByText("agent's worktree", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop pi" })).toBeVisible();
-  await expectBranch(page, "agent/local");
+  await expectBranch(page, agentBranch);
   await expect(gitPill(page)).toContainText("Local");
-  await expect(badge().locator("..")).toHaveAttribute(
+  await expect(active()).toHaveAttribute(
     "title",
-    `Agent activity in ${checkout}. Terminal, Changes and Git actions still use ${project}.`,
+    `Agent activity in ${checkout}. Open in IDE uses this folder. Terminal, Changes and Git actions still use ${project}.`,
   );
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(2);
+  expect(calls()[1]).toEqual({ args: [checkout], cwd: checkout, home: dir });
   await captureThemes(page, "agent-worktree-running");
+  const originalSize = await app.app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.getSize(),
+  );
+  await app.app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0]!.setSize(840, 620),
+  );
+  await page.waitForFunction(() => window.innerWidth === 840);
+  const heading = await page.locator("header h1").boundingBox();
+  const location = await active().boundingBox();
+  const ide = await page.getByRole("button", { name: "Open in IDE", exact: true }).boundingBox();
+  expect(heading!.width).toBeGreaterThanOrEqual(120);
+  expect(heading!.y + heading!.height).toBeLessThanOrEqual(location!.y);
+  expect(location!.x + location!.width).toBeLessThanOrEqual(ide!.x);
+  await captureThemes(page, "agent-worktree-minimum");
+  await app.app.evaluate(
+    ({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size[0]!, size[1]!),
+    originalSize,
+  );
+  await page.waitForFunction((width) => window.innerWidth === width, originalSize[0]);
   writeFileSync(release, "");
   await expect(page.getByText("Agent worktree used.", { exact: true })).toBeVisible();
   await waitForIdle(page);
@@ -236,9 +397,10 @@ test("the header follows agent branch changes and labels external worktree activ
 
   await send(page, "Change the agent worktree branch");
   await expect(page.getByText("Agent branch changed.", { exact: true })).toBeVisible();
-  await expect(badge()).toHaveText("Agent worktree: agent/next");
-  await expectBranch(page, "agent/local");
+  await expectBranch(page, "agent/next");
   const menu = await gitMenu(page);
+  // Git actions still describe the original checkout, not the branch in the header.
+  expect(git(project, "branch", "--show-current")).toBe("agent/local");
   await expect(menu.getByRole("menuitem", { name: "Remove worktree", exact: true })).toHaveCount(0);
   await closeGitMenu(page, menu);
 
@@ -252,12 +414,15 @@ test("the header follows agent branch changes and labels external worktree activ
 
   await page.getByRole("button", { name: "New thread in project", exact: true }).click();
   await expect(page.getByRole("heading", { name: "New thread", exact: true })).toBeVisible();
-  await expect(badge()).toHaveCount(0);
-  await threads(page).getByRole("button", { name: "Make a local branch", exact: true }).click();
-  await expect(badge()).toHaveText("Agent worktree: agent/next");
+  await expect(active()).toHaveCount(0);
+  await threads(page).getByRole("button", { name: title, exact: true }).click();
+  await expectBranch(page, "agent/next");
   await page.reload();
   await waitForPi(page);
-  await expect(badge()).toHaveText("Agent worktree: agent/next");
+  await expectBranch(page, "agent/next");
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(3);
+  expect(calls()[2]!.cwd).toBe(checkout);
   await app.close();
 
   const restartDir = path.join(dir, "restart");
@@ -266,17 +431,23 @@ test("the header follows agent branch changes and labels external worktree activ
     workDir: restartDir,
     profileDir: app.profileDir,
     env,
+    settings: JSON.parse(readFileSync(path.join(app.profileDir, "settings.json"), "utf8")),
     script: { responses: [bashCall("pwd"), reply("Back in the thread checkout.")] },
   });
   page = tondo.page;
   await waitForPi(page);
-  await expect(badge()).toHaveText("Agent worktree: agent/next");
-  await expectBranch(page, "agent/local");
+  await expectBranch(page, "agent/next");
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(4);
+  expect(calls()[3]!.cwd).toBe(checkout);
   await captureThemes(page, "agent-worktree-restored");
   await send(page, "Use the thread checkout");
   await expect(page.getByText("Back in the thread checkout.", { exact: true })).toBeVisible();
-  await expect(badge()).toHaveCount(0);
+  await expect(active()).toHaveCount(0);
   await expectBranch(page, "agent/local");
+  await page.getByRole("button", { name: "Open in IDE", exact: true }).click();
+  await expect.poll(() => calls().length).toBe(5);
+  expect(calls()[4]!.cwd).toBe(project);
   expect(existsSync(checkout)).toBe(true);
 });
 

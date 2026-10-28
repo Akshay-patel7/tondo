@@ -110,6 +110,8 @@ export function isPanelWidth(key: keyof PanelWidths, value: unknown): value is n
 export interface AppSettings {
   /** The pi command to run, or null to find pi on PATH. */
   readonly piPath: string | null;
+  /** IDE preset command or custom executable used by Open in IDE. */
+  readonly ideCommand: string;
   /** Parent folder for new managed worktrees, or null to use <userData>/worktrees. */
   readonly worktreeDirectory: string | null;
   /** Overrides for new sessions only. null leaves the choice to pi. */
@@ -128,6 +130,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   piPath: null,
+  ideCommand: "code",
   worktreeDirectory: null,
   defaultModel: null,
   defaultThinkingLevel: null,
@@ -142,6 +145,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** A change to the settings. Only the fields present change. */
 export interface SettingsPatch {
+  readonly ideCommand?: string;
   readonly defaultModel?: DefaultModel | null;
   readonly defaultThinkingLevel?: ThinkingLevel | null;
   readonly theme?: ThemeSetting;

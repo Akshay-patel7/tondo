@@ -30,10 +30,47 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+describe("IDE settings", () => {
+  it("defaults old profiles, persists presets and custom executables and keeps unrelated keys", () => {
+    writeFileSync(file, JSON.stringify({ later: 7, theme: "dark" }));
+    expect(readSettings(file).ideCommand).toBe("code");
+    for (const ideCommand of ["cursor", "/opt/My IDE/bin/editor"]) {
+      expect(updateSettings(file, { ideCommand }).ideCommand).toBe(ideCommand);
+      expect(readSettings(file).ideCommand).toBe(ideCommand);
+      expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ later: 7, theme: "dark" });
+    }
+  });
+
+  it.each([
+    null,
+    5,
+    "",
+    " code",
+    "code --wait",
+    "./editor",
+    "../editor",
+    "-editor",
+    "/bad\0path",
+    "a".repeat(4097),
+  ])("rejects invalid IDE commands without changing the file: %j", (ideCommand) => {
+    writeFileSync(file, JSON.stringify({ ideCommand, theme: "dark" }));
+    expect(() => readSettings(file)).toThrow("ideCommand");
+    expect(readSettingsLeniently(file)).toMatchObject({
+      settings: { ideCommand: "code", theme: "dark" },
+      problem: expect.stringContaining("ideCommand"),
+    });
+    writeFileSync(file, JSON.stringify({ theme: "light" }));
+    const before = readFileSync(file, "utf8");
+    expect(() => updateSettings(file, { ideCommand } as never)).toThrow("ideCommand");
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+});
+
 describe("readSettings", () => {
   it("holds the defaults when the file doesn't exist", () => {
     expect(readSettings(file)).toEqual({
       piPath: null,
+      ideCommand: "code",
       worktreeDirectory: null,
       defaultModel: null,
       defaultThinkingLevel: null,
@@ -63,6 +100,7 @@ describe("readSettings", () => {
     );
     expect(readSettings(file)).toEqual({
       piPath: "/opt/pi/bin/pi",
+      ideCommand: "code",
       worktreeDirectory: null,
       defaultModel: null,
       defaultThinkingLevel: null,
@@ -185,6 +223,7 @@ describe("readSettingsLeniently", () => {
     expect(readSettingsLeniently(file)).toEqual({
       settings: {
         piPath: "/opt/pi/bin/pi",
+        ideCommand: "code",
         worktreeDirectory: null,
         defaultModel: null,
         defaultThinkingLevel: null,

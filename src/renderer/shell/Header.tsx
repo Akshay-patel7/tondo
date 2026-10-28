@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  CodeXml,
   FolderGit2,
   GitBranch,
   GitCompareArrows,
@@ -9,9 +10,11 @@ import {
 } from "lucide-react";
 import { useEffect, useId, type ReactNode } from "react";
 import type { ShortcutCommand } from "../../shared/settings";
+import { ideLabel } from "../../shared/ide";
 import {
   listCheckpoints,
   openTerminal,
+  openThreadIde,
   requestPiAccounts,
   useCheckpoints,
   useGit,
@@ -142,6 +145,7 @@ function ThreadHeader({ project }: { project: string }) {
             Sign in<span className="@max-md:sr-only"> to a provider</span>
           </Button>
         ) : null}
+        <IdeButton project={project} />
         {/* openTerminal replaces a terminal that has exited with a new one. */}
         <Button
           variant="ghost"
@@ -162,41 +166,70 @@ function ThreadHeader({ project }: { project: string }) {
 
 /** The title has its own line; each checkout detail truncates within the line below. */
 function Breadcrumb({ project }: { project: string }) {
-  const branch = useGit((git) =>
-    git.status?.root ? (git.status.branch ?? "Detached HEAD") : null,
-  );
   const activity = useGit((git) => git.agentCheckout);
+  const branch = useGit((git) => {
+    if (git.agentCheckout) return git.agentCheckout.branch ?? "Detached HEAD";
+    return git.status?.root ? (git.status.branch ?? "Detached HEAD") : null;
+  });
+  const root = activity?.root ?? project;
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span
-        title={project}
-        className="min-w-0 max-w-40 shrink truncate text-xs text-faint-foreground"
-      >
-        {folderName(project)}
+    <div
+      role="group"
+      aria-label={activity ? "Agent checkout" : "Thread checkout"}
+      title={
+        activity
+          ? `Agent activity in ${root}. Open in IDE uses this folder. Terminal, Changes and Git actions still use ${project}.`
+          : undefined
+      }
+      className="flex min-w-0 items-center gap-2 text-xs text-faint-foreground"
+    >
+      {activity ? <FolderGit2 aria-hidden className="size-3 shrink-0" /> : null}
+      <span title={root} className="min-w-0 max-w-40 shrink truncate">
+        {folderName(root)}
       </span>
       {branch === null ? null : (
-        <span className="flex min-w-0 max-w-fit flex-1 items-center gap-1.5 text-xs text-faint-foreground">
-          <span aria-hidden>/</span>
-          <span className="flex min-w-0 items-center gap-1 font-mono text-muted-foreground">
-            <GitBranch aria-hidden className="size-3 shrink-0" />
-            <span className="truncate">
-              <span className="sr-only">Branch </span>
-              {branch}
-            </span>
+        <span
+          title={branch}
+          className="flex min-w-0 max-w-fit flex-1 items-center gap-1 font-mono text-muted-foreground"
+        >
+          <GitBranch aria-hidden className="size-3 shrink-0" />
+          <span className="truncate">
+            <span className="sr-only">Branch </span>
+            {branch}
           </span>
         </span>
       )}
-      {activity ? (
-        <Badge
-          variant="outline"
-          className="min-w-0 max-w-[45%] shrink"
-          title={`Agent activity in ${activity.root}. Terminal, Changes and Git actions still use ${project}.`}
-        >
-          <FolderGit2 aria-hidden />
-          <span className="truncate">Agent worktree: {activity.branch ?? "Detached HEAD"}</span>
-        </Badge>
-      ) : null}
     </div>
+  );
+}
+
+function IdeButton({ project }: { project: string }) {
+  const command = useHost((host) => host.settings?.ideCommand ?? "code");
+  const connected = useHost((host) => host.connection === "connected");
+  const busy = useGit((git) => git.busy);
+  const label = `Open in ${ideLabel(command)}`;
+  const root = useGit((git) => git.agentCheckout?.root) ?? project;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            disabled={!connected || busy}
+            onClick={openThreadIde}
+            className="app-no-drag"
+          />
+        }
+      >
+        <CodeXml aria-hidden />
+        <span className="@max-4xl:sr-only">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {label}
+        <br />
+        {root}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

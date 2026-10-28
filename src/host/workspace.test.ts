@@ -22,6 +22,7 @@ import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { Terminals } from "./terminals";
 import { TerminalContext, terminalContextSuffix } from "./terminalContext";
 import { Workspace } from "./workspace";
+import { openIde } from "./ide";
 import { IMAGE_FIXTURE } from "../shared/imageFixture";
 import { SessionIndex } from "./sessionIndex";
 import { captureCheckpoint } from "./checkpoints";
@@ -100,6 +101,7 @@ const { FakeThread, threads } = vi.hoisted(() => {
 });
 
 vi.mock("./liveThread", () => ({ LiveThread: FakeThread }));
+vi.mock("./ide", () => ({ openIde: vi.fn(async () => {}) }));
 
 let dir: string;
 let settingsFile: string;
@@ -113,6 +115,7 @@ let workspace: Workspace;
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   threads.length = 0;
+  vi.mocked(openIde).mockClear();
   dir = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-workspace-")));
   settingsFile = path.join(dir, "settings.json");
   store = Store.open(path.join(dir, "tondo.db"));
@@ -491,6 +494,54 @@ describe("settings messages", () => {
     const greeted = next((message) => message.type === "settings");
     workspace.greet();
     expect(await greeted).toMatchObject({ settings: { theme: "dark", palette: "ocean" } });
+  });
+});
+
+describe("open-ide", () => {
+  it.each([false, true])(
+    "opens the requested checkout without starting pi, managed worktree: %s",
+    async (managed) => {
+      const project = repository("ide-project", ["README.md"]);
+      const checkout = managed ? repository("ide-worktree", ["README.md"]) : project;
+      const { id: projectId } = store.addProject(project, 1);
+      addThread(projectId, "ide-thread");
+      if (managed)
+        store.addWorktree({
+          root: null,
+          path: checkout,
+          repository: project,
+          branch: "topic",
+          threadId: "ide-thread",
+        });
+      updateSettings(settingsFile, { ideCommand: "/opt/My IDE/editor" });
+      const launched = new Promise<Parameters<typeof openIde>>((resolve) => {
+        vi.mocked(openIde).mockImplementationOnce(async (...args) => {
+          resolve(args);
+        });
+      });
+      workspace.handle({ v, type: "open-ide", threadId: "ide-thread" });
+      const [command, cwd, environment] = await launched;
+      expect(command).toBe("/opt/My IDE/editor");
+      expect(cwd).toBe(checkout);
+      expect(environment.HOME).toBe(dir);
+      expect(threads).toHaveLength(0);
+    },
+  );
+
+  it("reports an unknown thread instead of launching and resends saved IDE settings on reconnect", async () => {
+    const error = next(isError);
+    workspace.handle({ v, type: "open-ide", threadId: "missing" });
+    expect(await error).toMatchObject({
+      type: "error",
+      message: expect.stringContaining("missing"),
+    });
+    expect(openIde).not.toHaveBeenCalled();
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch: { ideCommand: "zed" } });
+    expect(await changed).toMatchObject({ settings: { ideCommand: "zed" }, error: null });
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({ settings: { ideCommand: "zed" } });
   });
 });
 

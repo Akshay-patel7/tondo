@@ -54,7 +54,7 @@ export type GitCommand =
       action: GitAction;
     };
 
-/** A different checkout observed in the agent's tools, never a Git-action target. */
+/** A checkout observed in the agent's tools. The header and IDE follow it, never Git actions. */
 export interface AgentCheckout {
   readonly root: string;
   readonly branch: string | null;
