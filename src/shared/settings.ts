@@ -1,6 +1,43 @@
 // Tondo's own settings as the page sees them. The host reads and writes them
 // in settings.json in the app data folder, and checks every change.
 
+import type { ThinkingLevel } from "./protocol";
+
+export const THINKING_LABELS: Readonly<Record<ThinkingLevel, string>> = {
+  off: "Thinking off",
+  minimal: "Minimal thinking",
+  low: "Low thinking",
+  medium: "Medium thinking",
+  high: "High thinking",
+  xhigh: "Extra high thinking",
+  max: "Max thinking",
+};
+
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return typeof value === "string" && Object.hasOwn(THINKING_LABELS, value);
+}
+
+export interface DefaultModel {
+  readonly provider: string;
+  readonly id: string;
+}
+
+export function isDefaultModel(value: unknown): value is DefaultModel {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const model = value as Record<string, unknown>;
+  return (
+    Object.keys(model).length === 2 &&
+    [model.provider, model.id].every(
+      (part) =>
+        typeof part === "string" &&
+        part.length > 0 &&
+        part.length <= 512 &&
+        part.trim() === part &&
+        !part.includes("\0"),
+    )
+  );
+}
+
 export type ThemeSetting = "system" | "light" | "dark";
 
 export const THEME_SETTINGS: readonly ThemeSetting[] = ["system", "light", "dark"];
@@ -75,6 +112,9 @@ export interface AppSettings {
   readonly piPath: string | null;
   /** Parent folder for new managed worktrees, or null to use <userData>/worktrees. */
   readonly worktreeDirectory: string | null;
+  /** Overrides for new sessions only. null leaves the choice to pi. */
+  readonly defaultModel: DefaultModel | null;
+  readonly defaultThinkingLevel: ThinkingLevel | null;
   readonly theme: ThemeSetting;
   readonly palette: PaletteSetting;
   /** Whether thinking sections start expanded. Each section can still be toggled. */
@@ -89,6 +129,8 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   piPath: null,
   worktreeDirectory: null,
+  defaultModel: null,
+  defaultThinkingLevel: null,
   theme: "system",
   // The warm palette Tondo had before there were others.
   palette: "default",
@@ -100,6 +142,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** A change to the settings. Only the fields present change. */
 export interface SettingsPatch {
+  readonly defaultModel?: DefaultModel | null;
+  readonly defaultThinkingLevel?: ThinkingLevel | null;
   readonly theme?: ThemeSetting;
   readonly palette?: PaletteSetting;
   readonly expandThinking?: boolean;

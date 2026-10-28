@@ -100,6 +100,54 @@ describe("piLaunch", () => {
     ]);
   });
 
+  it("applies model and thinking defaults only when creating a session", () => {
+    const loginEnv = { HOME: path.join(root, "home") };
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      piPath: path.join(bin, "pi"),
+      projectTrust: {},
+      defaultModel: { provider: "faux", id: "faux-2" },
+      defaultThinkingLevel: "high" as const,
+    };
+    expect(piLaunch(project, { id: "new-session" }, loginEnv, config, settings).args).toEqual([
+      cli,
+      "--mode",
+      "rpc",
+      "--session-id",
+      "new-session",
+      "-e",
+      "faux-ext.ts",
+      "--provider",
+      "faux",
+      "--model",
+      "faux-2",
+      "--thinking",
+      "high",
+    ]);
+    expect(piLaunch(project, { file: "/saved.jsonl" }, loginEnv, config, settings).args).toEqual([
+      cli,
+      "--mode",
+      "rpc",
+      "--session",
+      "/saved.jsonl",
+      "-e",
+      "faux-ext.ts",
+    ]);
+    expect(
+      piLaunch(project, { id: "thinking-only" }, loginEnv, config, {
+        ...settings,
+        defaultModel: null,
+        defaultThinkingLevel: "off",
+      }).args.slice(-2),
+    ).toEqual(["--thinking", "off"]);
+    expect(
+      piLaunch(project, { id: "model-only" }, loginEnv, config, {
+        ...settings,
+        defaultThinkingLevel: null,
+      }).args.slice(-4),
+    ).toEqual(["--provider", "faux", "--model", "faux-2"]);
+  });
+
   it("keeps your PI_CODING_AGENT_DIR when the config sets none", () => {
     const loginEnv = { HOME: path.join(root, "home"), PI_CODING_AGENT_DIR: "/yours" };
     const settings = { ...DEFAULT_SETTINGS, piPath: path.join(bin, "pi"), projectTrust: {} };

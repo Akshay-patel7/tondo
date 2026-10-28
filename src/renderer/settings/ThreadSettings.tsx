@@ -1,4 +1,4 @@
-// The Threads section: pi process limits and the location for new worktrees.
+// The Threads section: new-session defaults, process limits and worktree location.
 import { FolderOpen } from "lucide-react";
 import { useId, useState } from "react";
 import {
@@ -18,6 +18,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Footnote, Loading, SettingsRow, SubHeading } from "./rows";
+import { ThreadDefaults } from "./ThreadDefaults";
 
 export function ThreadSettings() {
   const settings = useHost((host) => host.settings);
@@ -25,6 +26,11 @@ export function ThreadSettings() {
   const { maxLive, idleMinutes } = POOL_RANGES;
   return (
     <>
+      <ThreadDefaults settings={settings} />
+      <SubHeading
+        title="Process limits"
+        description="Control how many idle threads keep pi running."
+      />
       <CardGroup>
         <PoolRow
           settings={settings}

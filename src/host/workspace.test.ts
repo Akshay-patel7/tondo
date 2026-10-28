@@ -438,6 +438,20 @@ describe("settings messages", () => {
     });
   });
 
+  it("sends new-session defaults to the page and on reconnect", async () => {
+    const patch = {
+      defaultModel: { provider: "faux", id: "faux-1" },
+      defaultThinkingLevel: "high" as const,
+    };
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch });
+    expect(await changed).toMatchObject({ type: "settings", error: null, settings: patch });
+    expect(JSON.parse(readFileSync(settingsFile, "utf8"))).toMatchObject(patch);
+    const greeted = next((message) => message.type === "settings");
+    workspace.greet();
+    expect(await greeted).toMatchObject({ settings: patch });
+  });
+
   it("sends the saved expanded thinking setting to the page and on reconnect", async () => {
     const changed = next((message) => message.type === "settings");
     workspace.handle({ v, type: "set-settings", patch: { expandThinking: true } });

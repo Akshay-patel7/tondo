@@ -35,6 +35,8 @@ describe("readSettings", () => {
     expect(readSettings(file)).toEqual({
       piPath: null,
       worktreeDirectory: null,
+      defaultModel: null,
+      defaultThinkingLevel: null,
       theme: "system",
       palette: "default",
       expandThinking: false,
@@ -62,6 +64,8 @@ describe("readSettings", () => {
     expect(readSettings(file)).toEqual({
       piPath: "/opt/pi/bin/pi",
       worktreeDirectory: null,
+      defaultModel: null,
+      defaultThinkingLevel: null,
       theme: "dark",
       palette: "ocean",
       expandThinking: true,
@@ -182,6 +186,8 @@ describe("readSettingsLeniently", () => {
       settings: {
         piPath: "/opt/pi/bin/pi",
         worktreeDirectory: null,
+        defaultModel: null,
+        defaultThinkingLevel: null,
         theme: "system",
         palette: "default",
         expandThinking: false,
@@ -280,6 +286,47 @@ describe("updateSettings", () => {
       panelWidths: { sidebar: 256, changes: 600 },
     });
     expect(problem).toContain("panelWidths.sidebar");
+  });
+
+  it("saves and clears new-session defaults without changing other settings", () => {
+    writeFileSync(file, JSON.stringify({ theme: "dark", later: true }));
+    const defaults = {
+      defaultModel: { provider: "faux", id: "faux-1" },
+      defaultThinkingLevel: "high" as const,
+    };
+    expect(updateSettings(file, defaults)).toMatchObject(defaults);
+    expect(readSettings(file)).toMatchObject(defaults);
+    expect(updateSettings(file, { defaultModel: null }).defaultThinkingLevel).toBe("high");
+    expect(updateSettings(file, { defaultThinkingLevel: null })).toMatchObject({
+      defaultModel: null,
+      defaultThinkingLevel: null,
+    });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      theme: "dark",
+      later: true,
+      defaultModel: null,
+      defaultThinkingLevel: null,
+    });
+  });
+
+  it.each([
+    { defaultModel: "faux/faux-1" },
+    { defaultModel: { provider: "faux", id: "" } },
+    { defaultModel: { provider: "", id: "faux-1" } },
+    { defaultModel: { provider: "faux", id: "x".repeat(513) } },
+    { defaultModel: { provider: "faux", id: "x\0y" } },
+    { defaultThinkingLevel: "extreme" },
+    { defaultThinkingLevel: 1 },
+  ])("rejects malformed defaults and keeps other settings on a lenient read: %j", (defaults) => {
+    const content = JSON.stringify({ theme: "dark", ...defaults });
+    writeFileSync(file, content);
+    expect(() => readSettings(file)).toThrow("default");
+    expect(readSettingsLeniently(file)).toMatchObject({
+      settings: { ...DEFAULTS, theme: "dark" },
+      problem: expect.stringContaining("default"),
+    });
+    expect(() => updateSettings(file, { theme: "light" })).toThrow("default");
+    expect(readFileSync(file, "utf8")).toBe(content);
   });
 
   it("saves and disables expanded thinking without changing other settings", () => {

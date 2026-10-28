@@ -20,6 +20,9 @@ import type { PiUpdates } from "./piUpdates";
 import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 import {
+  isDefaultModel,
+  isThinkingLevel,
+  type DefaultModel,
   isPaletteSetting,
   isPanelWidth,
   isPoolValue,
@@ -36,7 +39,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 29;
+export const PROTOCOL_VERSION = 30;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -1028,6 +1031,8 @@ function parsePatch(patch: unknown): SettingsPatch | string {
         "theme",
         "palette",
         "expandThinking",
+        "defaultModel",
+        "defaultThinkingLevel",
         "pool",
         "panelWidths",
         "shortcuts",
@@ -1040,6 +1045,8 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     theme,
     palette,
     expandThinking,
+    defaultModel,
+    defaultThinkingLevel,
     pool,
     panelWidths,
     shortcuts,
@@ -1050,6 +1057,8 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     theme?: ThemeSetting;
     palette?: PaletteSetting;
     expandThinking?: boolean;
+    defaultModel?: DefaultModel | null;
+    defaultThinkingLevel?: ThinkingLevel | null;
     pool?: Partial<PoolSettings>;
     panelWidths?: Partial<PanelWidths>;
     shortcuts?: Partial<Record<ShortcutCommand, string | null>>;
@@ -1070,6 +1079,17 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     if (typeof expandThinking !== "boolean")
       return `expandThinking must be true or false, not ${describe(expandThinking)}`;
     parsed.expandThinking = expandThinking;
+  }
+  if (defaultModel !== undefined) {
+    if (defaultModel !== null && !isDefaultModel(defaultModel))
+      return "defaultModel must be a provider and model id, or null";
+    parsed.defaultModel =
+      defaultModel === null ? null : { provider: defaultModel.provider, id: defaultModel.id };
+  }
+  if (defaultThinkingLevel !== undefined) {
+    if (defaultThinkingLevel !== null && !isThinkingLevel(defaultThinkingLevel))
+      return "defaultThinkingLevel must be a thinking level, or null";
+    parsed.defaultThinkingLevel = defaultThinkingLevel;
   }
   if (pool !== undefined) {
     if (!isRecord(pool)) return `pool must be an object, not ${describe(pool)}`;

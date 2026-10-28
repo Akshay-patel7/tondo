@@ -4,6 +4,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   DEFAULT_SETTINGS,
+  isDefaultModel,
+  isThinkingLevel,
   isPaletteSetting,
   isPanelWidth,
   PANEL_WIDTH_RANGES,
@@ -80,6 +82,9 @@ export function newShortcutProblems(
 export function updateSettings(file: string, patch: SettingsPatch): Settings {
   return write(file, (saved) => {
     const next: Record<string, unknown> = { ...saved };
+    if (patch.defaultModel !== undefined) next.defaultModel = patch.defaultModel;
+    if (patch.defaultThinkingLevel !== undefined)
+      next.defaultThinkingLevel = patch.defaultThinkingLevel;
     if (patch.theme !== undefined) next.theme = patch.theme;
     if (patch.palette !== undefined) next.palette = patch.palette;
     if (patch.expandThinking !== undefined) next.expandThinking = patch.expandThinking;
@@ -188,6 +193,8 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   const {
     piPath,
     worktreeDirectory,
+    defaultModel = null,
+    defaultThinkingLevel = null,
     projectTrust = {},
     theme = DEFAULT_SETTINGS.theme,
     // A file from before palettes has none, and keeps the look it had.
@@ -214,6 +221,12 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
       report(
         `has a worktreeDirectory that isn't an absolute path: ${JSON.stringify(worktreeDirectory)}`,
       );
+  }
+  if (defaultModel !== null && !isDefaultModel(defaultModel)) {
+    report("has a defaultModel that isn't a provider and model id, or null");
+  }
+  if (defaultThinkingLevel !== null && !isThinkingLevel(defaultThinkingLevel)) {
+    report("has a defaultThinkingLevel that isn't a thinking level, or null");
   }
   const trust: Record<string, boolean> = {};
   if (isObject(projectTrust)) {
@@ -277,6 +290,8 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   return {
     piPath: pi,
     worktreeDirectory: worktrees,
+    defaultModel: isDefaultModel(defaultModel) ? defaultModel : null,
+    defaultThinkingLevel: isThinkingLevel(defaultThinkingLevel) ? defaultThinkingLevel : null,
     theme: chosenTheme,
     palette: chosenPalette,
     expandThinking:
