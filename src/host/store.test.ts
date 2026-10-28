@@ -211,23 +211,29 @@ describe("Store", () => {
     store.close();
   });
 
-  it("defaults old threads to private and remembers terminal sharing per thread across restart", () => {
-    const file = path.join(dir, "terminal-sharing.sqlite");
+  it("removes the retired terminal sharing preference without changing thread data", () => {
+    const file = path.join(dir, "retired-sharing.sqlite");
     const db = new DatabaseSync(file);
-    migrate(db, MIGRATIONS.slice(0, 6));
+    migrate(db, MIGRATIONS.slice(0, 8));
     db.exec(
-      "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, created_at) VALUES ('old', 1, 2), ('other', 1, 3);",
+      "INSERT INTO projects (path, added_at) VALUES ('/work/a', 1); INSERT INTO threads (id, project_id, created_at, share_terminal_output, draft, pinned, unread) VALUES ('old', 1, 2, 1, 'kept draft', 1, 1), ('other', 1, 3, 0, '', 0, 0);",
     );
     db.close();
     let store = Store.open(file);
-    expect(store.thread("old")?.shareTerminalOutput).toBe(false);
-    store.setTerminalSharing("old", true);
+    expect(store.thread("old")).toMatchObject({ draft: "kept draft", pinned: true, unread: true });
+    expect(store.thread("other")).toMatchObject({ draft: "", pinned: false, unread: false });
     store.close();
+    const migrated = new DatabaseSync(file);
+    expect(
+      migrated
+        .prepare("PRAGMA table_info(threads)")
+        .all()
+        .map((column) => column.name),
+    ).not.toContain("share_terminal_output");
+    migrated.close();
     store = Store.open(file);
-    expect(store.thread("old")?.shareTerminalOutput).toBe(true);
-    expect(store.thread("other")?.shareTerminalOutput).toBe(false);
-    store.setTerminalSharing("old", false);
-    expect(store.thread("old")?.shareTerminalOutput).toBe(false);
+    expect(store.thread("old")).toMatchObject({ draft: "kept draft", pinned: true, unread: true });
+    expect(store.threads()).toHaveLength(2);
     store.close();
   });
 
@@ -284,7 +290,6 @@ describe("Store", () => {
         archived: true,
         draft: "half a thought",
         hasImages: false,
-        shareTerminalOutput: false,
         visible: true,
       },
     ]);

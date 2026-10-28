@@ -144,38 +144,6 @@ describe("terminal sessions", () => {
     await terminals.closeAll();
   });
 
-  it("stops capture in every shell after Send, Discard and sharing changes", async () => {
-    const { terminals, messages, open } = setup();
-    const first = await open();
-    const firstData = fake.data;
-    await terminals.handle({ type: "terminal-new", threadId: "thread" });
-    const state = messages.findLast((m) => m.type === "terminal-state");
-    if (state?.type !== "terminal-state" || !state.terminal) throw new Error("No shell");
-    const second = { threadId: "thread", terminalId: state.terminal.id };
-    const secondData = fake.data;
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    terminals.handle({ type: "terminal-write", ...first, data: "first\r" });
-    terminals.handle({ type: "terminal-write", ...second, data: "second\r" });
-    firstData("one\n");
-    secondData("two\n");
-    expect(terminals.takeContext("thread")?.text).toBe("one\ntwo\n");
-    firstData("not again");
-    secondData("not again");
-    expect(terminals.takeContext("thread")).toBeNull();
-    terminals.handle({ type: "terminal-write", ...second, data: "again\r" });
-    terminals.handle({ type: "terminal-discard", threadId: "thread" });
-    secondData("discarded");
-    expect(terminals.takeContext("thread")).toBeNull();
-    terminals.handle({ type: "terminal-write", ...first, data: "again\r" });
-    terminals.handle({ type: "terminal-write", ...second, data: "again\r" });
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: false });
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    firstData("disabled first");
-    secondData("disabled second");
-    expect(terminals.takeContext("thread")).toBeNull();
-    await terminals.closeAll();
-  });
-
   it("keeps provider sign-in exclusive of interactive shells", async () => {
     const { terminals, open } = setup();
     const shell = await open();
@@ -191,8 +159,6 @@ describe("terminal sessions", () => {
   it("runs scripts in separate PTYs, preserves the shell and targets input and close by terminal id", async () => {
     const { terminals, messages, open } = setup();
     const shell = await open();
-    const shellData = fake.data;
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
     await terminals.openScript("thread", "Build", async () => ({
       ...launch,
       args: ["-i", "-c", "printf build"],
@@ -201,7 +167,6 @@ describe("terminal sessions", () => {
     const first = messages.findLast((m) => m.type === "terminal-state");
     if (first?.type !== "terminal-state" || !first.terminal) throw new Error("No script");
     const script = { threadId: "thread", terminalId: first.terminal.id };
-    const scriptData = fake.data;
     expect(first.terminal.script).toEqual({ name: "Build", cwd: os.tmpdir() });
     expect(terminals.scriptDirectories()).toEqual([os.tmpdir()]);
     expect(script.terminalId).not.toBe(shell.terminalId);
@@ -210,11 +175,10 @@ describe("terminal sessions", () => {
       ["-i", "-c", "printf build"],
       expect.objectContaining({ cwd: os.tmpdir() }),
     );
-    scriptData("private build output\n");
-    expect(terminals.takeContext("thread")).toBeNull();
+    terminals.handle({ type: "terminal-write", ...script, data: "build input\r" });
+    expect(writes()).toEqual(["build input\r"]);
     terminals.handle({ type: "terminal-write", ...shell, data: "printf hello\r" });
-    shellData("hello\n");
-    expect(terminals.takeContext("thread")?.text).toBe("hello\n");
+    expect(writes()).toEqual(["build input\r", "printf hello\r"]);
     terminals.handle({ type: "terminal-write", ...script, threadId: "wrong", data: "bad" });
     expect(writes()).not.toContain("bad");
     await terminals.handle({ type: "terminal-close", ...script });
@@ -276,144 +240,6 @@ describe("terminal sessions", () => {
     expect(fake.spawn).not.toHaveBeenCalled();
     expect(terminals.has("thread")).toBe(false);
   });
-  it("captures opted-in shell output without streaming it through React, and keeps it after close", async () => {
-    const { terminals, messages, open } = setup();
-    const session = await open();
-    fake.data("not shared\n");
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    terminals.handle({ type: "terminal-write", ...session, data: "printf first\r" });
-    fake.data("first\n");
-    fake.data("second\n");
-    expect(messages.filter((message) => message.type === "terminal-context")).toEqual([
-      expect.objectContaining({ enabled: true, pending: false }),
-      expect.objectContaining({ enabled: true, pending: true }),
-    ]);
-    terminals.handle({ type: "terminal-preview", threadId: "thread" });
-    expect(messages.at(-1)).toMatchObject({ type: "terminal-preview", text: "first\nsecond\n" });
-    terminals.detachAll();
-    fake.data("detached\n");
-    await terminals.close(session.threadId);
-    const send = terminals.takeContext("thread")!;
-    expect(send.text).toBe("first\nsecond\ndetached\n");
-    expect(terminals.takeContext("thread")).toBeNull();
-    terminals.restoreContext("thread", send);
-    terminals.greet();
-    expect(messages.at(-1)).toMatchObject({
-      type: "terminal-context",
-      enabled: true,
-      pending: true,
-    });
-    terminals.handle({ type: "terminal-discard", threadId: "thread" });
-    expect(terminals.takeContext("thread")).toBeNull();
-  });
-
-  it("doesn't attach an idle prompt redrawn by resizing or reattaching the terminal", async () => {
-    const { terminals, messages, open } = setup();
-    const session = await open();
-    fake.data("\r\u001b[Jprompt> \u001b[K\u001b[?2004h");
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    terminals.handle({ type: "terminal-resize", ...session, cols: 90, rows: 28 });
-    fake.data("\r\r\u001b[Jpro");
-    fake.data("mpt> ");
-    expect(terminals.takeContext("thread")).toBeNull();
-    expect(messages.at(-1)).toMatchObject({ type: "terminal-context", pending: false });
-
-    terminals.handle({ type: "terminal-attach", ...session, attachment: "a", cols: 90, rows: 30 });
-    fake.data("\r\u001b[Kprompt> ");
-    expect(terminals.takeContext("thread")).toBeNull();
-    expect(messages.findLast((m) => m.type === "terminal-output")).toMatchObject({
-      data: "\r\u001b[Kprompt> ",
-    });
-    terminals.handle({ type: "terminal-write", ...session, data: "printf hello\r" });
-    fake.data("printf hello\r\nhello\r\nprompt> ");
-    expect(terminals.takeContext("thread")?.text).toBe("printf hello\nhello\nprompt> ");
-    await terminals.close(session.threadId);
-  });
-
-  it("keeps pending and real command output received during a resize", async () => {
-    const { terminals, open } = setup();
-    const session = await open();
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    terminals.handle({ type: "terminal-write", ...session, data: "printf saved\r" });
-    fake.data("saved output\r\nprompt> ");
-    terminals.handle({ type: "terminal-resize", ...session, cols: 90, rows: 28 });
-    fake.data("\r\u001b[Kprompt> ");
-    expect(terminals.takeContext("thread")?.text).toBe("saved output\nprompt> ");
-
-    terminals.handle({ type: "terminal-write", ...session, data: "long-running-command\r" });
-    terminals.handle({ type: "terminal-resize", ...session, cols: 90, rows: 30 });
-    fake.data("real background output\r\n");
-    expect(terminals.takeContext("thread")?.text).toBe("real background output\n");
-    await terminals.close(session.threadId);
-  });
-
-  it("captures only after submission, not startup, typing, replies, pastes or output after send/discard", async () => {
-    const { terminals, open } = setup();
-    const session = await open();
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    const write = (data: string) => terminals.handle({ type: "terminal-write", ...session, data });
-    fake.data("startup prompt> ");
-    write("printf hello");
-    fake.data("printf hello");
-    write("\u001b[I\u001b[1;2R");
-    fake.data("\r\u001b[Kstartup prompt> printf hello");
-    expect(terminals.takeContext("thread")).toBeNull();
-    write("\u001b[20");
-    write("0~pasted\ntext\u001b[201~");
-    fake.data("pasted\r\ntext");
-    expect(terminals.takeContext("thread")).toBeNull();
-    write("\r");
-    fake.data("hello\r\nprompt> ");
-    expect(terminals.takeContext("thread")?.text).toBe("hello\nprompt> ");
-    fake.data("\r\u001b[Kprompt> ");
-    expect(terminals.takeContext("thread")).toBeNull();
-
-    write("next command\r");
-    fake.data("next output\r\nprompt> ");
-    terminals.handle({ type: "terminal-discard", threadId: "thread" });
-    fake.data("\r\u001b[Kprompt> ");
-    expect(terminals.takeContext("thread")).toBeNull();
-    await terminals.close(session.threadId);
-  });
-
-  it("never captures sign-in output, even when sharing is on for that thread", async () => {
-    const { terminals, messages } = setup();
-    terminals.handle({ type: "terminal-sharing", threadId: "thread", enabled: true });
-    await login(terminals);
-    fake.data("SYNTHETIC_LOGIN_SECRET\n");
-    terminals.handle({ type: "terminal-preview", threadId: "thread" });
-    expect(messages.at(-1)).toMatchObject({ type: "terminal-preview", text: "" });
-    expect(terminals.takeContext("thread")).toBeNull();
-    await terminals.close("thread");
-  });
-
-  it("isolates output by thread and reads the saved opt-in when first opened", async () => {
-    const messages: HostMessage[] = [];
-    const terminals = new Terminals(
-      async () => launch,
-      (message) => messages.push(message),
-      vi.fn(),
-      undefined,
-      (id) => id === "shared",
-    );
-    await terminals.handle({ type: "terminal-open", threadId: "shared", kind: "shell" });
-    const sharedOutput = fake.data;
-    const shared = messages.findLast((message) => message.type === "terminal-state");
-    if (shared?.type !== "terminal-state" || !shared.terminal) throw new Error("No terminal");
-    terminals.handle({
-      type: "terminal-write",
-      threadId: "shared",
-      terminalId: shared.terminal.id,
-      data: "command\r",
-    });
-    await terminals.handle({ type: "terminal-open", threadId: "private", kind: "shell" });
-    fake.data("private\n");
-    sharedOutput("shared\n");
-    expect(terminals.takeContext("private")).toBeNull();
-    expect(terminals.takeContext("shared")?.text).toBe("shared\n");
-    await terminals.closeAll();
-  });
-
   it("launches in the chosen folder and ignores stale terminal writes", async () => {
     const { terminals, open } = setup();
     const session = await open();

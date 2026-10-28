@@ -291,7 +291,6 @@ export class LiveThread {
     text: string,
     streamingBehavior: StreamingBehavior,
     images: readonly DraftImage[] = [],
-    terminalOutput = "",
   ): Promise<void> {
     let sendingImages = false;
     const promptGeneration = this.promptGeneration;
@@ -345,7 +344,7 @@ export class LiveThread {
         this.preparingPrompts--;
         this.changed();
       }
-      await ask(pi, { type: "prompt", message: text + terminalOutput, ...options }, NO_DEADLINE);
+      await ask(pi, { type: "prompt", message: text, ...options }, NO_DEADLINE);
     } catch (error) {
       // pi didn't take the text, so it goes back into the composer.
       this.restore([text]);

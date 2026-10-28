@@ -8,19 +8,6 @@ export const TERMINAL_CHUNK_CHARS = 4_096;
 export const MAX_SHELL_TERMINALS = 8;
 /** Bound simultaneous xterm buffers and GPU contexts. Hidden shells have no renderer. */
 export const MAX_TERMINAL_PANES = 4;
-/** Maximum plain text attached to one chat message, independent of terminal scrollback. */
-export const TERMINAL_CONTEXT_CHARS = 16_384;
-
-export interface TerminalContextState {
-  readonly enabled: boolean;
-  readonly pending: boolean;
-}
-
-export interface TerminalContextPreview {
-  readonly text: string;
-  readonly truncated: boolean;
-}
-
 export type TerminalKind = "shell" | "login";
 
 export interface TerminalSplit {
@@ -42,9 +29,6 @@ export interface TerminalState {
 
 /** No paths or executables come from the page. The host resolves them from the thread. */
 export type TerminalCommand =
-  | { type: "terminal-sharing"; threadId: string; enabled: boolean }
-  | { type: "terminal-discard"; threadId: string }
-  | { type: "terminal-preview"; threadId: string }
   | { type: "terminal-open"; threadId: string; kind: TerminalKind }
   | { type: "terminal-new"; threadId: string; split?: TerminalSplit }
   | { type: "terminal-close"; threadId: string; terminalId: string }
@@ -68,8 +52,6 @@ export type TerminalCommand =
     };
 
 export type TerminalEvent =
-  | ({ type: "terminal-context"; threadId: string } & TerminalContextState)
-  | ({ type: "terminal-preview"; threadId: string } & TerminalContextPreview)
   | ({ type: "terminal-state"; threadId: string } & (
       | { terminal: TerminalState; split?: TerminalSplit }
       | { terminal: null; terminalId: string }

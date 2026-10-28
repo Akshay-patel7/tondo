@@ -413,16 +413,9 @@ describe("prompt", () => {
     expect(listener.restore).not.toHaveBeenCalled();
   });
 
-  it("sends terminal context with the prompt but restores only the user's text on rejection", async () => {
-    await thread.prompt("look", "followUp", [], "\n\nterminal output");
-    expect(pi.pi.rpc.request).toHaveBeenLastCalledWith(
-      { type: "prompt", message: "look\n\nterminal output", streamingBehavior: "followUp" },
-      Number.POSITIVE_INFINITY,
-    );
+  it("restores rejected prompt text", async () => {
     pi.pi.rpc.request.mockRejectedValueOnce(new Error("rejected"));
-    await expect(thread.prompt("retry", "steer", [], "\n\nterminal output")).rejects.toThrow(
-      "rejected",
-    );
+    await expect(thread.prompt("retry", "steer")).rejects.toThrow("rejected");
     expect(listener.restore).toHaveBeenCalledExactlyOnceWith("retry");
   });
 

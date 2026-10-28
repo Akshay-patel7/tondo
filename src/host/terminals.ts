@@ -16,8 +16,7 @@ import {
 } from "../shared/terminal";
 import { LoginTyper } from "./loginTyper";
 import { drainGroup } from "./processGroup";
-import { HistoryFilter, TerminalHistory } from "./terminalHistory";
-import { TerminalContext, type TerminalContextSend } from "./terminalContext";
+import { TerminalHistory } from "./terminalHistory";
 
 export interface TerminalLaunch {
   command: string;
@@ -31,9 +30,6 @@ interface Session {
   state: TerminalState;
   pty?: IPty;
   history: TerminalHistory;
-  input: HistoryFilter;
-  pasting: boolean;
-  capturing: boolean;
   started: Promise<void>;
   closing?: Promise<void>;
   attachment: string | null;
@@ -53,7 +49,6 @@ const exec = promisify(execFile);
 export class Terminals {
   private readonly sessions = new Map<string, Session>();
   private readonly groups = new Set<number>();
-  private readonly contexts = new Map<string, TerminalContext>();
   private stopping = false;
   private adapter?: Promise<typeof import("node-pty")>;
 
@@ -61,7 +56,6 @@ export class Terminals {
   private readonly send: (message: HostMessage) => void;
   private readonly reportGroups: (pgids: number[]) => void;
   private readonly ended: ((threadId: string, kind: TerminalKind) => void) | undefined;
-  private readonly readSharing: (threadId: string) => boolean;
 
   /** `ended` hears of each terminal whose process exits, unless Tondo is stopping its terminals. */
   constructor(
@@ -69,13 +63,11 @@ export class Terminals {
     send: (message: HostMessage) => void,
     reportGroups: (pgids: number[]) => void,
     ended?: (threadId: string, kind: TerminalKind) => void,
-    readSharing: (threadId: string) => boolean = () => false,
   ) {
     this.launch = launch;
     this.send = send;
     this.reportGroups = reportGroups;
     this.ended = ended;
-    this.readSharing = readSharing;
   }
 
   has(threadId: string): boolean {
@@ -110,47 +102,6 @@ export class Terminals {
   greet(): void {
     this.detachAll();
     for (const session of this.sessions.values()) this.publish(session);
-    for (const threadId of this.contexts.keys()) this.publishContext(threadId);
-  }
-
-  private context(threadId: string): TerminalContext {
-    let context = this.contexts.get(threadId);
-    if (!context) {
-      context = new TerminalContext(this.readSharing(threadId));
-      this.contexts.set(threadId, context);
-    }
-    return context;
-  }
-
-  publishContext(threadId: string): void {
-    const context = this.context(threadId);
-    this.send({
-      v,
-      type: "terminal-context",
-      threadId,
-      enabled: context.enabled,
-      pending: context.pending,
-    });
-  }
-
-  takeContext(threadId: string): TerminalContextSend | null {
-    const send = this.context(threadId).take();
-    if (send) {
-      this.stopCapture(threadId);
-      this.publishContext(threadId);
-    }
-    return send;
-  }
-
-  restoreContext(threadId: string, send: TerminalContextSend): void {
-    // Deleted threads must not be resurrected by a late prompt rejection.
-    this.contexts.get(threadId)?.restore(send);
-    if (this.contexts.has(threadId)) this.publishContext(threadId);
-  }
-
-  forgetContext(threadId: string): void {
-    if (this.contexts.delete(threadId))
-      this.send({ v, type: "terminal-context", threadId, enabled: false, pending: false });
   }
 
   detachAll(): void {
@@ -158,27 +109,6 @@ export class Terminals {
   }
 
   handle(message: TerminalRequest): void | Promise<void> {
-    if (message.type === "terminal-sharing") {
-      this.context(message.threadId).setEnabled(message.enabled);
-      this.stopCapture(message.threadId);
-      this.publishContext(message.threadId);
-      return;
-    }
-    if (message.type === "terminal-discard") {
-      this.context(message.threadId).discard();
-      this.stopCapture(message.threadId);
-      this.publishContext(message.threadId);
-      return;
-    }
-    if (message.type === "terminal-preview") {
-      this.send({
-        v,
-        type: "terminal-preview",
-        threadId: message.threadId,
-        ...this.context(message.threadId).preview(),
-      });
-      return;
-    }
     if (message.type === "terminal-new") {
       if (this.stopping) throw new Error("Tondo is stopping its terminals.");
       const shells = [...this.sessions.values()].filter(
@@ -208,10 +138,7 @@ export class Terminals {
       case "terminal-attach": {
         this.detach(session);
         session.attachment = message.attachment;
-        if (!session.exited) {
-          this.context(session.threadId).resize(session.state.id);
-          session.pty?.resize(message.cols, message.rows);
-        }
+        if (!session.exited) session.pty?.resize(message.cols, message.rows);
         this.enqueue(session, session.history.tail(TERMINAL_HISTORY_BYTES));
         this.pump(session);
         break;
@@ -221,21 +148,10 @@ export class Terminals {
         break;
       case "terminal-write":
         session.typer?.input(message.data);
-        if (session.state.status === "running") {
-          for (const char of message.data) {
-            const plain = session.input.push(char);
-            // Pasting multiline text into a line editor is not submitting it.
-            // Escape-only terminal replies and focus reports are not user input.
-            if (plain && !session.pasting) session.capturing = plain === "\r" || plain === "\n";
-          }
-          session.pty?.write(message.data);
-        }
+        if (session.state.status === "running") session.pty?.write(message.data);
         break;
       case "terminal-resize":
-        if (session.state.status === "running") {
-          this.context(session.threadId).resize(session.state.id);
-          session.pty?.resize(message.cols, message.rows);
-        }
+        if (session.state.status === "running") session.pty?.resize(message.cols, message.rows);
         break;
       case "terminal-ack":
         if (session.attachment === message.attachment) {
@@ -244,11 +160,6 @@ export class Terminals {
         }
         break;
     }
-  }
-
-  private stopCapture(threadId: string): void {
-    for (const session of this.sessions.values())
-      if (session.threadId === threadId) session.capturing = false;
   }
 
   /** A reused terminal ignores `provider`: only a new pi can be typed into safely. An exited one is replaced. */
@@ -297,14 +208,6 @@ export class Terminals {
         ...(script ? { script: { name: script.name, cwd: "" } } : {}),
       },
       history: new TerminalHistory(),
-      input: new HistoryFilter(true, (sequence) => {
-        if (sequence === "\u001b[200~") {
-          session.pasting = true;
-          session.capturing = false;
-        } else if (sequence === "\u001b[201~") session.pasting = false;
-      }),
-      pasting: false,
-      capturing: false,
       started: Promise.resolve(),
       attachment: null,
       pending: [],
@@ -316,7 +219,6 @@ export class Terminals {
     if (kind === "login" && provider !== undefined)
       session.typer = new LoginTyper(provider, (data) => session.pty?.write(data));
     this.sessions.set(session.state.id, session);
-    if (kind === "shell" && !script) this.context(threadId).newShell(session.state.id);
     this.publish(session, split);
     session.started = this.start(session, script?.launch);
     return session.started;
@@ -354,17 +256,6 @@ export class Terminals {
       pty.onData((data) => {
         session.history.append(data);
         session.typer?.output(data);
-        if (
-          session.state.kind === "shell" &&
-          !session.state.script &&
-          this.sessions.get(session.state.id) === session
-        ) {
-          const context = this.context(session.threadId);
-          const pending = context.pending;
-          context.append(data, session.capturing, session.state.id);
-          // Only availability changes reach React, never the output stream.
-          if (pending !== context.pending) this.publishContext(session.threadId);
-        }
         if (session.attachment !== null) {
           this.enqueue(session, data);
           this.pump(session);
@@ -420,7 +311,6 @@ export class Terminals {
     this.detach(session);
     if (this.sessions.get(session.state.id) === session) {
       this.sessions.delete(session.state.id);
-      this.contexts.get(threadId)?.forgetShell(session.state.id);
       this.send({
         v,
         type: "terminal-state",

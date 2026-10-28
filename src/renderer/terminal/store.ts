@@ -7,12 +7,7 @@ import {
   terminalIds,
   type TerminalLayout,
 } from "./layout";
-import type {
-  TerminalContextPreview,
-  TerminalContextState,
-  TerminalEvent,
-  TerminalState,
-} from "../../shared/terminal";
+import type { TerminalEvent, TerminalState } from "../../shared/terminal";
 
 export const useTerminals = create<ReadonlyMap<string, readonly TerminalState[]>>(() => new Map());
 export const useTerminalLayouts = create<ReadonlyMap<string, TerminalLayout>>(() => new Map());
@@ -53,36 +48,13 @@ export function currentTerminal(threadId: string): TerminalState | undefined {
   return sessions.find((session) => session.id === selected) ?? sessions.at(-1);
 }
 
-export const useTerminalContexts = create<
-  ReadonlyMap<string, TerminalContextState & { preview?: TerminalContextPreview }>
->(() => new Map());
 type Output = Extract<TerminalEvent, { type: "terminal-output" }>;
 const readers = new Map<string, (message: Output) => void>();
 
-/** Streamed output bypasses React. Only availability and explicitly requested previews enter a store. */
+/** Streamed output bypasses React. Only terminal state enters the store. */
 export function receiveTerminal(message: TerminalEvent): void {
   if (message.type === "terminal-output") {
     readers.get(message.attachment)?.(message);
-    return;
-  }
-  if (message.type === "terminal-context" || message.type === "terminal-preview") {
-    const contexts = new Map(useTerminalContexts.getState());
-    const previous = contexts.get(message.threadId);
-    contexts.set(
-      message.threadId,
-      message.type === "terminal-context"
-        ? {
-            enabled: message.enabled,
-            pending: message.pending,
-            ...(message.pending && previous?.preview ? { preview: previous.preview } : {}),
-          }
-        : {
-            enabled: previous?.enabled ?? false,
-            pending: previous?.pending ?? false,
-            preview: { text: message.text, truncated: message.truncated },
-          },
-    );
-    useTerminalContexts.setState(contexts, true);
     return;
   }
   const sessions = useTerminals.getState().get(message.threadId) ?? [];
@@ -143,5 +115,4 @@ export function readTerminal(attachment: string, receive: (message: Output) => v
 export function resetTerminals(): void {
   useTerminals.setState(new Map(), true);
   useTerminalLayouts.setState(new Map(), true);
-  useTerminalContexts.setState(new Map(), true);
 }

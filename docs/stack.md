@@ -636,6 +636,8 @@ Installing the deb on a minimal Ubuntu 24.04 pulled in 55 new packages, most of 
 
 ### Terminal sharing performance (2026-10-20)
 
+Historical measurements. The Share with chat feature has since been removed.
+
 Measured on the Apple M5, 24 GB, macOS 26.6.2, in a visible window on the built-in 2x/120 Hz display. The display guard read 8.3 ms. No production code, display override, measurement helper or performance budget changed.
 
 The unchanged `pnpm perf` suite passed all 18 checks in 12.7 minutes. The HID idle counter increased throughout the run, with no physical input. These are medians of three runs; the gates compared unrounded values.

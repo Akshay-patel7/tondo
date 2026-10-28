@@ -20,7 +20,6 @@ import { readSettings, readSettingsLeniently, updateSettings } from "./settings"
 import { Store } from "./store";
 import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { Terminals } from "./terminals";
-import { TerminalContext, terminalContextSuffix } from "./terminalContext";
 import { Workspace } from "./workspace";
 import { openIde } from "./ide";
 import { IMAGE_FIXTURE } from "../shared/imageFixture";
@@ -297,84 +296,6 @@ describe("saved history requests", () => {
     const count = sent.filter((message) => message.type === "history-result").length;
     workspace.handle({ v, type: "history-index", threadId: "history-thread", id: "background" });
     expect(sent.filter((message) => message.type === "history-result")).toHaveLength(count);
-  });
-});
-
-describe("terminal sharing", () => {
-  it("saves the opt-in per thread, broadcasts it, and restores it on reconnect", async () => {
-    const project = store.addProject(dir, 1);
-    addThread(project.id, "shared");
-    addThread(project.id, "private");
-    await openThread("shared");
-    workspace.handle({ v, type: "terminal-sharing", threadId: "shared", enabled: true });
-    expect(store.thread("shared")?.shareTerminalOutput).toBe(true);
-    expect(store.thread("private")?.shareTerminalOutput).toBe(false);
-    expect(sent.at(-1)).toMatchObject({
-      type: "terminal-context",
-      threadId: "shared",
-      enabled: true,
-      pending: false,
-    });
-    sent.length = 0;
-    const git = next((message) => message.type === "git-status");
-    workspace.greet();
-    expect(sent).toContainEqual(
-      expect.objectContaining({ type: "terminal-context", threadId: "shared", enabled: true }),
-    );
-    await git;
-    workspace.handle({ v, type: "terminal-sharing", threadId: "shared", enabled: false });
-    expect(store.thread("shared")?.shareTerminalOutput).toBe(false);
-  });
-
-  it("attaches reserved output only to ordinary prompts and restores it on rejection", async () => {
-    const project = store.addProject(dir, 1);
-    addThread(project.id, "thread");
-    const live = await openThread("thread");
-    const context = new TerminalContext(true);
-    context.append("command output");
-    const attachment = context.take()!;
-    const take = vi.spyOn(Terminals.prototype, "takeContext").mockReturnValue(attachment);
-    const restore = vi.spyOn(Terminals.prototype, "restoreContext");
-    const accepted = Promise.withResolvers<void>();
-    live.prompt.mockImplementationOnce(() => accepted.promise);
-    workspace.handle({
-      v,
-      type: "prompt",
-      threadId: "thread",
-      text: "That failed",
-      streamingBehavior: "followUp",
-    });
-    expect(live.prompt).toHaveBeenCalledWith(
-      "That failed",
-      "followUp",
-      [],
-      terminalContextSuffix(attachment),
-    );
-    accepted.resolve();
-    await accepted.promise;
-    expect(restore).not.toHaveBeenCalled();
-    live.prompt.mockRejectedValueOnce(new Error("pi refused"));
-    const error = next(isError);
-    workspace.handle({
-      v,
-      type: "prompt",
-      threadId: "thread",
-      text: "Retry",
-      streamingBehavior: "steer",
-    });
-    expect(await error).toMatchObject({ message: "pi refused" });
-    expect(restore).toHaveBeenCalledWith("thread", attachment);
-    take.mockClear();
-    live.prompt.mockResolvedValueOnce();
-    workspace.handle({
-      v,
-      type: "prompt",
-      threadId: "thread",
-      text: "/deploy",
-      streamingBehavior: "steer",
-    });
-    expect(take).not.toHaveBeenCalled();
-    expect(live.prompt).toHaveBeenLastCalledWith("/deploy", "steer", []);
   });
 });
 

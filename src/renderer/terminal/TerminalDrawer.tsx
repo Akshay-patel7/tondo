@@ -23,7 +23,6 @@ import { terminalRects, type TerminalLayout } from "./layout";
 import { TerminalPane, TerminalDivider } from "../ui/terminal-pane";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { GraphemeUnicode } from "./unicode";
-import { TerminalSharing } from "./TerminalSharing";
 
 type ThemeColor = Exclude<keyof ITheme, "extendedAnsi">;
 
@@ -319,9 +318,6 @@ export default function TerminalDrawer({
         <span role="status" className="ml-auto flex shrink-0 items-center">
           {status ? <Badge variant={failed ? "destructive" : "secondary"}>{status}</Badge> : null}
         </span>
-        {session.kind === "shell" && !session.script ? (
-          <TerminalSharing threadId={threadId} />
-        ) : null}
         {session.kind !== "login" ? (
           <div className="flex shrink-0 items-center">
             <TerminalAction

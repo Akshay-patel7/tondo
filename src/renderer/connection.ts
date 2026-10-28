@@ -577,8 +577,6 @@ function receive(message: HostMessage): void {
       else pending?.resolve();
       break;
     }
-    case "terminal-context":
-    case "terminal-preview":
     case "terminal-state":
     case "terminal-output":
       receiveTerminal(message);

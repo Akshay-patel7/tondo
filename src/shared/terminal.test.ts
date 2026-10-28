@@ -4,10 +4,6 @@ import type { TerminalCommand } from "./terminal";
 const v = PROTOCOL_VERSION;
 const session = { threadId: "thread", terminalId: "pty" };
 const commands: TerminalCommand[] = [
-  { type: "terminal-sharing", threadId: "thread", enabled: true },
-  { type: "terminal-sharing", threadId: "thread", enabled: false },
-  { type: "terminal-preview", threadId: "thread" },
-  { type: "terminal-discard", threadId: "thread" },
   { type: "terminal-open", threadId: "thread", kind: "shell" },
   { type: "terminal-new", threadId: "thread" },
   { type: "terminal-new", threadId: "thread", split: { terminalId: "pty", direction: "vertical" } },
@@ -39,10 +35,16 @@ it.each([
 ])("rejects invalid splits %s", (split) => {
   expect(parseClientMessage({ v, type: "terminal-new", threadId: "thread", split }).ok).toBe(false);
 });
-it.each([null, undefined, "true", 1, {}, []])("rejects invalid sharing flag %s", (enabled) => {
-  expect(parseClientMessage({ v, type: "terminal-sharing", threadId: "thread", enabled }).ok).toBe(
-    false,
-  );
+it.each([
+  { type: "terminal-sharing", enabled: true },
+  { type: "terminal-sharing", enabled: false },
+  { type: "terminal-preview" },
+  { type: "terminal-discard" },
+])("rejects retired command $type", (command) => {
+  expect(parseClientMessage({ v, ...command, threadId: "thread" })).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("unknown message type"),
+  });
 });
 it.each([0, -1, 1.5, Infinity, NaN, 501, "80"])("rejects unsafe columns %s", (cols) => {
   expect(parseClientMessage({ v, type: "terminal-resize", ...session, cols, rows: 24 }).ok).toBe(

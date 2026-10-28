@@ -584,8 +584,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 32, which adds project scripts and separate script terminals", () => {
-    expect(PROTOCOL_VERSION).toBe(32);
+  it("speaks version 33, which removes terminal output sharing", () => {
+    expect(PROTOCOL_VERSION).toBe(33);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

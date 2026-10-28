@@ -1,3 +1,4 @@
+import type { UserMessage } from "@earendil-works/pi-ai";
 import { expect, test } from "@playwright/test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ import {
   send,
   threadRows,
   threads,
+  waitForIdle,
   waitForPi,
 } from "./pi";
 import { pickerOptions } from "./ui";
@@ -27,7 +29,13 @@ test.beforeEach(async () => {
   workDir = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-terminal-")));
   project = path.join(workDir, "project");
   mkdirSync(project);
-  tondo = await launchWithPi({ workDir, script: { responses: [reply("Ready.")] } });
+  tondo = await launchWithPi({
+    workDir,
+    script: {
+      recordInputs: path.join(workDir, "inputs.json"),
+      responses: [reply("Ready."), reply("Ready.")],
+    },
+  });
   await bringToFront(tondo);
   await addProject(tondo, project);
   await waitForPi(tondo.page);
@@ -77,6 +85,53 @@ function alive(pid: number): boolean {
     throw error;
   }
 }
+
+test("shell output stays out of chat and the sharing controls are gone", async () => {
+  const { page } = tondo;
+  const inputs = path.join(workDir, "inputs.json");
+  const lastInput = () => {
+    const messages = JSON.parse(readFileSync(inputs, "utf8")) as UserMessage[];
+    const content = messages.at(-1)?.content;
+    return typeof content === "string"
+      ? content
+      : content
+          ?.filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+  };
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+  await command("printf 'PRIVATE_%s\\n' OUTPUT");
+  await expect(output()).toContainText("PRIVATE_OUTPUT");
+  expect(existsSync(inputs)).toBe(false);
+  await expect(page.getByRole("switch", { name: "Share terminal output with chat" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("group", { name: "Pending terminal output" })).toHaveCount(0);
+  await send(page, "Discuss this without terminal output.");
+  await waitForIdle(page);
+  expect(lastInput()).toBe("Discuss this without terminal output.");
+  for (const scheme of ["light", "dark"] as const) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- capture both themes on the same window.
+    await page.emulateMedia({ colorScheme: scheme });
+    // oxlint-disable-next-line eslint/no-await-in-loop -- inspect each theme before changing it.
+    await page.screenshot({ path: test.info().outputPath(`terminal-no-sharing-${scheme}.png`) });
+  }
+  await page.reload();
+  await waitForPi(page);
+  await expect(output()).toContainText("PRIVATE_OUTPUT");
+  await command("printf 'AFTER_%s\\n' RELOAD");
+  await expect(output()).toContainText("AFTER_RELOAD");
+  await expect(page.getByRole("switch", { name: "Share terminal output with chat" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("group", { name: "Pending terminal output" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close terminal", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
+  await send(page, "Closing the shell does not attach its history.");
+  await waitForIdle(page);
+  expect(lastInput()).toBe("Closing the shell does not attach its history.");
+});
 
 test("a real shell runs in the thread folder, resizes, survives reload and closes its jobs", async () => {
   const { page } = tondo;

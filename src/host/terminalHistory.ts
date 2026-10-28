@@ -16,14 +16,6 @@ export class HistoryFilter {
   private escaped = false;
   private overflow = false;
 
-  private readonly plainText: boolean;
-  private readonly onCsi: ((sequence: string) => void) | undefined;
-
-  constructor(plainText = false, onCsi?: (sequence: string) => void) {
-    this.plainText = plainText;
-    this.onCsi = onCsi;
-  }
-
   push(data: string): string {
     const kept: string[] = [];
     for (let i = 0; i < data.length; i++) {
@@ -62,8 +54,7 @@ export class HistoryFilter {
             ((char === "p" || char === "y") && /^[0-9;?]*\$$/.test(body)) ||
             (char === "q" && /^>[0-9;]*$/.test(body)) ||
             (char === "u" && body.startsWith("?"));
-          if (!this.overflow) this.onCsi?.(this.sequence + char);
-          if (!this.plainText && !query && !this.overflow) kept.push(this.sequence + char);
+          if (!query && !this.overflow) kept.push(this.sequence + char);
           this.mode = "text";
           this.sequence = "";
         } else if (this.sequence.length < 256) this.sequence += char;
@@ -82,7 +73,7 @@ export class HistoryFilter {
           else this.overflow = true;
         } else {
           // DECID is the two-byte device-identification query.
-          if (!this.plainText && !this.overflow && !(this.sequence === "\u001b" && char === "Z"))
+          if (!this.overflow && !(this.sequence === "\u001b" && char === "Z"))
             kept.push(this.sequence + char);
           this.mode = "text";
           this.sequence = "";

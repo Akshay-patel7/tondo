@@ -107,14 +107,6 @@ Branch changes are blocked while pi is starting or working in the same checkout,
 
 **Mark as unread** in a thread's menu survives page reloads and quitting the app. Restoring the last-open thread at startup doesn't clear its marker. Clicking a thread marks it read. Background replies also keep their unread state across restarts.
 
-## Sharing terminal output
-
-Turn on **Share with chat** in a thread's terminal header to attach command output to your next chat message. Sharing starts off and the choice is saved per thread. Capture starts when you submit a command, not when you type, open or resize the terminal. Earlier terminal history is never included. Running commands never sends a message by itself, and chat still works if you run none.
-
-The composer shows a pending attachment with **Preview** and **Discard**. Preview is a snapshot; output arriving before you send is included too. Sending or discarding stops capture until you submit another command. Discard leaves sharing on. Turning sharing off clears the pending text too. Check for secrets before sending. Tondo strips terminal controls and keeps only the latest 16,384 characters, with a notice when earlier text was omitted. Captured text can include the shell's next prompt; Tondo does not track command completion or exit codes.
-
-Only new output accompanies each message. A rejected send returns its attachment for retry. Slash commands leave the attachment pending, and provider sign-in terminals never contribute output. Pending text survives thread switches and page reloads but stays in memory, so quitting the app drops it.
-
 ## Known limits
 
 Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-extension-ui.md)):

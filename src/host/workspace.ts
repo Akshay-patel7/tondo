@@ -44,7 +44,6 @@ import type { Store, StoredProject, StoredThread } from "./store";
 import { TrustNotSavedError, type Supervisor } from "./supervisor";
 import { canonical } from "./trust";
 import { Terminals } from "./terminals";
-import { terminalContextSuffix } from "./terminalContext";
 
 const v = PROTOCOL_VERSION;
 
@@ -179,7 +178,6 @@ export class Workspace {
       (threadId, kind) => {
         if (kind === "login") this.signedInOrOut(threadId);
       },
-      (threadId) => this.store.thread(threadId)?.shareTerminalOutput ?? false,
     );
   }
 
@@ -338,20 +336,6 @@ export class Workspace {
         break;
       case "git-action":
         void this.gitAction(message);
-        break;
-      case "terminal-sharing":
-        this.run(() => {
-          this.row(message.threadId);
-          this.store.setTerminalSharing(message.threadId, message.enabled);
-          this.terminals.handle(message);
-        });
-        break;
-      case "terminal-preview":
-      case "terminal-discard":
-        this.run(() => {
-          this.row(message.threadId);
-          this.terminals.handle(message);
-        });
         break;
       case "terminal-new":
       case "terminal-open":
@@ -1145,18 +1129,7 @@ export class Workspace {
         this.restoreDraft(threadId, text);
         throw error;
       }
-      // Slash commands keep their own argument syntax and leave pending output alone.
-      const terminal = text.trimStart().startsWith("/")
-        ? null
-        : this.terminals.takeContext(threadId);
-      try {
-        if (terminal)
-          await thread.prompt(text, streamingBehavior, images, terminalContextSuffix(terminal));
-        else await thread.prompt(text, streamingBehavior, images);
-      } catch (error) {
-        if (terminal) this.terminals.restoreContext(threadId, terminal);
-        throw error;
-      }
+      await thread.prompt(text, streamingBehavior, images);
       // Sending an extension's suggestion is user input too, without an editor edit.
       if (text.trim() !== "" || images.length > 0) {
         this.store.revealThread(threadId);
@@ -1426,7 +1399,6 @@ export class Workspace {
       // A refresh requested during shutdown must finish while deletion still holds the guard.
       await this.indexing;
       this.store.removeThread(id);
-      this.terminals.forgetContext(id);
       this.found.delete(id);
       this.activities.delete(id);
       this.extensionDrafts.delete(id);
@@ -1493,7 +1465,6 @@ export class Workspace {
       for (const row of this.store.threads().filter((stored) => stored.projectId === projectId)) {
         // oxlint-disable-next-line eslint/no-await-in-loop -- delete refs before forgetting their owner.
         await this.deleteThreadCheckpoints(row.id, project.path);
-        this.terminals.forgetContext(row.id);
       }
       this.store.removeProject(projectId);
       // Titles come from these until the project is really gone.
@@ -1521,7 +1492,6 @@ export class Workspace {
       row.archived ||
       row.draft.trim() ||
       row.hasImages ||
-      row.shareTerminalOutput ||
       this.worktrees.forThread(id) ||
       this.gitMutation ||
       this.piUpdating ||
@@ -1549,7 +1519,6 @@ export class Workspace {
       if (thread) await this.letGo(thread);
       await this.deleteThreadCheckpoints(id, project.path);
       this.store.removeThread(id);
-      this.terminals.forgetContext(id);
       this.sendSidebar();
     } finally {
       this.forgettingThreads.delete(id);
@@ -1692,7 +1661,6 @@ export class Workspace {
             ui: NO_EXTENSION_UI,
           },
     );
-    if (thread) this.terminals.publishContext(thread.id);
   }
 
   /** Reads only the host-owned session path. The page can name entries, never files. */
