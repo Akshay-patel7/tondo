@@ -82,6 +82,62 @@ async function start(theme: "light" | "dark" = "light", items = questions) {
 }
 
 for (const theme of ["light", "dark"] as const) {
+  for (const width of [1100, 900]) {
+    test(`custom-answer focus outline stays inside the scroll area in ${theme} at ${width}px`, async () => {
+      const page = await start(theme, [
+        {
+          ...questions[0]!,
+          options: Array.from({ length: 4 }, (_, index) => ({
+            label: `Host ${index + 1}`,
+            description: "An available hosting option",
+          })),
+        },
+      ]);
+      const form = page.getByRole("dialog", { name: "Questions", exact: true });
+      const answer = form.getByRole("textbox", { name: "Your answer" });
+      await page.setViewportSize({ width, height: 700 });
+      await answer.fill("Can we use a custom answer?");
+      await expect(answer).toBeFocused();
+      await page.screenshot({
+        path: test.info().outputPath(`custom-answer-${width}.png`),
+        animations: "disabled",
+      });
+      const outline = await answer.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const outset = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+        const bounds = element.getBoundingClientRect();
+        const clippedBy: string[] = [];
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+          const parentStyle = getComputedStyle(parent);
+          const rect = parent.getBoundingClientRect();
+          const left = rect.left + parent.clientLeft;
+          const top = rect.top + parent.clientTop;
+          if (
+            parentStyle.overflowX !== "visible" &&
+            (bounds.left - outset < left || bounds.right + outset > left + parent.clientWidth)
+          ) {
+            clippedBy.push("horizontal");
+          }
+          if (
+            parentStyle.overflowY !== "visible" &&
+            (bounds.top - outset < top || bounds.bottom + outset > top + parent.clientHeight)
+          ) {
+            clippedBy.push("vertical");
+          }
+        }
+        return { focused: element.matches(":focus-visible"), outset, clippedBy };
+      });
+      expect(outline.focused).toBe(true);
+      expect(outline.outset).toBeGreaterThan(0);
+      expect(outline.clippedBy).toEqual([]);
+      await form.getByRole("button", { name: "Submit answers" }).click();
+      await expect(page.getByText("Received answers.", { exact: true })).toBeVisible();
+      expect(readFileSync(path.join(project, "question-answers.jsonl"), "utf8").trim()).toBe(
+        '{"text":"Can we use a custom answer?"}',
+      );
+    });
+  }
+
   test(`browse ahead, go back and edit answers before submitting in ${theme}`, async () => {
     const page = await start(theme);
     const errors: string[] = [];

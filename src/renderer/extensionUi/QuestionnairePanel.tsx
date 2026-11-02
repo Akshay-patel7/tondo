@@ -79,7 +79,7 @@ export function QuestionnairePanel({
           </Button>
         ))}
       </nav>
-      <div className="mt-3 max-h-64 overflow-y-auto">
+      <div className="-mx-1 mt-2 max-h-64 overflow-y-auto p-1">
         <h3
           id={`${titleId}-${index}`}
           tabIndex={-1}
