@@ -2,6 +2,7 @@
 // go Back in the header or press Escape, and every change saves as you make it.
 import {
   CircleAlert,
+  GitPullRequestArrow,
   Cpu,
   Keyboard,
   KeyRound,
@@ -23,6 +24,7 @@ import { ShortcutSettings } from "./ShortcutSettings";
 import { closeSettings, takeSettingsOpener, useSettingsPage, type SettingsSection } from "./store";
 import { ThreadSettings } from "./ThreadSettings";
 import { ProjectScriptsSettings } from "./ProjectScriptsSettings";
+import { RepositorySettings } from "./RepositorySettings";
 
 const SECTIONS: readonly SettingsSection[] = [
   "appearance",
@@ -30,6 +32,7 @@ const SECTIONS: readonly SettingsSection[] = [
   "accounts",
   "threads",
   "scripts",
+  "repositories",
   "shortcuts",
 ];
 
@@ -64,6 +67,11 @@ const SECTION_INFO: Readonly<
     title: "Project scripts",
     icon: Play,
     description: "Named shell commands for each project. Run them from the top of any thread.",
+  },
+  repositories: {
+    title: "Repositories",
+    icon: GitPullRequestArrow,
+    description: "Keep clean default branches up to date without changing your local work.",
   },
   shortcuts: {
     title: "Shortcuts",
@@ -224,6 +232,8 @@ function Section({ section }: { section: SettingsSection }) {
       return <ThreadSettings />;
     case "scripts":
       return <ProjectScriptsSettings />;
+    case "repositories":
+      return <RepositorySettings />;
     case "shortcuts":
       return <ShortcutSettings />;
   }

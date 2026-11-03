@@ -135,6 +135,18 @@ function pullRequest(value: unknown, host: string): PullRequest {
   };
 }
 
+function autoPullClean(status: GitStatus): boolean {
+  return (
+    status.root !== null &&
+    status.branch !== null &&
+    status.upstream !== null &&
+    status.changes === 0 &&
+    status.conflicts === 0 &&
+    status.operation === null &&
+    !status.untrackedHidden
+  );
+}
+
 export class Git {
   private readonly remoteCache = new Map<string, { at: number; status: GitHubStatus }>();
   readonly commands: GitCommands;
@@ -409,6 +421,53 @@ export class Git {
     }
     this.remoteCache.clear();
     return SUCCEEDED[action.kind];
+  }
+
+  /** Fetch only a clean default branch, then recheck everything before changing its files. */
+  async autoPull(cwd: string, canUpdate: () => Promise<boolean>): Promise<boolean> {
+    const before = await this.status(cwd, false);
+    if (!autoPullClean(before) || before.ahead > 0) return false;
+    const branch = before.branch!;
+    const head = await this.head(cwd);
+    if (!head) return false;
+    const remote = await this.config(cwd, `branch.${branch}.remote`);
+    const mergeRef = await this.config(cwd, `branch.${branch}.merge`);
+    if (!remote || remote === "." || !mergeRef?.startsWith("refs/heads/")) return false;
+    // Ask the upstream remote, not a guessed main/master name or a stale origin/HEAD.
+    const advertised = await this.run(cwd, ["ls-remote", "--symref", "--", remote, "HEAD"]);
+    if (!advertised.split("\n").includes(`ref: ${mergeRef}\tHEAD`)) return false;
+    if (mergeRef !== `refs/heads/${branch}`) return false;
+    await this.run(cwd, ["fetch", "--quiet", "--no-tags", "--", remote, mergeRef]);
+    const target = (await this.run(cwd, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"])).trim();
+    const counts = (
+      await this.run(cwd, ["rev-list", "--left-right", "--count", `${head}...${target}`])
+    )
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+    if (counts[0] !== 0 || !counts[1]) return false;
+    if (!(await canUpdate())) return false;
+    const latest = await this.status(cwd, false);
+    if (
+      !autoPullClean(latest) ||
+      latest.branch !== branch ||
+      latest.upstream !== before.upstream ||
+      (await this.head(cwd)) !== head
+    )
+      return false;
+    // Never let merge.autoStash hide edits that arrived after the cleanliness check.
+    await this.run(cwd, [
+      "-c",
+      "merge.autostash=false",
+      "merge",
+      "--ff-only",
+      "--no-overwrite-ignore",
+      "--quiet",
+      "--no-edit",
+      target,
+    ]);
+    this.remoteCache.clear();
+    return true;
   }
 
   /**

@@ -575,6 +575,27 @@ describe("parseClientMessage", () => {
     expect(rejection({ v, type: "set-settings", ...fields })).toContain(error);
   });
 
+  it.each([
+    { autoPull: true },
+    { autoPull: false },
+    { projectAutoPull: { "/work/a": false, "/work/b": true, "/work/c": null } },
+  ])("accepts automatic pull settings: %j", (patch) => {
+    expect(parseClientMessage({ v, type: "set-settings", patch })).toEqual({
+      ok: true,
+      message: { v, type: "set-settings", patch },
+    });
+  });
+
+  it.each([
+    { autoPull: "true" },
+    { autoPull: null },
+    { projectAutoPull: [] },
+    { projectAutoPull: { relative: true } },
+    { projectAutoPull: { "/work": "on" } },
+  ])("rejects malformed automatic pull settings: %j", (patch) => {
+    expect(parseClientMessage({ v, type: "set-settings", patch }).ok).toBe(false);
+  });
+
   it("rejects pi messages with fields they don't have or a bad thread id", () => {
     expect(rejection({ v, type: "choose-pi-path", path: "/x" })).toContain("unexpected field");
     expect(rejection({ v, type: "retry-pi", threadId: "t" })).toContain("unexpected field");
@@ -584,8 +605,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 33, which removes terminal output sharing", () => {
-    expect(PROTOCOL_VERSION).toBe(33);
+  it("speaks version 34, which adds automatic pull settings", () => {
+    expect(PROTOCOL_VERSION).toBe(34);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

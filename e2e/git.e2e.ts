@@ -961,6 +961,111 @@ test("Commit & push commits, then pushes to the remote, and is disabled with a c
   await expect(page.getByRole("button", { name: "Git actions", exact: true })).toBeFocused();
 });
 
+test("automatic pull settings update clean default branches, honor project overrides and survive restart", async () => {
+  test.setTimeout(90_000);
+  git(remote, "symbolic-ref", "HEAD", "refs/heads/main");
+  const profileDir = path.join(dir, "profile");
+  let { page } = await start([reply("Hello")]);
+  const errors: string[] = [];
+  const watch = (current: Page) => current.on("pageerror", (error) => errors.push(error.message));
+  watch(page);
+  await send(page, "Say hello");
+  await expect(page.getByText("Hello", { exact: true })).toBeVisible();
+  await waitForIdle(page);
+  const saved = () =>
+    JSON.parse(readFileSync(path.join(profileDir, "settings.json"), "utf8")) as {
+      autoPull?: boolean;
+      projectAutoPull?: Record<string, boolean | null>;
+    };
+  const repositories = async () => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const settings = page.getByRole("region", { name: "Settings", exact: true });
+    await settings
+      .getByRole("navigation", { name: "Settings sections" })
+      .getByRole("button", { name: "Repositories", exact: true })
+      .click();
+    return settings;
+  };
+  let settings = await repositories();
+  const automatic = () => settings.getByRole("switch", { name: "Automatically pull", exact: true });
+  await expect(automatic()).not.toBeChecked();
+  await expectPicked(settings, "Project automatic pull", "default");
+  const first = pushFromElsewhere("automatic.txt", "First automatic update\n");
+  await automatic().click();
+  await expect.poll(() => saved().autoPull).toBe(true);
+  await expect.poll(() => git(project, "rev-parse", "HEAD")).toBe(first);
+  expect(readFileSync(path.join(project, "automatic.txt"), "utf8")).toBe(
+    "First automatic update\n",
+  );
+
+  await pickOption(settings, "Project automatic pull", "Off");
+  await expect.poll(() => saved().projectAutoPull?.[project]).toBe(false);
+  const second = pushFromElsewhere("second-automatic.txt", "Second automatic update\n");
+  git(project, "fetch", "origin");
+  await settings.getByRole("switch", { name: "Automatically pull", exact: true }).click();
+  await expect.poll(() => saved().autoPull).toBe(false);
+  await settings.getByRole("switch", { name: "Automatically pull", exact: true }).click();
+  await expect.poll(() => saved().autoPull).toBe(true);
+  await page.locator("header").getByRole("button", { name: "Back", exact: true }).click();
+  await expect(gitPill(page)).toContainText("1 behind origin/main");
+  expect(git(project, "rev-parse", "HEAD")).toBe(first);
+
+  settings = await repositories();
+  // Reset the global default to off, then let just this project opt in.
+  await settings.getByRole("button", { name: "Reset automatic pull", exact: true }).click();
+  await expect(automatic()).not.toBeChecked();
+  await expect.poll(() => saved().autoPull).toBe(false);
+  await pickOption(settings, "Project automatic pull", "On");
+  await expect.poll(() => saved().projectAutoPull?.[project]).toBe(true);
+  await expect.poll(() => git(project, "rev-parse", "HEAD")).toBe(second);
+
+  // Keep success notifications from covering the settings in the screenshots.
+  await page
+    .getByRole("status")
+    .filter({ hasText: "Automatically pulled the default branch." })
+    .getByRole("button", { name: "Dismiss", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("status")
+    .filter({ hasText: "Automatically pulled the default branch." })
+    .getByRole("button", { name: "Dismiss", exact: true })
+    .first()
+    .click();
+  // Inspect the real settings page in both themes, not a standalone mockup.
+  await page.emulateMedia({ colorScheme: null });
+  const nav = settings.getByRole("navigation", { name: "Settings sections" });
+  const screenshot = async (theme: "Light" | "Dark") => {
+    await nav.getByRole("button", { name: "Appearance", exact: true }).click();
+    await settings
+      .getByRole("group", { name: "Theme", exact: true })
+      .getByRole("button", { name: theme, exact: true })
+      .click();
+    await nav.getByRole("button", { name: "Repositories", exact: true }).click();
+    await page.screenshot({
+      path: `test-results/automatic-pull-${theme.toLowerCase()}.png`,
+      animations: "disabled",
+    });
+  };
+  await screenshot("Light");
+  await screenshot("Dark");
+
+  await tondo!.close();
+  tondo = undefined;
+  const third = pushFromElsewhere("after-restart.txt", "Updated after restart\n");
+  tondo = await launchTondo({ profileDir, env });
+  page = tondo.page;
+  watch(page);
+  await waitForPi(page);
+  await expect.poll(() => git(project, "rev-parse", "HEAD")).toBe(third);
+  settings = await repositories();
+  await expect(automatic()).not.toBeChecked();
+  await expectPicked(settings, "Project automatic pull", "on");
+  await pickOption(settings, "Project automatic pull", "Use default (off)");
+  await expect.poll(() => saved().projectAutoPull?.[project]).toBeNull();
+  expect(errors).toEqual([]);
+});
+
 test("Pull fast-forwards to the upstream and says what came in, and a diverged branch stays put", async () => {
   const { page } = await start([reply("Hello")]);
   const toast = (text: string) => page.getByRole("status").filter({ hasText: text });

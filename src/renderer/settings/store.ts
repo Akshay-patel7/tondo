@@ -8,6 +8,7 @@ export type SettingsSection =
   | "accounts"
   | "threads"
   | "scripts"
+  | "repositories"
   | "shortcuts";
 
 export const useSettingsPage = create<{ open: boolean; section: SettingsSection }>()(() => ({

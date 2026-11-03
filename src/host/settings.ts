@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   DEFAULT_SETTINGS,
   isDefaultModel,
+  isProjectAutoPull,
   isThinkingLevel,
   isPaletteSetting,
   isPanelWidth,
@@ -84,6 +85,15 @@ export function newShortcutProblems(
 export function updateSettings(file: string, patch: SettingsPatch): Settings {
   return write(file, (saved) => {
     const next: Record<string, unknown> = { ...saved };
+    if (patch.autoPull !== undefined) next.autoPull = patch.autoPull;
+    if (patch.projectAutoPull !== undefined) {
+      if (!isProjectAutoPull(patch.projectAutoPull))
+        throw new Error("Tondo didn't save invalid projectAutoPull overrides.");
+      next.projectAutoPull = {
+        ...(isObject(saved.projectAutoPull) ? saved.projectAutoPull : {}),
+        ...patch.projectAutoPull,
+      };
+    }
     if (patch.defaultModel !== undefined) next.defaultModel = patch.defaultModel;
     if (patch.defaultThinkingLevel !== undefined)
       next.defaultThinkingLevel = patch.defaultThinkingLevel;
@@ -201,6 +211,8 @@ function check(saved: Record<string, unknown>, fail: (what: string) => Error): S
 function parse(saved: Record<string, unknown>, report: (what: string) => void): Settings {
   const {
     piPath,
+    autoPull = DEFAULT_SETTINGS.autoPull,
+    projectAutoPull = {},
     ideCommand = DEFAULT_SETTINGS.ideCommand,
     projectScripts = {},
     worktreeDirectory,
@@ -215,6 +227,8 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     panelWidths = {},
     shortcuts = {},
   } = saved;
+  if (typeof autoPull !== "boolean") report("has an autoPull that isn't true or false");
+  if (!isProjectAutoPull(projectAutoPull)) report("has invalid projectAutoPull overrides");
   if (!isIdeCommand(ideCommand))
     report("has an ideCommand that isn't an executable name or absolute path");
   if (!isProjectScripts(projectScripts)) report("has invalid projectScripts");
@@ -303,6 +317,8 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   }
   return {
     piPath: pi,
+    autoPull: typeof autoPull === "boolean" ? autoPull : DEFAULT_SETTINGS.autoPull,
+    projectAutoPull: isProjectAutoPull(projectAutoPull) ? projectAutoPull : {},
     ideCommand: isIdeCommand(ideCommand) ? ideCommand : DEFAULT_SETTINGS.ideCommand,
     projectScripts: isProjectScripts(projectScripts) ? projectScripts : {},
     worktreeDirectory: worktrees,

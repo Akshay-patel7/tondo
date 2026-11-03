@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Git, githubRepository, parseGitStatus } from "./git";
 import { GitCommands } from "./gitCommand";
 
@@ -76,6 +76,171 @@ function pushedElsewhere(file: string, text: string): string {
   other("push");
   return other("rev-parse", "HEAD");
 }
+
+describe("automatic pull", () => {
+  beforeEach(() => native("--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"));
+
+  it("fetches and fast-forwards a clean default branch, then does nothing when current", async () => {
+    const target = pushedElsewhere("remote.txt", "Fetched automatically");
+    expect((await git.status(cwd, false)).behind).toBe(0); // No prior fetch needed.
+    expect(await git.autoPull(cwd, async () => true)).toBe(true);
+    expect(native("rev-parse", "HEAD")).toBe(target);
+    expect(readFileSync(path.join(cwd, "remote.txt"), "utf8")).toBe("Fetched automatically");
+    expect(await git.autoPull(cwd, async () => true)).toBe(false);
+  });
+
+  it.each(["tracked", "staged", "untracked"])(
+    "leaves %s changes untouched without fetching",
+    async (kind) => {
+      const before = native("rev-parse", "HEAD");
+      pushedElsewhere("remote.txt", "remote");
+      writeFileSync(path.join(cwd, kind === "untracked" ? "local.txt" : "a"), "Keep my work");
+      if (kind === "staged") native("add", "a");
+      expect(await git.autoPull(cwd, async () => true)).toBe(false);
+      expect(native("rev-parse", "HEAD")).toBe(before);
+      expect(native("rev-parse", "origin/main")).toBe(before);
+      expect(readFileSync(path.join(cwd, kind === "untracked" ? "local.txt" : "a"), "utf8")).toBe(
+        "Keep my work",
+      );
+    },
+  );
+
+  it.each([false, true])("preserves local commits, including divergence: %s", async (diverged) => {
+    const target = pushedElsewhere("remote.txt", "remote");
+    writeFileSync(path.join(cwd, "local.txt"), "local commit");
+    native("add", ".");
+    native("commit", "-m", "local");
+    const before = native("rev-parse", "HEAD");
+    if (diverged) native("fetch", "origin");
+    expect(await git.autoPull(cwd, async () => true)).toBe(false);
+    expect(native("rev-parse", "HEAD")).toBe(before);
+    expect(native("rev-parse", "HEAD")).not.toBe(target);
+  });
+
+  it.each(["feature", "detached", "no-upstream", "not-default"])(
+    "does not update %s checkouts",
+    async (kind) => {
+      pushedElsewhere("remote.txt", "remote");
+      if (kind === "feature") native("switch", "-c", "feature", "--track", "origin/main");
+      if (kind === "detached") native("switch", "--detach");
+      if (kind === "no-upstream") native("branch", "--unset-upstream");
+      if (kind === "not-default")
+        native("--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
+      const before = native("rev-parse", "HEAD");
+      expect(await git.autoPull(cwd, async () => true)).toBe(false);
+      expect(native("rev-parse", "HEAD")).toBe(before);
+    },
+  );
+
+  it("uses a custom remote's actual default branch rather than guessing main", async () => {
+    native("branch", "-m", "trunk");
+    native("push", "-u", "origin", "trunk");
+    native("--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
+    native("remote", "rename", "origin", "team");
+    const other = elsewhere();
+    other("switch", "trunk");
+    writeFileSync(path.join(dir, "other", "custom.txt"), "custom default");
+    other("add", ".");
+    other("commit", "-m", "custom");
+    other("push");
+    expect(await git.autoPull(cwd, async () => true)).toBe(true);
+    expect(native("rev-parse", "HEAD")).toBe(other("rev-parse", "HEAD"));
+  });
+
+  it("rechecks changes made during fetch and never hides them using autostash", async () => {
+    pushedElsewhere("a", "remote change");
+    native("config", "merge.autostash", "true");
+    const before = native("rev-parse", "HEAD");
+    const run = git.run.bind(git);
+    const spy = vi.spyOn(git, "run").mockImplementation(async (folder, args, input) => {
+      const output = await run(folder, args, input);
+      if (args[0] === "fetch") writeFileSync(path.join(cwd, "a"), "Edit during fetch");
+      return output;
+    });
+    try {
+      expect(await git.autoPull(cwd, async () => true)).toBe(false);
+      expect(native("rev-parse", "HEAD")).toBe(before);
+      expect(readFileSync(path.join(cwd, "a"), "utf8")).toBe("Edit during fetch");
+      expect(native("stash", "list")).toBe("");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("leaves commits intact when the remote default branch was force-pushed backwards", async () => {
+    const original = native("rev-parse", "HEAD");
+    pushedElsewhere("remote.txt", "remote");
+    native("fetch", "origin");
+    native("merge", "--ff-only", "origin/main");
+    const before = native("rev-parse", "HEAD");
+    native("--git-dir", remote, "update-ref", "refs/heads/main", original);
+    expect(await git.autoPull(cwd, async () => true)).toBe(false);
+    expect(native("rev-parse", "HEAD")).toBe(before);
+  });
+
+  it("does not merge into a branch changed while the final host guard was running", async () => {
+    pushedElsewhere("remote.txt", "remote");
+    const before = native("rev-parse", "HEAD");
+    expect(
+      await git.autoPull(cwd, async () => {
+        native("switch", "-c", "changed-externally");
+        return true;
+      }),
+    ).toBe(false);
+    expect(native("rev-parse", "HEAD")).toBe(before);
+    expect(native("branch", "--show-current")).toBe("changed-externally");
+  });
+
+  it("does not treat an incomplete untracked listing as a clean checkout", async () => {
+    pushedElsewhere("remote.txt", "remote");
+    const before = native("rev-parse", "HEAD");
+    const status = await git.status(cwd, false);
+    const spy = vi.spyOn(git, "status").mockResolvedValue({ ...status, untrackedHidden: true });
+    try {
+      expect(await git.autoPull(cwd, async () => true)).toBe(false);
+      expect(native("rev-parse", "HEAD")).toBe(before);
+      expect(native("rev-parse", "origin/main")).toBe(before);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("preserves an ignored file when an incoming commit starts tracking that path", async () => {
+    writeFileSync(path.join(cwd, ".git", "info", "exclude"), "ignored.env\n");
+    writeFileSync(path.join(cwd, "ignored.env"), "Keep local configuration");
+    pushedElsewhere("ignored.env", "Remote configuration");
+    const before = native("rev-parse", "HEAD");
+    await expect(git.autoPull(cwd, async () => true)).rejects.toThrow();
+    expect(native("rev-parse", "HEAD")).toBe(before);
+    expect(readFileSync(path.join(cwd, "ignored.env"), "utf8")).toBe("Keep local configuration");
+  });
+
+  it("obeys the final host guard after fetching", async () => {
+    pushedElsewhere("a", "remote change");
+    const before = native("rev-parse", "HEAD");
+    expect(await git.autoPull(cwd, async () => false)).toBe(false);
+    expect(native("rev-parse", "HEAD")).toBe(before);
+  });
+
+  it("refuses conflicting edits arriving at the merge boundary even with autostash configured", async () => {
+    pushedElsewhere("a", "remote change");
+    native("config", "merge.autostash", "true");
+    const before = native("rev-parse", "HEAD");
+    const run = git.run.bind(git);
+    const spy = vi.spyOn(git, "run").mockImplementation((folder, args, input) => {
+      if (args.includes("merge")) writeFileSync(path.join(cwd, "a"), "Last moment edit");
+      return run(folder, args, input);
+    });
+    try {
+      await expect(git.autoPull(cwd, async () => true)).rejects.toThrow();
+      expect(native("rev-parse", "HEAD")).toBe(before);
+      expect(readFileSync(path.join(cwd, "a"), "utf8")).toBe("Last moment edit");
+      expect(native("stash", "list")).toBe("");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
 
 function stubGh() {
   const bin = path.join(dir, "bin");

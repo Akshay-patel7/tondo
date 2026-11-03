@@ -30,6 +30,44 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+describe("automatic pull", () => {
+  it("defaults off and merges only named project overrides without losing unrelated keys", () => {
+    writeFileSync(file, JSON.stringify({ later: 7, theme: "dark" }));
+    expect(readSettings(file)).toMatchObject({ autoPull: false, projectAutoPull: {} });
+    updateSettings(file, { autoPull: true, projectAutoPull: { "/work/a": false } });
+    updateSettings(file, { projectAutoPull: { "/work/b": true } });
+    expect(readSettings(file)).toMatchObject({
+      autoPull: true,
+      projectAutoPull: { "/work/a": false, "/work/b": true },
+    });
+    updateSettings(file, { autoPull: false, projectAutoPull: { "/work/a": null } });
+    expect(readSettings(file)).toMatchObject({
+      autoPull: false,
+      projectAutoPull: { "/work/a": null, "/work/b": true },
+    });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ later: 7, theme: "dark" });
+  });
+
+  it.each([
+    { autoPull: "true" },
+    { autoPull: null },
+    { projectAutoPull: [] },
+    { projectAutoPull: { relative: true } },
+    { projectAutoPull: { "/work": "on" } },
+    { projectAutoPull: { "/bad\0path": true } },
+  ])("rejects invalid values atomically and defaults leniently: %j", (patch) => {
+    writeFileSync(file, JSON.stringify({ ...patch, theme: "dark" }));
+    expect(() => readSettings(file)).toThrow();
+    expect(readSettingsLeniently(file)).toMatchObject({
+      settings: { autoPull: false, projectAutoPull: {}, theme: "dark" },
+      problem: expect.any(String),
+    });
+    writeFileSync(file, "{}");
+    expect(() => updateSettings(file, patch as never)).toThrow();
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+});
+
 describe("project scripts", () => {
   const script = { id: "build", name: "Build app", command: "pnpm build" };
   it("defaults old profiles and merges, edits and clears only the named project", () => {
@@ -107,6 +145,8 @@ describe("IDE settings", () => {
 describe("readSettings", () => {
   it("holds the defaults when the file doesn't exist", () => {
     expect(readSettings(file)).toEqual({
+      autoPull: false,
+      projectAutoPull: {},
       piPath: null,
       ideCommand: "code",
       projectScripts: {},
@@ -138,6 +178,8 @@ describe("readSettings", () => {
       }),
     );
     expect(readSettings(file)).toEqual({
+      autoPull: false,
+      projectAutoPull: {},
       piPath: "/opt/pi/bin/pi",
       ideCommand: "code",
       projectScripts: {},
@@ -262,6 +304,8 @@ describe("readSettingsLeniently", () => {
     );
     expect(readSettingsLeniently(file)).toEqual({
       settings: {
+        autoPull: false,
+        projectAutoPull: {},
         piPath: "/opt/pi/bin/pi",
         ideCommand: "code",
         projectScripts: {},

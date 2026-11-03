@@ -108,7 +108,29 @@ export function isPanelWidth(key: keyof PanelWidths, value: unknown): value is n
   return Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
 }
 
+/** Overrides keyed by the sidebar project's canonical folder. null inherits the default. */
+export type ProjectAutoPull = Readonly<Record<string, boolean | null>>;
+
+export function isProjectAutoPull(value: unknown): value is ProjectAutoPull {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length <= 1000 &&
+    Object.entries(value).every(
+      ([folder, enabled]) =>
+        folder.startsWith("/") &&
+        folder.length <= 4096 &&
+        !folder.includes("\0") &&
+        (enabled === null || typeof enabled === "boolean"),
+    )
+  );
+}
+
 export interface AppSettings {
+  /** Automatically fast-forward clean default branches. Opt-in for existing profiles. */
+  readonly autoPull: boolean;
+  readonly projectAutoPull: ProjectAutoPull;
   /** The pi command to run, or null to find pi on PATH. */
   readonly piPath: string | null;
   /** IDE preset command or custom executable used by Open in IDE. */
@@ -131,6 +153,8 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  autoPull: false,
+  projectAutoPull: {},
   piPath: null,
   ideCommand: "code",
   projectScripts: {},
@@ -148,6 +172,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** A change to the settings. Only the fields present change. */
 export interface SettingsPatch {
+  readonly autoPull?: boolean;
+  readonly projectAutoPull?: ProjectAutoPull;
   readonly ideCommand?: string;
   /** Only the named projects change; an empty list removes their scripts. */
   readonly projectScripts?: ProjectScripts;

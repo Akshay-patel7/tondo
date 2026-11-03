@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { PROTOCOL_VERSION as v, type HostMessage, type PiStatus } from "../shared/protocol";
 import type { PiMessage } from "../shared/thread";
 import type { PaletteSetting, SettingsPatch, ThemeSetting } from "../shared/settings";
@@ -25,6 +25,7 @@ import { openIde } from "./ide";
 import { IMAGE_FIXTURE } from "../shared/imageFixture";
 import { SessionIndex } from "./sessionIndex";
 import { captureCheckpoint } from "./checkpoints";
+import { Git } from "./git";
 
 // Workspace runs real pi through LiveThread. These tests stand in for it, and
 // keep everything else Workspace builds on real: the store, settings.json,
@@ -296,6 +297,188 @@ describe("saved history requests", () => {
     const count = sent.filter((message) => message.type === "history-result").length;
     workspace.handle({ v, type: "history-index", threadId: "history-thread", id: "background" });
     expect(sent.filter((message) => message.type === "history-result")).toHaveLength(count);
+  });
+});
+
+describe("automatic pull scheduling", () => {
+  let project: string;
+  let pull: MockInstance<Git["autoPull"]>;
+  beforeEach(() => {
+    project = repository("auto-pull", []);
+    const projectId = store.addProject(project, 1).id;
+    addThread(projectId, "auto-a");
+    addThread(projectId, "auto-b");
+    pull = vi.spyOn(Git.prototype, "autoPull").mockImplementation(async (_cwd, canUpdate) => {
+      expect(await canUpdate()).toBe(true);
+      return false;
+    });
+  });
+
+  async function poll() {
+    const result = next(
+      (message) => message.type === "git-status" && message.status?.root === project,
+    );
+    workspace.handle({ v, type: "git-refresh", threadId: "auto-a" });
+    await result;
+  }
+
+  async function connect() {
+    await openThread("auto-a");
+    const result = next(
+      (message) => message.type === "git-status" && message.status?.root === project,
+    );
+    workspace.greet();
+    await result;
+  }
+
+  it("defaults off, applies overrides in both directions and broadcasts the saved settings", async () => {
+    await connect();
+    expect(pull).not.toHaveBeenCalled();
+    const change = async (patch: SettingsPatch) => {
+      const saved = next((message) => message.type === "settings");
+      const polled = next(
+        (message) => message.type === "git-status" && message.status?.root === project,
+      );
+      workspace.handle({ v, type: "set-settings", patch });
+      const settings = readSettings(settingsFile);
+      expect(await saved).toMatchObject({
+        settings: { autoPull: settings.autoPull, projectAutoPull: settings.projectAutoPull },
+        error: null,
+      });
+      await polled;
+    };
+    await change({ autoPull: true, projectAutoPull: { [project]: false } });
+    expect(pull).not.toHaveBeenCalled();
+    await change({ autoPull: false, projectAutoPull: { [project]: true } });
+    expect(pull).toHaveBeenCalledTimes(1);
+    expect(pull).toHaveBeenLastCalledWith(project, expect.any(Function));
+    await change({ projectAutoPull: { [project]: null } });
+    expect(pull).toHaveBeenCalledTimes(1);
+  });
+
+  it("throttles network attempts across refreshes and retries after a minute", async () => {
+    updateSettings(settingsFile, { autoPull: true });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    await connect();
+    expect(pull).toHaveBeenCalledTimes(1);
+    await poll();
+    expect(pull).toHaveBeenCalledTimes(1);
+    clock.mockReturnValue(160_000);
+    await poll();
+    expect(pull).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs again from the status timer without a user refresh", async () => {
+    updateSettings(settingsFile, { autoPull: true });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    await connect();
+    pull.mockRejectedValueOnce(new Error("Scheduled attempt observed"));
+    const scheduled = next(
+      (message) => message.type === "git-status" && message.error === "Scheduled attempt observed",
+    );
+    clock.mockReturnValue(160_000);
+    await scheduled;
+    expect(pull).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["turn", "checkpoint", "terminal", "script"])(
+    "waits for a background %s in the same checkout",
+    async (kind) => {
+      updateSettings(settingsFile, { autoPull: true });
+      const background = await openThread("auto-b");
+      if (kind === "turn") background.working = true;
+      if (kind === "checkpoint")
+        vi.spyOn(background.checkpoints, "busy", "get").mockReturnValue(true);
+      if (kind === "terminal")
+        vi.spyOn(Terminals.prototype, "has").mockImplementation((id) => id === "auto-b");
+      if (kind === "script")
+        vi.spyOn(Terminals.prototype, "scriptDirectories").mockReturnValue([project]);
+      await connect();
+      expect(pull).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not block an idle checkout just because pi is busy in another repository", async () => {
+    updateSettings(settingsFile, { autoPull: true });
+    const other = repository("other-checkout", []);
+    const otherId = store.addProject(other, 1).id;
+    addThread(otherId, "other-busy");
+    (await openThread("other-busy")).working = true;
+    await connect();
+    expect(pull).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the project's override but pulls the managed thread's own checkout", async () => {
+    const managed = await managedSession();
+    updateSettings(settingsFile, { projectAutoPull: { [managed.project]: true } });
+    const result = next(
+      (message) => message.type === "git-status" && message.status?.root === managed.checkout,
+    );
+    workspace.greet();
+    await result;
+    expect(pull).toHaveBeenCalledWith(managed.checkout, expect.any(Function));
+  });
+
+  it("keeps prompts and thread switches out of the checkout lock, and resumes polling after disabling", async () => {
+    updateSettings(settingsFile, { autoPull: true });
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    pull.mockImplementation(async (_cwd, canUpdate) => {
+      started();
+      await held;
+      expect(await canUpdate()).toBe(false);
+      return false;
+    });
+    await openThread("auto-a");
+    workspace.greet();
+    await entered;
+    workspace.handle({ v, type: "open-thread", threadId: "auto-b" });
+    expect(store.ui().openThread).toBe("auto-a");
+    const refused = next(isError);
+    workspace.handle({
+      v,
+      type: "prompt",
+      threadId: "auto-a",
+      text: "Don't race",
+      streamingBehavior: "steer",
+    });
+    expect(await refused).toMatchObject({
+      message: expect.stringContaining("Wait for the Git action"),
+    });
+    const changed = next((message) => message.type === "settings");
+    workspace.handle({ v, type: "set-settings", patch: { autoPull: false } });
+    await changed;
+    const resumed = next((message) => message.type === "git-status");
+    release();
+    await resumed;
+    expect(pull).toHaveBeenCalledTimes(1);
+    const switched = next(
+      (message) => message.type === "git-status" && message.threadId === "auto-b",
+    );
+    expect((await openThread("auto-b")).id).toBe("auto-b");
+    await switched;
+  });
+
+  it("reports a failed attempt, releases its lock and can retry", async () => {
+    updateSettings(settingsFile, { autoPull: true });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    pull.mockRejectedValueOnce(new Error("Remote unavailable"));
+    await connect();
+    expect(sent.findLast((message) => message.type === "git-status")).toMatchObject({
+      error: "Remote unavailable",
+    });
+    clock.mockReturnValue(160_000);
+    await poll();
+    expect(pull).toHaveBeenCalledTimes(2);
+    expect(sent.findLast((message) => message.type === "git-status")).toMatchObject({
+      error: null,
+    });
   });
 });
 

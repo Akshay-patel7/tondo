@@ -127,6 +127,7 @@ export class Workspace {
   private gitMutation = false;
   private gitReading: Promise<void> = Promise.resolve();
   private lastGit = "";
+  private readonly autoPullChecks = new Map<string, number>();
   /** Sessions in the projects' session folders, by id. */
   private found = new Map<string, Found>();
   /** The threads whose pi is running, starting, asking about trust or exited. */
@@ -705,6 +706,10 @@ export class Workspace {
     // settings.json may have changed outside Tondo since main last heard the theme.
     this.applyTheme(after.theme, after.palette);
     if (after.piPath !== before.piPath) await this.rediscoverPi();
+    if (patch.autoPull !== undefined || patch.projectAutoPull !== undefined) {
+      this.autoPullChecks.clear();
+      this.refreshGit();
+    }
   }
 
   /**
@@ -720,6 +725,8 @@ export class Workspace {
       piPath,
       ideCommand,
       projectScripts,
+      autoPull,
+      projectAutoPull,
       worktreeDirectory,
       theme,
       palette,
@@ -738,6 +745,8 @@ export class Workspace {
         piPath,
         ideCommand,
         projectScripts,
+        autoPull,
+        projectAutoPull,
         worktreeDirectory,
         theme,
         palette,
@@ -1187,6 +1196,8 @@ export class Workspace {
     try {
       const cwd = this.checkout(this.row(id));
       status = await this.git.status(cwd, true, fresh);
+      if (status.root && (await this.automaticallyPull(id, generation, status.root)))
+        status = await this.git.status(cwd, true, true);
       const thread = this.live.get(id);
       if (status.root && thread)
         activity = await agentCheckout(this.git, cwd, status.root, thread.state);
@@ -1208,6 +1219,70 @@ export class Workspace {
     this.gitTimer = setTimeout(() => {
       this.gitReading = this.gitReading.then(() => this.pollGit(id, generation, false));
     }, 2_000);
+  }
+
+  /** The open checkout is checked at most once a minute. No background project writes. */
+  private async automaticallyPull(id: string, generation: number, root: string): Promise<boolean> {
+    const row = this.row(id);
+    const cwd = this.checkout(row);
+    const enabled = () => {
+      const settings = this.supervisor.settings();
+      return settings.projectAutoPull[this.project(row.projectId).path] ?? settings.autoPull;
+    };
+    if (
+      !enabled() ||
+      this.gitMutation ||
+      this.piUpdating ||
+      !this.gitConnected ||
+      generation !== this.gitGeneration ||
+      id !== this.visibleId ||
+      Date.now() - (this.autoPullChecks.get(root) ?? -Infinity) < 60_000
+    )
+      return false;
+    // Reuse the manual action lock so prompts, terminals and branch changes cannot race the pull.
+    this.gitMutation = true;
+    const canUpdate = async () => {
+      if (
+        !enabled() ||
+        !this.gitConnected ||
+        generation !== this.gitGeneration ||
+        id !== this.visibleId
+      )
+        return false;
+      if (await this.supervisor.needsTrustAnswer(cwd)) return false;
+      const members = [...this.live.values()];
+      const roots = await Promise.all(members.map((thread) => checkpointRoot(thread.project)));
+      if (
+        members.some(
+          (thread, index) => (thread.busy || thread.askingTrust) && roots[index] === root,
+        )
+      )
+        return false;
+      const terminalRows = this.store.threads().filter((stored) => this.terminals.has(stored.id));
+      const terminalRoots = await Promise.all(
+        [
+          ...terminalRows.map((stored) => this.checkout(stored)),
+          ...this.terminals.scriptDirectories(),
+        ].map((folder) => checkpointRoot(folder)),
+      );
+      return (
+        !terminalRoots.includes(root) &&
+        enabled() &&
+        this.gitConnected &&
+        generation === this.gitGeneration &&
+        id === this.visibleId
+      );
+    };
+    try {
+      if (!(await canUpdate())) return false;
+      this.autoPullChecks.set(root, Date.now());
+      const pulled = await this.git.autoPull(cwd, canUpdate);
+      if (pulled) this.toast("info", "Automatically pulled the default branch.");
+      return pulled;
+    } finally {
+      this.gitMutation = false;
+      if (generation !== this.gitGeneration) this.refreshGit();
+    }
   }
 
   private async gitAction(message: Extract<ClientMessage, { type: "git-action" }>): Promise<void> {

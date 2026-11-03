@@ -23,6 +23,8 @@ import { IMAGE_COUNT, imagesError, type DraftImage } from "./images";
 import type { PiEvent, ThreadState } from "./thread";
 import {
   isDefaultModel,
+  isProjectAutoPull,
+  type ProjectAutoPull,
   isThinkingLevel,
   type DefaultModel,
   isPaletteSetting,
@@ -41,7 +43,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 33;
+export const PROTOCOL_VERSION = 34;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -1054,6 +1056,8 @@ function parsePatch(patch: unknown): SettingsPatch | string {
         "theme",
         "palette",
         "expandThinking",
+        "autoPull",
+        "projectAutoPull",
         "defaultModel",
         "defaultThinkingLevel",
         "pool",
@@ -1070,6 +1074,8 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     theme,
     palette,
     expandThinking,
+    autoPull,
+    projectAutoPull,
     defaultModel,
     defaultThinkingLevel,
     pool,
@@ -1084,6 +1090,8 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     theme?: ThemeSetting;
     palette?: PaletteSetting;
     expandThinking?: boolean;
+    autoPull?: boolean;
+    projectAutoPull?: ProjectAutoPull;
     defaultModel?: DefaultModel | null;
     defaultThinkingLevel?: ThinkingLevel | null;
     pool?: Partial<PoolSettings>;
@@ -1094,6 +1102,15 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     projectScripts?: ProjectScripts;
     worktreeDirectory?: string | null;
   } = {};
+  if (autoPull !== undefined) {
+    if (typeof autoPull !== "boolean") return "autoPull must be true or false";
+    parsed.autoPull = autoPull;
+  }
+  if (projectAutoPull !== undefined) {
+    if (!isProjectAutoPull(projectAutoPull))
+      return "projectAutoPull must contain true, false or null by absolute project folder";
+    parsed.projectAutoPull = { ...projectAutoPull };
+  }
   if (projectScripts !== undefined) {
     if (!isProjectScripts(projectScripts))
       return "projectScripts must contain valid named scripts by absolute project folder";
