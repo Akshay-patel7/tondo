@@ -21,7 +21,7 @@ import { PiCommandError, type PiRecord } from "./piRpc";
 import { signalGroup } from "./processGroup";
 import { sessionFolder } from "./sessionFolder";
 import { SessionIndex } from "./sessionIndex";
-import { needsTrustDecision, trustArgs } from "./trust";
+import { needsTrustDecision, piTrust, trustArgs } from "./trust";
 import { IMAGE_FIXTURE } from "../shared/imageFixture";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
@@ -132,7 +132,7 @@ async function transcript(pi: PiProcess): Promise<[string, string][]> {
     .map((message) => [message.role, textOf(message)]);
 }
 
-describe("pi 0.87.1's RPC protocol", () => {
+describe("pi 1.5.0's RPC protocol", () => {
   it("accepts a prompt, streams the reply, and settles once", async () => {
     const { pi, records, next } = await startRealPi({
       responses: [fauxAssistantMessage(fauxText("Hello from faux."))],
@@ -298,12 +298,16 @@ describe("pi 0.87.1's RPC protocol", () => {
       toolName: "bash",
       args: { command: "echo contract" },
     });
-    expect(records.find((record) => record.type === "tool_execution_end")).toEqual({
+    expect(records.find((record) => record.type === "tool_execution_end")).toMatchObject({
       type: "tool_execution_end",
       toolCallId: "call_echo",
       toolName: "bash",
-      result: { content: [{ type: "text", text: "contract\n" }] },
+      result: {
+        content: [{ type: "text", text: "contract\n" }],
+        structuredContent: { exit_code: 0, output: "contract\n", truncated: false },
+      },
       isError: false,
+      durationMs: expect.any(Number),
     });
   });
 
@@ -385,6 +389,31 @@ describe("pi 0.87.1's RPC protocol", () => {
         source: "extension",
       }),
     );
+  });
+
+  it("advertises /mcp as an extension command and handles it without sending a prompt", async () => {
+    // Tests disable automatic extensions. Load pi's real built-in MCP extension explicitly.
+    const mcp = path.join(
+      repoRoot,
+      "node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.js",
+    );
+    const { pi, records } = await startRealPi({ responses: [] }, ["--no-session", "-e", mcp]);
+    const { commands } = (await pi.rpc.request({ type: "get_commands" })).data as {
+      commands: unknown[];
+    };
+    expect(commands).toContainEqual(expect.objectContaining({ name: "mcp", source: "extension" }));
+    expect((await pi.rpc.request({ type: "prompt", message: "/mcp" })).data).toEqual({
+      disposition: "handled",
+    });
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_request",
+        method: "notify",
+        message: expect.stringContaining("No MCP servers configured."),
+      }),
+    );
+    expect(records.some((record) => record.type === "agent_start")).toBe(false);
+    expect(await transcript(pi)).toEqual([]);
   });
 
   it("lists prompt templates and skills given by path, even with --no-skills", async () => {
@@ -489,7 +518,7 @@ async function namedThread(): Promise<{ id: string; file: string }> {
   return { id, file: sessionFile };
 }
 
-describe("pi 0.87.1's session files", () => {
+describe("pi 1.5.0's session files", () => {
   it("keeps a thread where Tondo looks for it, and Tondo reads its name", async () => {
     const { id, file } = await namedThread();
     const folder = sessionFolder(workDir, [], sessionEnv());
@@ -551,7 +580,7 @@ async function promptTemplates(args: string[]): Promise<string[]> {
   return commands.filter((command) => command.source === "prompt").map((command) => command.name);
 }
 
-describe("pi 0.87.1's project trust", () => {
+describe("pi 1.5.0's project trust", () => {
   // The scratch folder is the project, with a prompt template as its only
   // protected file. pi lists the template only if it trusts the project.
   beforeEach(() => {
@@ -581,5 +610,35 @@ describe("pi 0.87.1's project trust", () => {
     // pi's own decision stands over an answer Tondo remembered.
     expect(trustArgs(workDir, trustEnv(), { [workDir]: true })).toEqual([]);
     expect(await promptTemplates([])).toEqual(templates);
+  });
+});
+
+describe("pi 1.5.0's trust without protected project resources", () => {
+  it.each([true, false])("honors saved trust %s in pi and Tondo", async (trusted) => {
+    mkdirSync(path.join(workDir, "agent"));
+    writeFileSync(path.join(workDir, "agent/trust.json"), JSON.stringify({ [workDir]: trusted }));
+    const extension = path.join(workDir, "trust-ext.ts");
+    writeFileSync(
+      extension,
+      `export default function (pi) {
+      pi.registerCommand("tondo-trust", {
+        handler: async (_args, ctx) => ctx.ui.notify(String(ctx.isProjectTrusted()), "info"),
+      });
+    }`,
+    );
+    const { pi, records } = await startRealPi({ responses: [] }, ["--no-session", "-e", extension]);
+    await pi.rpc.request({ type: "prompt", message: "/tondo-trust" });
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_request",
+        method: "notify",
+        message: String(trusted),
+      }),
+    );
+    expect(piTrust(workDir, trustEnv())).toEqual({
+      decidedBy: "trust-file",
+      trusted,
+      folder: workDir,
+    });
   });
 });

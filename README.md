@@ -56,7 +56,7 @@ These rules come from studying how T3 Code stays fast:
 
 ## Setup and settings
 
-Tondo shows a problem with pi where it happens. If it can't find pi, or finds one older than 0.87.1, the thread shows how to install or update pi, with Choose pi… and Check again. If pi has no provider credentials, the thread offers a sign-in terminal, and closing that terminal restarts the thread's pi so the new models show up. A project whose `.pi` settings need trust asks before pi starts, and Tondo remembers the answer.
+Tondo shows a problem with pi where it happens. If it can't find pi, or finds one older than 1.5.0, the thread shows how to install or update pi, with Choose pi… and Check again. If pi has no provider credentials, the thread offers a sign-in terminal, and closing that terminal restarts the thread's pi so the new models show up. A project whose `.pi` settings need trust asks before pi starts, and Tondo remembers the answer.
 
 A new thread opens its composer immediately but stays out of the sidebar until you type a message, attach an image or run a project script. Unsent drafts stay with their threads across navigation and restart.
 
@@ -121,7 +121,7 @@ Some of pi's terminal UI can't cross the RPC boundary (see [RPC extension UI](ht
 
 The paperclip's **Attach files** picker accepts images and other files in one selection. PNG, JPEG, GIF and WebP files become image attachments. Every other file becomes an original absolute path in the draft. pi can read those files with its tools, including files outside the project. Tondo does not copy or convert non-image files. Moving or deleting a file breaks its reference, and reading binary formats such as PDFs depends on pi's available tools. Edit or delete a path in the composer to change the references. Non-image files use the picker, not paste or drop.
 
-Images send only when pi is idle. pi 0.87.1's queue APIs return text without attachments, so Tondo keeps images in the draft while pi works instead of risking their loss on Escape or Alt+Up. Local built-ins and known extension commands leave images in the draft. Attach up to 4 PNG, JPEG, GIF or WebP images, at most 5 MiB and 16 million pixels each, with a 10 MiB total. File completion lists at most 10,000 tracked and nonignored untracked paths in a Git project; it inserts literal paths, never file contents.
+Images send only when pi is idle. pi's queue APIs return text without attachments, so Tondo keeps images in the draft while pi works instead of risking their loss on Escape or Alt+Up. Local built-ins and known extension commands leave images in the draft. Attach up to 4 PNG, JPEG, GIF or WebP images, at most 5 MiB and 16 million pixels each, with a 10 MiB total. File completion lists at most 10,000 tracked and nonignored untracked paths in a Git project; it inserts literal paths, never file contents.
 
 pi doesn't lock session files. If the same session is open in terminal pi and in Tondo at once, both append to it and their entries interleave.
 

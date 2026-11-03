@@ -37,7 +37,7 @@ export function updateFixture(root: string) {
     piManifest,
     JSON.stringify({
       name: "@earendil-works/pi-coding-agent",
-      version: "0.87.1",
+      version: "1.5.0",
       type: "module",
       bin: { pi: "dist/cli.js" },
     }),
@@ -59,7 +59,7 @@ export function updateFixture(root: string) {
   writeFileSync(
     registry,
     JSON.stringify({
-      "@earendil-works/pi-coding-agent": "0.88.0",
+      "@earendil-works/pi-coding-agent": "1.6.0",
       "test-plugin": "2.0.0",
       "range-plugin@^1": ["1.0.0", "1.2.0"],
       "project-plugin": "3.0.0",

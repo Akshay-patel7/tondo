@@ -145,14 +145,14 @@ test("review and update pi and packages without changing pins or package filters
   await expect(
     page
       .getByRole("region", { name: "Settings", exact: true })
-      .getByText("pi 0.88.0", { exact: true }),
+      .getByText("pi 1.6.0", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Update pi", exact: true })).toHaveCount(0);
   expect(JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")).version).toBe(
-    "0.88.0",
+    "1.6.0",
   );
   expect(calls(log).filter((args) => args[0] === "self")).toEqual([
-    ["self", "@earendil-works/pi-coding-agent@0.88.0"],
+    ["self", "@earendil-works/pi-coding-agent@1.6.0"],
   ]);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await waitForPi(page);

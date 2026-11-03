@@ -133,6 +133,36 @@ test("the slash menu lists an extension's command, a prompt template and a skill
   await expectDraft(page, "/ski");
 });
 
+test("pi's MCP extension command runs over RPC without reaching the model", async () => {
+  tondo = await launchWithPi({
+    workDir,
+    script: { responses: [reply("Only the normal prompt reached the model.")] },
+    piArgs: [
+      "-e",
+      path.resolve(
+        __dirname,
+        "../node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.js",
+      ),
+    ],
+  });
+  const { page } = tondo;
+  await bringToFront(tondo);
+  await addProject(tondo, project);
+  await waitForPi(page);
+  await composer(page).fill("/mcp");
+  await expect(menu(page).getByRole("option").filter({ hasText: "/mcp" })).toContainText(
+    "Extension",
+  );
+  await composer(page).press("Enter");
+  await expect(toast(page, "No MCP servers configured.")).toBeVisible();
+  await expect(page.getByTestId("timeline").getByText("/mcp", { exact: true })).toHaveCount(0);
+  await send(page, "Hello.");
+  await expect(
+    page.getByText("Only the normal prompt reached the model.", { exact: true }),
+  ).toBeVisible();
+  await waitForIdle(page);
+});
+
 test("pi's built-in commands run in Tondo and never reach pi as text", async () => {
   tondo = await launchWithPi({
     workDir,

@@ -113,13 +113,40 @@ describe("needsTrustDecision", () => {
     expect(() => needsTrustDecision(project, env)).toThrow(`Can't read pi's trust store ${file}: `);
   });
 
-  it("doesn't read trust.json for a project with nothing protected", () => {
+  it("checks trust.json even for a project with nothing protected", () => {
     create(path.join(root, "agent/trust.json"), "{");
-    expect(needsTrustDecision(project, env)).toBe(false);
+    expect(() => needsTrustDecision(project, env)).toThrow("Can't read pi's trust store");
   });
 });
 
 describe("piTrust", () => {
+  it.each([true, false])("honors saved trust %s without protected files", (trusted) => {
+    create(path.join(project, "AGENTS.md"));
+    trustStore({ [project]: trusted });
+    expect(piTrust(project, env)).toEqual({ decidedBy: "trust-file", trusted, folder: project });
+    expect(trustArgs(project, env, { [project]: !trusted })).toEqual([]);
+  });
+
+  it("inherits saved distrust without protected files, including through symlinks", () => {
+    const parent = path.dirname(project);
+    trustStore({ [project]: null, [parent]: false });
+    symlinkSync(project, path.join(root, "link"));
+    expect(piTrust(path.join(root, "link"), env)).toEqual({
+      decidedBy: "trust-file",
+      trusted: false,
+      folder: parent,
+    });
+  });
+
+  it("auto-trusts an unprotected folder only when no decision is saved", () => {
+    trustStore({ [project]: null });
+    create(
+      path.join(root, "agent/settings.json"),
+      JSON.stringify({ defaultProjectTrust: "never" }),
+    );
+    expect(piTrust(project, env)).toEqual({ decidedBy: "nothing" });
+  });
+
   it("says who settles trust, for /trust to explain", () => {
     expect(piTrust(project, env)).toEqual({ decidedBy: "nothing" });
     create(path.join(project, ".pi/prompts/hello.md"));

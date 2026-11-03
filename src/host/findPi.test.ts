@@ -52,7 +52,7 @@ const cliIn = (prefix: string) =>
 
 describe("findPi", () => {
   it("finds a global npm install on PATH", () => {
-    const bin = installPi(path.join(root, "node"), "0.87.1");
+    const bin = installPi(path.join(root, "node"), "1.5.0");
     const empty = path.join(root, "empty");
     mkdirSync(empty);
     expect(findPi({ PATH: `${empty}:${bin}` })).toEqual({
@@ -60,15 +60,15 @@ describe("findPi", () => {
       node: path.join(bin, "node"),
       cli: cliIn(path.join(root, "node")),
       packageDir: path.join(root, "node/lib/node_modules/@earendil-works/pi-coding-agent"),
-      version: "0.87.1",
+      version: "1.5.0",
     });
   });
 
   it("follows an asdf shim to the newest pi it names", () => {
     const asdf = path.join(root, "asdf");
     installPi(path.join(asdf, "installs/nodejs/22.1.0"), "0.80.0");
-    installPi(path.join(asdf, "installs/nodejs/24.15.0"), "0.87.1");
-    installPi(path.join(asdf, "installs/nodejs/24.16.0"), "0.88.2");
+    installPi(path.join(asdf, "installs/nodejs/24.15.0"), "1.5.0");
+    installPi(path.join(asdf, "installs/nodejs/24.16.0"), "1.6.2");
     mkdirSync(path.join(asdf, "shims"));
     writeFileSync(
       path.join(asdf, "shims/pi"),
@@ -90,26 +90,26 @@ describe("findPi", () => {
         asdf,
         "installs/nodejs/24.16.0/lib/node_modules/@earendil-works/pi-coding-agent",
       ),
-      version: "0.88.2",
+      version: "1.6.2",
     });
   });
 
   it("lets the override win over PATH", () => {
-    const onPath = installPi(path.join(root, "newer"), "0.90.0");
-    const chosen = installPi(path.join(root, "chosen"), "0.87.1");
-    expect(findPi({ PATH: onPath }, path.join(chosen, "pi"))).toMatchObject({ version: "0.87.1" });
+    const onPath = installPi(path.join(root, "newer"), "1.7.0");
+    const chosen = installPi(path.join(root, "chosen"), "1.5.0");
+    expect(findPi({ PATH: onPath }, path.join(chosen, "pi"))).toMatchObject({ version: "1.5.0" });
   });
 
-  it("refuses a pi older than 0.87.1", () => {
-    const bin = installPi(path.join(root, "node"), "0.87.0");
+  it("refuses a pi older than 1.5.0", () => {
+    const bin = installPi(path.join(root, "node"), "1.4.9");
     expect(failure(() => findPi({ PATH: bin }))).toEqual({
-      message: `${bin}/pi is pi 0.87.0, and Tondo needs 0.87.1 or newer`,
-      problem: { kind: "too-old", version: "0.87.0", required: "0.87.1", command: `${bin}/pi` },
+      message: `${bin}/pi is pi 1.4.9, and Tondo needs 1.5.0 or newer`,
+      problem: { kind: "too-old", version: "1.4.9", required: "1.5.0", command: `${bin}/pi` },
     });
   });
 
   it("refuses an install with no node next to pi", () => {
-    const bin = installPi(path.join(root, "node"), "0.87.1", { node: false });
+    const bin = installPi(path.join(root, "node"), "1.5.0", { node: false });
     const message = `${bin}/pi has no node next to it at ${bin}/node`;
     expect(failure(() => findPi({ PATH: bin }))).toEqual({
       message,
@@ -129,14 +129,14 @@ describe("findPi", () => {
   });
 
   it("refuses a pi package that names no pi command", () => {
-    const bin = installPi(path.join(root, "node"), "0.87.1");
+    const bin = installPi(path.join(root, "node"), "1.5.0");
     const manifest = path.join(
       root,
       "node/lib/node_modules/@earendil-works/pi-coding-agent/package.json",
     );
     writeFileSync(
       manifest,
-      JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.87.1" }),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "1.5.0" }),
     );
     const message = `${manifest} names no pi command`;
     expect(failure(() => findPi({ PATH: bin }))).toEqual({
@@ -175,12 +175,12 @@ describe("findPi", () => {
     // The old install is the problem to fix, so it decides the kind.
     expect(failure(() => findPi({ PATH: path.join(asdf, "shims") }))).toEqual({
       message:
-        `${installs}/22.1.0/bin/pi is pi 0.80.0, and Tondo needs 0.87.1 or newer\n` +
+        `${installs}/22.1.0/bin/pi is pi 0.80.0, and Tondo needs 1.5.0 or newer\n` +
         `${installs}/23.0.0/bin/pi doesn't exist`,
       problem: {
         kind: "too-old",
         version: "0.80.0",
-        required: "0.87.1",
+        required: "1.5.0",
         command: `${installs}/22.1.0/bin/pi`,
       },
     });

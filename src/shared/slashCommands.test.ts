@@ -15,13 +15,15 @@ import {
 const pi = path.resolve(import.meta.dirname, "../../node_modules/@earendil-works/pi-coding-agent");
 
 describe("pi's built-in slash commands", () => {
-  it("maps every command pi's slash-commands.md lists", () => {
+  it("maps terminal-only commands and leaves the documented MCP extension command to pi", () => {
     const doc = readFileSync(path.join(pi, "docs/slash-commands.md"), "utf8");
     // Table rows name a command first: | `/compact [instructions]` | ... |
     const names = [...doc.matchAll(/^\| `\/([\w-]+)/gm)].map((match) => match[1]!);
     // A change to the page's format mustn't make this pass by finding nothing.
     expect(names.length).toBeGreaterThanOrEqual(25);
-    expect(names.filter((name) => !isBuiltin(name))).toEqual([]);
+    // /mcp is documented as built in, but pi advertises and handles it over RPC.
+    // pi.contract.test.ts checks that it stays an extension command, not model input.
+    expect(names.filter((name) => !isBuiltin(name))).toEqual(["mcp"]);
   });
 
   it("maps every command pi's terminal UI runs as built in", async () => {
@@ -76,6 +78,7 @@ describe("builtinIn", () => {
 
   it("leaves extension commands, prompt templates and skills to pi", () => {
     expect(builtinIn("/review")).toBeNull();
+    expect(builtinIn("/mcp")).toBeNull();
     expect(builtinIn("/skill:review")).toBeNull();
     // pi names a second command called session "session:2".
     expect(builtinIn("/session:2")).toBeNull();

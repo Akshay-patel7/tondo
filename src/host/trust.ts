@@ -1,4 +1,4 @@
-// Works out whether pi needs Tondo to settle project trust. pi 0.87.1 decides
+// Works out whether pi needs Tondo to settle project trust. pi 1.5.0 decides
 // in resolveProjectTrusted (dist/core/project-trust.js), using
 // dist/core/trust-manager.js. Tondo runs your pi rather than the one it's
 // built with, so it can't import them, and pi.contract.test.ts checks that
@@ -47,18 +47,18 @@ export type PiTrust =
   | { readonly decidedBy: "ask" };
 
 /**
- * Who settles project trust for pi started in `cwd` with `env`: nobody if
- * the project has no protected files, else pi's trust.json for the project or
- * a parent folder, else pi's defaultProjectTrust unless it's "ask". Tondo
+ * Who settles project trust for pi started in `cwd` with `env`: pi's trust.json
+ * for the project or a parent folder, else nobody if it has no protected files,
+ * else pi's defaultProjectTrust unless it's "ask". Tondo
  * can't see extensions that answer pi's project_trust event, and an answer
  * passed as a flag overrides them.
  */
 export function piTrust(cwd: string, env: Record<string, string>): PiTrust {
   const home = env.HOME || os.homedir();
   const agentDir = piAgentDir(cwd, env, home);
-  if (!hasProtectedFiles(cwd, home)) return { decidedBy: "nothing" };
   const saved = savedDecision(agentDir, cwd);
   if (saved) return { decidedBy: "trust-file", ...saved };
+  if (!hasProtectedFiles(cwd, home)) return { decidedBy: "nothing" };
   const fallback = defaultTrust(agentDir);
   if (fallback !== "ask") return { decidedBy: "default", trusted: fallback === "always" };
   return { decidedBy: "ask" };

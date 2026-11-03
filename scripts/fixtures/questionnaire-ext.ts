@@ -3,7 +3,7 @@
 /* oxlint-disable eslint/no-await-in-loop -- reproduce the extension's sequential RPC walker. */
 import { appendFileSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function questionnaireExtension(pi: ExtensionAPI): void {

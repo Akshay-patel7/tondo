@@ -3,7 +3,7 @@
 // renderers don't exist, so Tondo shows its calls with the generic card.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const wordCount = defineTool({

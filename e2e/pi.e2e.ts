@@ -101,7 +101,7 @@ test("a pi that fails to start shows why, and offers a restart", async () => {
     path.join(broken, "package.json"),
     JSON.stringify({
       name: "@earendil-works/pi-coding-agent",
-      version: "0.87.1",
+      version: "1.5.0",
       bin: { pi: "cli.js" },
     }),
   );

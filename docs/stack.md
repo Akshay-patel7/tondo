@@ -7,7 +7,7 @@ The frameworks and libraries Tondo is built on, and the evidence behind each cho
 | Layer | Choice | Latest on 2026-09-24 |
 |---|---|---|
 | Desktop shell | Electron | 44.4.5 (Chromium 152, Node 24.21) |
-| pi process host | Tondo's own RPC client in an Electron utility process, one `pi --mode rpc` per thread | Tested with pi 0.87.1 |
+| pi process host | Tondo's own RPC client in an Electron utility process, one `pi --mode rpc` per thread | Initially tested with pi 0.87.1; now requires [pi 1.5.0](#pi-compatibility-2026-11-03) |
 | UI framework | React with React Compiler | react 19.3.0, babel-plugin-react-compiler 1.0.0 |
 | Transcript list | Bounded DOM row window with ResizeObserver | In-tree, updated 2026-10-12 |
 | Markdown | streamdown with @streamdown/code | 2.6.0, 1.1.1 |
@@ -22,6 +22,12 @@ The frameworks and libraries Tondo is built on, and the evidence behind each cho
 | Language | TypeScript | 7.0.2 |
 | Package manager | pnpm | 12.6.0 |
 | Tests | Vitest, and Playwright for end-to-end tests | 5.0.1, 1.63.0 |
+
+## Pi compatibility (2026-11-03)
+
+Tondo requires pi 1.5.0 or newer. Its development dependencies pin pi-ai and pi-coding-agent to 1.5.0, with TypeBox 1.3.27 for the test extensions' schemas. pi-ai no longer exports TypeBox directly.
+
+Project trust follows pi 1.5.0. A saved decision for the project or a parent folder stands even when the project has no protected resources. These changes do not add work to the streaming path. The older measurements below retain their original pi versions; they have not been remeasured for 1.5.0.
 
 ## Transcript virtualization (2026-10-12)
 

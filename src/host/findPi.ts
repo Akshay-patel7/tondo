@@ -16,7 +16,7 @@ import path from "node:path";
 import type { PiProblem } from "../shared/protocol";
 
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
-export const MIN_PI_VERSION = "0.87.1";
+export const MIN_PI_VERSION = "1.5.0";
 
 export interface PiInstall {
   /** The pi command it was found as: on PATH, in the settings, or an install an asdf shim names. */
@@ -76,7 +76,7 @@ export function findPi(env: Record<string, string>, override?: string | null): P
   throw new PiNotFoundError(problems.map(({ message }) => message).join("\n"), first!.problem);
 }
 
-/** The pi that `command` runs, if it's 0.87.1 or newer and has a node next to it. */
+/** The pi that `command` runs, if it's 1.5.0 or newer and has a node next to it. */
 function installAt(command: string): PiInstall {
   let real: string;
   try {

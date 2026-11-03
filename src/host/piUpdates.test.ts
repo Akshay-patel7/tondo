@@ -26,7 +26,7 @@ beforeEach(() => {
       command: fixture.cli,
       node: process.execPath,
       packageDir: fixture.packageDir,
-      version: "0.87.1",
+      version: "1.5.0",
     },
     agentDir,
     cwd,
@@ -59,8 +59,8 @@ function calls(): string[][] {
 test("checks installed npm versions and ranges without installing, ignores pins and local paths", async () => {
   const entries = await probePiUpdates(context);
   expect(entries.find((entry) => entry.scope === "pi")).toMatchObject({
-    installed: "0.87.1",
-    latest: "0.88.0",
+    installed: "1.5.0",
+    latest: "1.6.0",
     state: "available",
   });
   expect(entries.find((entry) => entry.name === "test-plugin")).toMatchObject({
@@ -112,11 +112,11 @@ test("updates only the selected pi installation to the reviewed version", async 
   const entry = await available("@earendil-works/pi-coding-agent");
   await probePiUpdates({ ...context, update: entry });
   expect(calls().filter((args) => args[0] === "self")).toEqual([
-    ["self", "@earendil-works/pi-coding-agent@0.88.0"],
+    ["self", "@earendil-works/pi-coding-agent@1.6.0"],
   ]);
   expect(
     JSON.parse(readFileSync(path.join(fixture.packageDir, "package.json"), "utf8")).version,
-  ).toBe("0.88.0");
+  ).toBe("1.6.0");
 });
 
 test("does not read or update project packages without trust", async () => {

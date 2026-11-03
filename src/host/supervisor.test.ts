@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostConfig } from "../shared/protocol";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 import { piLaunch, Supervisor, TrustNotSavedError } from "./supervisor";
@@ -56,6 +56,22 @@ describe("Supervisor", () => {
     expect((error as Error).message).toContain(
       `Tondo couldn't save your answer. Tondo's settings file ${file} isn't valid JSON`,
     );
+  });
+
+  it("keeps saved distrust in maintenance even without protected project files", async () => {
+    create(path.join(root, "agent/trust.json"), JSON.stringify({ [project]: false }));
+    create(
+      path.join(config.userData, "settings.json"),
+      JSON.stringify({ piPath: path.join(bin, "pi") }),
+    );
+    const supervisor = new Supervisor(config, () => {});
+    vi.spyOn(supervisor, "captureLoginEnv").mockResolvedValue({ HOME: path.join(root, "home") });
+    expect(await supervisor.trustInfo(project)).toEqual({
+      decidedBy: "trust-file",
+      trusted: false,
+      folder: project,
+    });
+    expect((await supervisor.maintenanceContext(project)).projectTrusted).toBe(false);
   });
 
   it("reads what it can of a settings file with a mistake in it, for starting pi", () => {

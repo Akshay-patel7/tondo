@@ -30,7 +30,7 @@ import { piGroup, piGroups } from "./processes";
 test.describe.configure({ timeout: 60_000 });
 
 /** The oldest pi Tondo runs (MIN_PI_VERSION in src/host/findPi.ts). */
-const REQUIRED_PI = "0.87.1";
+const REQUIRED_PI = "1.5.0";
 
 /** Where the accounts work's QA screenshots go. */
 const ACCOUNTS_QA = path.resolve(__dirname, "../.dev/improvements-20261011/qa/accounts");

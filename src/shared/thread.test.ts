@@ -185,7 +185,7 @@ describe("applyEvent", () => {
         isError: false,
       },
       { type: "message_start", message: prompt! },
-      { type: "agent_settled" },
+      { type: "agent_settled", aborted: false },
       { type: "auto_retry_end", success: true, attempt: 1 },
       {
         type: "compaction_end",
@@ -278,7 +278,7 @@ describe("applyEvent", () => {
       delayMs: 2000,
       errorMessage: "503 Service Unavailable",
     });
-    expect(applyEvent(retrying, { type: "agent_settled" }).retry).toBeNull();
+    expect(applyEvent(retrying, { type: "agent_settled", aborted: false }).retry).toBeNull();
   });
 
   test("compaction shows from compaction_start until compaction_end", () => {
@@ -395,7 +395,7 @@ describe("tool calls", () => {
     const settled = applyEvents(empty, [
       { type: "agent_start" },
       start("call_1"),
-      { type: "agent_settled" },
+      { type: "agent_settled", aborted: true },
     ]);
 
     expect(settled.tools).toEqual({});
