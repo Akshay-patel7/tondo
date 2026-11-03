@@ -29,6 +29,11 @@ interface CommandStep {
   steps?: CommandStep[];
 }
 interface PiConfigApi {
+  getConfiguredSelfUpdateArgv(setting: string[] | undefined): string[] | undefined;
+  makeConfiguredSelfUpdateCommand(
+    argv: string[],
+    release: { packageName: string; version: string },
+  ): CommandStep;
   getSelfUpdateCommand(
     name: string,
     npmCommand?: string[],
@@ -103,6 +108,14 @@ export async function probePiUpdates(input: ProbeInput): Promise<readonly PiUpda
   };
   const configured = manager.listConfiguredPackages();
   const self = manifest(input.pi.packageDir);
+  // A project must never choose the command that updates the user's pi installation.
+  const customUpdate = config.getConfiguredSelfUpdateArgv(
+    settings.getGlobalSettings().selfUpdateCommand,
+  );
+  const selfUpdateCommand = (version: string) =>
+    customUpdate
+      ? config.makeConfiguredSelfUpdateCommand(customUpdate, { packageName: self.name, version })
+      : config.getSelfUpdateCommand(self.name, settings.getNpmCommand(), `${self.name}@${version}`);
 
   if (input.update) {
     const target = input.update;
@@ -111,17 +124,14 @@ export async function probePiUpdates(input: ProbeInput): Promise<readonly PiUpda
     if (target.scope === "pi") {
       if (self.version !== target.installed || self.name !== target.source)
         throw new Error("The selected pi changed. Check again before updating.");
-      const command = config.getSelfUpdateCommand(
-        self.name,
-        settings.getNpmCommand(),
-        `${self.name}@${target.latest}`,
-      );
+      const command = selfUpdateCommand(target.latest);
       if (!command) throw new Error("Update this pi with the package manager that installed it.");
       for (const step of command.steps ?? [command]) {
         // oxlint-disable-next-line eslint/no-await-in-loop -- self-update steps must finish in order.
         await run(step.command, step.args, input.cwd);
       }
-      if (manifest(input.pi.packageDir).version !== target.latest)
+      const installed = manifest(input.pi.packageDir);
+      if (installed.name !== self.name || installed.version !== target.latest)
         throw new Error(
           "The selected pi did not reach the reviewed version. Check its installation before retrying.",
         );
@@ -198,14 +208,7 @@ export async function probePiUpdates(input: ProbeInput): Promise<readonly PiUpda
         } else {
           row.latest = await latestNpm(spec);
           row.state = semver.gt(row.latest, installed.version) ? "available" : "current";
-          if (
-            entry.scope === "pi" &&
-            !config.getSelfUpdateCommand(
-              self.name,
-              settings.getNpmCommand(),
-              `${self.name}@${row.latest}`,
-            )
-          ) {
+          if (entry.scope === "pi" && !selfUpdateCommand(row.latest)) {
             row.state = "unavailable";
             row.message = "Update this pi with the package manager that installed it.";
           }

@@ -27,7 +27,7 @@ The frameworks and libraries Tondo is built on, and the evidence behind each cho
 
 Tondo requires pi 1.5.0 or newer. Its development dependencies pin pi-ai and pi-coding-agent to 1.5.0, with TypeBox 1.3.27 for the test extensions' schemas. pi-ai no longer exports TypeBox directly.
 
-Project trust follows pi 1.5.0. A saved decision for the project or a parent folder stands even when the project has no protected resources. These changes do not add work to the streaming path. The older measurements below retain their original pi versions; they have not been remeasured for 1.5.0.
+Project trust follows pi 1.5.0. A saved decision for the project or a parent folder stands even when the project has no protected resources. Self-updates honor pi's environment override and global custom update command, never a project command, and verify the selected installation against the reviewed version. These changes do not add work to the streaming path. The older measurements below retain their original pi versions; they have not been remeasured for 1.5.0.
 
 ## Transcript virtualization (2026-10-12)
 

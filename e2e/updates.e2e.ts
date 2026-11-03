@@ -167,6 +167,46 @@ test("review and update pi and packages without changing pins or package filters
   expect(errors).toEqual([]);
 });
 
+test("a custom pi updater waits for confirmation and updates the selected install", async () => {
+  const { page, agent, updater, log, packageDir } = await start();
+  const file = path.join(agent, "settings.json");
+  const settings = JSON.parse(readFileSync(file, "utf8"));
+  settings.selfUpdateCommand = [process.execPath, updater, "self", "{installSpec}", "custom"];
+  writeFileSync(file, JSON.stringify(settings));
+  writeFileSync(path.join(root, "disable-self-update"), "");
+  await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+  const update = page.getByRole("button", { name: "Update pi", exact: true });
+  await expect(update).toBeEnabled();
+  expect(calls(log).some((args) => args[0] === "self")).toBe(false);
+  await update.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("1.6.0");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(calls(log).some((args) => args[0] === "self")).toBe(false);
+  await update.click();
+  await dialog.getByRole("button", { name: "Install update", exact: true }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Settings", exact: true })
+      .getByText("pi 1.6.0", { exact: true }),
+  ).toBeVisible();
+  expect(JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")).version).toBe(
+    "1.6.0",
+  );
+  expect(calls(log).filter((args) => args[0] === "self")).toEqual([
+    ["self", "@earendil-works/pi-coding-agent@1.6.0", "custom"],
+  ]);
+  await expect(page.getByRole("button", { name: "Check for updates", exact: true })).toBeEnabled();
+  await expect(update).toHaveCount(0);
+  await page.screenshot({
+    path: test.info().outputPath("custom-update-complete.png"),
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await waitForPi(page);
+});
+
 test("project updates are distinct from global ones and resume the visible session and draft", async () => {
   const { page, agent, project, log } = await start([reply("History survived.")], true);
   const declaration = readFileSync(path.join(project, ".pi/settings.json"), "utf8");

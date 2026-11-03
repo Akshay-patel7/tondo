@@ -89,7 +89,12 @@ fs.writeFileSync(${JSON.stringify(path.join(root, "install-started"))},'');
   chmodSync(npm, 0o755);
   writeFileSync(
     path.join(packageDir, "dist/config.js"),
-    `export function getSelfUpdateCommand(name, npm, target) { return { command: ${JSON.stringify(process.execPath)}, args: [${JSON.stringify(updater)}, 'self', target] }; }\n`,
+    `export { getConfiguredSelfUpdateArgv, makeConfiguredSelfUpdateCommand } from ${JSON.stringify(pathToFileURL(path.join(realPackage, "dist/config.js")).href)};
+import { existsSync } from "node:fs";
+export function getSelfUpdateCommand(name, npm, target) {
+  if (existsSync(${JSON.stringify(path.join(root, "disable-self-update"))})) return undefined;
+  return { command: ${JSON.stringify(process.execPath)}, args: [${JSON.stringify(updater)}, "self", target] };
+}\n`,
   );
   const shell = path.join(bin, "shell");
   writeFileSync(
@@ -103,9 +108,10 @@ fs.writeFileSync(${JSON.stringify(path.join(root, "install-started"))},'');
     HOME: path.join(root, "home"),
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
+    PI_SELF_UPDATE_COMMAND: "",
   };
   mkdirSync(env.HOME, { recursive: true });
-  return { cli, packageDir, registry, log, env };
+  return { cli, packageDir, registry, updater, log, env };
 }
 
 export function seedUpdatePackages(agentDir: string): void {

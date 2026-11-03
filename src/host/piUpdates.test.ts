@@ -119,6 +119,98 @@ test("updates only the selected pi installation to the reviewed version", async 
   ).toBe("1.6.0");
 });
 
+test("uses the global custom updater with reviewed placeholders and no shell expansion", async () => {
+  const file = path.join(context.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(file, "utf8"));
+  settings.selfUpdateCommand = [
+    process.execPath,
+    fixture.updater,
+    "self",
+    "{installSpec}",
+    "{packageName}",
+    "{version}",
+    "$HOME; echo not-a-shell",
+  ];
+  const before = JSON.stringify(settings);
+  writeFileSync(file, before);
+  writeFileSync(path.join(root, "disable-self-update"), "");
+  const entry = await available("@earendil-works/pi-coding-agent");
+  expect(calls().every((args) => args[0] === "view")).toBe(true);
+  await probePiUpdates({ ...context, update: entry });
+  expect(calls().filter((args) => args[0] === "self")).toEqual([
+    [
+      "self",
+      "@earendil-works/pi-coding-agent@1.6.0",
+      "@earendil-works/pi-coding-agent",
+      "1.6.0",
+      "$HOME; echo not-a-shell",
+    ],
+  ]);
+  expect(readFileSync(file, "utf8")).toBe(before);
+});
+
+test("an environment custom updater takes precedence over global settings", async () => {
+  writeFileSync(
+    path.join(context.agentDir, "settings.json"),
+    JSON.stringify({
+      selfUpdateCommand: ["not-an-executable"],
+    }),
+  );
+  vi.stubEnv(
+    "PI_SELF_UPDATE_COMMAND",
+    `  ${process.execPath}  ${fixture.updater} self {installSpec} environment  `,
+  );
+  writeFileSync(path.join(root, "disable-self-update"), "");
+  const entry = await available("@earendil-works/pi-coding-agent");
+  await probePiUpdates({ ...context, update: entry });
+  expect(calls().filter((args) => args[0] === "self")).toEqual([
+    ["self", "@earendil-works/pi-coding-agent@1.6.0", "environment"],
+  ]);
+});
+
+test.each([false, true])(
+  "never uses a project custom updater, trusted=%s",
+  async (projectTrusted) => {
+    mkdirSync(path.join(context.cwd, ".pi"));
+    writeFileSync(
+      path.join(context.cwd, ".pi/settings.json"),
+      JSON.stringify({
+        selfUpdateCommand: [process.execPath, fixture.updater, "self", "{installSpec}"],
+      }),
+    );
+    writeFileSync(path.join(root, "disable-self-update"), "");
+    const entries = await probePiUpdates({ ...context, projectTrusted });
+    expect(entries.find((entry) => entry.scope === "pi")).toMatchObject({ state: "unavailable" });
+    expect(calls().some((args) => args[0] === "self")).toBe(false);
+  },
+);
+
+test("rejects a custom updater that exits successfully without installing the reviewed version", async () => {
+  writeFileSync(
+    path.join(context.agentDir, "settings.json"),
+    JSON.stringify({
+      selfUpdateCommand: [process.execPath, "-e", "process.exit(0)"],
+    }),
+  );
+  const entry = await available("@earendil-works/pi-coding-agent");
+  await expect(probePiUpdates({ ...context, update: entry })).rejects.toThrow(
+    "did not reach the reviewed version",
+  );
+  expect(calls().some((args) => args[0] === "self")).toBe(false);
+});
+
+test("a failed custom updater does not fall back to the detected installer", async () => {
+  writeFileSync(
+    path.join(context.agentDir, "settings.json"),
+    JSON.stringify({
+      selfUpdateCommand: [process.execPath, "-e", "process.exit(2)"],
+    }),
+  );
+  const entry = await available("@earendil-works/pi-coding-agent");
+  await expect(probePiUpdates({ ...context, update: entry })).rejects.toThrow("Command failed");
+  expect(calls().some((args) => args[0] === "self")).toBe(false);
+});
+
 test("does not read or update project packages without trust", async () => {
   const pi = path.join(context.cwd, ".pi");
   const installed = path.join(pi, "npm/node_modules/project-plugin");
