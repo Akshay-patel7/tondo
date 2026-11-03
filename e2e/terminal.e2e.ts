@@ -90,6 +90,7 @@ test("shell output stays out of chat and the sharing controls are gone", async (
   const { page } = tondo;
   const inputs = path.join(workDir, "inputs.json");
   const lastInput = () => {
+    if (!existsSync(inputs)) return undefined;
     const messages = JSON.parse(readFileSync(inputs, "utf8")) as UserMessage[];
     const content = messages.at(-1)?.content;
     return typeof content === "string"
@@ -109,8 +110,8 @@ test("shell output stays out of chat and the sharing controls are gone", async (
   );
   await expect(page.getByRole("group", { name: "Pending terminal output" })).toHaveCount(0);
   await send(page, "Discuss this without terminal output.");
+  await expect.poll(lastInput).toBe("Discuss this without terminal output.");
   await waitForIdle(page);
-  expect(lastInput()).toBe("Discuss this without terminal output.");
   for (const scheme of ["light", "dark"] as const) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- capture both themes on the same window.
     await page.emulateMedia({ colorScheme: scheme });
@@ -129,8 +130,8 @@ test("shell output stays out of chat and the sharing controls are gone", async (
   await page.getByRole("button", { name: "Close terminal", exact: true }).click();
   await expect(page.getByRole("region", { name: "Terminal", exact: true })).toBeHidden();
   await send(page, "Closing the shell does not attach its history.");
+  await expect.poll(lastInput).toBe("Closing the shell does not attach its history.");
   await waitForIdle(page);
-  expect(lastInput()).toBe("Closing the shell does not attach its history.");
 });
 
 test("a real shell runs in the thread folder, resizes, survives reload and closes its jobs", async () => {
