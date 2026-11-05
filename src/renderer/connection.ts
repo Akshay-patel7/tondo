@@ -46,6 +46,10 @@ import { receiveTerminal, resetTerminals, selectTerminal, useTerminals } from ".
 
 type Connection = "connecting" | "connected" | "reconnecting";
 
+export const useRemoteStatus = create<import("../shared/remote").RemoteStatus>(() => ({
+  state: "off",
+}));
+
 export const useHost = create<{
   connection: Connection;
   /** The thread on screen, or null if none is. */
@@ -345,7 +349,15 @@ export function usePi(): PiStatus {
 }
 
 const v = PROTOCOL_VERSION;
-let port: MessagePort | undefined;
+let port: { postMessage(message: ClientMessage): void; close(): void } | undefined;
+
+/** Browser entry point only. The desktop still uses accept() and its MessagePort. */
+export function attachBrowserTransport(next: NonNullable<typeof port>): void {
+  port?.close();
+  port = next;
+}
+
+export { receive as receiveBrowserMessage };
 const filePickers = new Map<
   string,
   {
@@ -533,6 +545,9 @@ function receive(message: HostMessage): void {
     return;
   }
   switch (message.type) {
+    case "remote-status":
+      useRemoteStatus.setState(message.status, true);
+      break;
     case "history-result": {
       const pending = historyRequests.get(message.id);
       historyRequests.delete(message.id);

@@ -18,6 +18,8 @@ import { Store } from "./store";
 import { Supervisor } from "./supervisor";
 import { Workspace } from "./workspace";
 import { readPickedFiles } from "./attachments";
+import type { RemoteStatus } from "../shared/remote";
+import type { RemoteService } from "./remoteService";
 
 /** The port of the page on screen. A new page load replaces it. */
 let page: MessagePortMain | undefined;
@@ -102,6 +104,74 @@ function start(): void {
     piGroups = pgids;
     reportGroups();
   });
+  let remoteService: RemoteService | undefined;
+  let remoteGeneration = 0;
+  let remoteChanges: Promise<void> = Promise.resolve();
+
+  function remoteStatus(status: RemoteStatus): void {
+    workspace.reportRemote(status);
+    tellMain({ type: "remote-status", status });
+  }
+
+  function setRemoteAccess(enabled: boolean): void {
+    const generation = ++remoteGeneration;
+    remoteChanges = remoteChanges
+      .then(async () => {
+        if (remoteService) {
+          const previous = remoteService;
+          remoteService = undefined;
+          await previous.close();
+          workspace.closeRemote();
+        }
+        if (generation !== remoteGeneration) return;
+        if (!enabled) {
+          remoteStatus({ state: "off" });
+          return;
+        }
+        remoteStatus({ state: "starting" });
+        const { startRemoteService } = await import("./remoteService");
+        let service: RemoteService | undefined;
+        const clients = await workspace.connectRemote((message) => service?.deliver(message));
+        if (generation !== remoteGeneration) {
+          workspace.closeRemote();
+          return;
+        }
+        service = startRemoteService({
+          entry: path.join(__dirname, "remote.js"),
+          root: path.resolve(__dirname, "../renderer"),
+          message: (message) => clients.handle(message),
+          status: (status) => {
+            if (generation !== remoteGeneration) return;
+            if (status.state === "error") workspace.closeRemote();
+            remoteStatus(status);
+          },
+        });
+        remoteService = service;
+      })
+      .catch((error: unknown) => {
+        if (generation !== remoteGeneration) return;
+        workspace.closeRemote();
+        remoteStatus({
+          state: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  async function stopRemote(): Promise<void> {
+    remoteGeneration++;
+    await remoteChanges;
+    workspace.closeRemote();
+    const service = remoteService;
+    remoteService = undefined;
+    await service?.close();
+  }
+
+  async function collectAllGarbage(): Promise<void> {
+    if (remoteService) await remoteService.collectGarbage();
+    await collectGarbage();
+  }
+
   const workspace = new Workspace({
     userData: config.userData,
     gitGroups: (pgids) => {
@@ -116,6 +186,7 @@ function start(): void {
     supervisor,
     poolOverride: config.pool ?? {},
     send,
+    setRemoteAccess,
     chooseFolder: (purpose) =>
       tellMain({ type: purpose === "project" ? "choose-project" : "choose-worktree-directory" }),
     choosePi: () => tellMain({ type: "choose-pi" }),
@@ -176,17 +247,19 @@ function start(): void {
         workspace.openThread(message.threadId);
         break;
       case "stop-terminals":
-        void workspace.closeTerminals().then(
-          () => tellMain({ type: "terminals-stopped" }),
-          (error: unknown) => {
-            console.error("Tondo Host couldn't stop its terminals:", error);
-            // Main still owns the reported groups and cleans up after us.
-            process.exit(1);
-          },
-        );
+        void stopRemote()
+          .then(() => workspace.closeTerminals())
+          .then(
+            () => tellMain({ type: "terminals-stopped" }),
+            (error: unknown) => {
+              console.error("Tondo Host couldn't stop its terminals:", error);
+              // Main still owns the reported groups and cleans up after us.
+              process.exit(1);
+            },
+          );
         break;
       case "collect-garbage":
-        collectGarbage().then(
+        collectAllGarbage().then(
           () => tellMain({ type: "garbage-collected" }),
           (error: unknown) => {
             console.error("Tondo Host couldn't collect garbage:", error);

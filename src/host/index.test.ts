@@ -15,7 +15,9 @@ type FakeWorkspace = Record<
   | "projectChosen"
   | "piChosen"
   | "openThread"
-  | "closeTerminals",
+  | "closeTerminals"
+  | "closeRemote"
+  | "reportRemote",
   ReturnType<typeof vi.fn>
 >;
 
@@ -52,6 +54,8 @@ vi.mock("./workspace", () => ({
     piChosen = vi.fn();
     openThread = vi.fn();
     closeTerminals = vi.fn(async () => {});
+    closeRemote = vi.fn();
+    reportRemote = vi.fn();
   },
 }));
 
@@ -172,9 +176,11 @@ it("routes main's messages to the workspace", async () => {
   expect(workspace().projectChosen).toHaveBeenCalledWith("/p");
   expect(workspace().piChosen).toHaveBeenCalledWith("/bin/pi");
   expect(workspace().openThread).toHaveBeenCalledWith("t1");
+  const stopped = new Promise((resolve) => parentPort.postMessage.mockImplementationOnce(resolve));
   fromMain({ type: "stop-terminals" });
+  await stopped;
+  expect(workspace().closeRemote).toHaveBeenCalledTimes(1);
   expect(workspace().closeTerminals).toHaveBeenCalledTimes(1);
-  await workspace().closeTerminals.mock.results[0]?.value;
   expect(parentPort.postMessage).toHaveBeenLastCalledWith({ type: "terminals-stopped" });
 });
 

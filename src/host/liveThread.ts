@@ -131,6 +131,7 @@ export class LiveThread {
   private closed = false;
   /** Events applied to the host's thread that the page hasn't been sent yet. */
   private pending: PiEvent[] = [];
+  private remoteObservers = 0;
   private flushTimer: NodeJS.Timeout | undefined;
   private refreshing = false;
   private refreshAgain = false;
@@ -197,6 +198,27 @@ export class LiveThread {
     return this.onScreen;
   }
 
+  get remotelyVisible(): boolean {
+    return this.remoteObservers > 0;
+  }
+
+  /** Flush before a remote baseline, without dropping another device's pending events. */
+  remoteSnapshot(): ThreadState {
+    this.flush();
+    return this.thread;
+  }
+
+  observeRemote(): () => void {
+    this.remoteObservers++;
+    let observing = true;
+    return () => {
+      if (!observing) return;
+      observing = false;
+      this.remoteObservers--;
+      if (!this.onScreen && this.remoteObservers === 0) this.dropPending();
+    };
+  }
+
   /** What the thread's extensions show. */
   get ui(): ExtensionUi {
     return this.extensionUi;
@@ -233,14 +255,16 @@ export class LiveThread {
 
   /** The whole thread for a snapshot. It holds every event not sent yet, so they're dropped. */
   snapshot(): ThreadState {
-    this.dropPending();
+    if (this.remoteObservers > 0) this.flush();
+    else this.dropPending();
     return this.thread;
   }
 
   /** Takes the thread off screen. Its events keep applying to the host's copy. */
   hide(): void {
     this.onScreen = false;
-    this.dropPending();
+    if (this.remoteObservers > 0) this.flush();
+    else this.dropPending();
   }
 
   /** Starts pi, after asking whether to trust the project if pi needs to know. It resolves once pi is ready, waiting for you, or gone. */
@@ -656,7 +680,7 @@ export class LiveThread {
     const next = applyEvent(this.thread, event);
     if (next !== this.thread) {
       this.thread = next;
-      if (this.onScreen) {
+      if (this.onScreen || this.remoteObservers > 0) {
         this.pending.push(event);
         this.flushTimer ??= setTimeout(() => this.flush(), FRAME_MS);
       }

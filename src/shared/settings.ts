@@ -128,6 +128,8 @@ export function isProjectAutoPull(value: unknown): value is ProjectAutoPull {
 }
 
 export interface AppSettings {
+  /** Private browser access through a loopback gateway. Off unless explicitly enabled. */
+  readonly remoteAccess: boolean;
   /** Automatically fast-forward clean default branches. Opt-in for existing profiles. */
   readonly autoPull: boolean;
   readonly projectAutoPull: ProjectAutoPull;
@@ -153,6 +155,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  remoteAccess: false,
   autoPull: false,
   projectAutoPull: {},
   piPath: null,
@@ -172,6 +175,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** A change to the settings. Only the fields present change. */
 export interface SettingsPatch {
+  readonly remoteAccess?: boolean;
   readonly autoPull?: boolean;
   readonly projectAutoPull?: ProjectAutoPull;
   readonly ideCommand?: string;

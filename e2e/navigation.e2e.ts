@@ -87,6 +87,9 @@ test("keyboard previews and jumps reach prompts beyond the capped ticks", async 
 
 test("pointer preview stays lazy, clicks land on unmounted history, and both themes fit", async () => {
   const { page } = tondo;
+  // CI's viewport puts the rail at a fractional top: pointermove preserves the
+  // half-pixel, but click truncates it. The visible preview must remain the target.
+  await page.setViewportSize({ width: 1024, height: 677 });
   const navigator = page.getByRole("button", { name: "Browse past messages" });
   await navigator.hover({ position: { x: 12, y: 120 } });
   const preview = page.getByRole("tooltip");

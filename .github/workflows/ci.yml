@@ -55,6 +55,7 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: ${{ matrix.display }} pnpm smoke
+      - run: pnpm exec playwright install --with-deps chromium webkit
       - run: ${{ matrix.display }} pnpm e2e
 
       - name: Upload test results
@@ -139,3 +140,25 @@ jobs:
             exit 1
           fi
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node scripts/smoke.mts --app "${images[0]}"
+
+      - name: Build packaged E2E app
+        run: pnpm package --variant e2e --target dir --version "$VERSION"
+
+      - name: Install browser test runtimes
+        run: pnpm exec playwright install --with-deps chromium webkit
+
+      - name: Packaged remote access and window security (macOS)
+        if: runner.os == 'macOS'
+        run: TONDO_E2E_EXECUTABLE="$PWD/dist/e2e/mac-arm64/Tondo.app/Contents/MacOS/Tondo" pnpm exec playwright test e2e/remote.e2e.ts e2e/window.e2e.ts
+
+      - name: Packaged remote access and window security (Linux)
+        if: runner.os == 'Linux'
+        run: TONDO_E2E_EXECUTABLE="$PWD/dist/e2e/linux-unpacked/tondo" xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm exec playwright test e2e/remote.e2e.ts e2e/window.e2e.ts
+
+      - name: Upload packaged test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: packaged-test-results-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore

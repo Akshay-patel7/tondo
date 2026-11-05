@@ -109,12 +109,13 @@ export function MessageNavigator({
             setHovered(navigationIndex((event.clientY - rect.top) / rect.height, count));
           }}
           onClick={(event) => {
-            // Keyboard activation has no pointer coordinates.
+            // Keyboard activation has no pointer coordinates. Prefer the pointer's
+            // preview: click coordinates can be integer-truncated after a fractional hover.
             const rect = event.currentTarget.getBoundingClientRect();
             const index =
               event.detail === 0
                 ? (selected ?? current)
-                : navigationIndex((event.clientY - rect.top) / rect.height, count);
+                : (hovered ?? navigationIndex((event.clientY - rect.top) / rect.height, count));
             setHovered(null);
             setFocused(null);
             onSelect(index);

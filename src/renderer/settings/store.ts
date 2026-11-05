@@ -4,6 +4,7 @@ import { requestPiConfigFiles, useHost } from "../connection";
 
 export type SettingsSection =
   | "appearance"
+  | "remote"
   | "pi"
   | "accounts"
   | "threads"

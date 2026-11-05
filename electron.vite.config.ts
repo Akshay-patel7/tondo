@@ -1,3 +1,6 @@
+import { gzipSync } from "node:zlib";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import type { LoggerEvent, PluginOptions } from "babel-plugin-react-compiler";
@@ -51,6 +54,28 @@ function failOnCompilerProblems(): Plugin {
   };
 }
 
+/** Compress once at build time, never on the Mac's streaming or network event loop. */
+function precompressedBrowserAssets(): Plugin {
+  return {
+    name: "tondo:precompressed-browser-assets",
+    apply: "build",
+    async writeBundle(options, bundle) {
+      if (!options.dir) return;
+      const root = options.dir;
+      // Vite rewrites dynamic-import preload tables in generateBundle. Compress
+      // the written bytes, not an earlier chunk that still has placeholders.
+      await Promise.all(
+        Object.values(bundle)
+          .filter((file) => /\.(?:js|css|wasm)$/.test(file.fileName))
+          .map(async (file) => {
+            const target = path.join(root, file.fileName);
+            await writeFile(`${target}.gz`, gzipSync(await readFile(target), { level: 9 }));
+          }),
+      );
+    },
+  };
+}
+
 export default defineConfig({
   main: {
     build: {
@@ -59,6 +84,7 @@ export default defineConfig({
         input: {
           index: "src/main/index.ts",
           host: "src/host/index.ts",
+          remote: "src/host/remoteGateway.ts",
           piUpdateProbe: "src/host/piUpdateProbe.ts",
         },
       },
@@ -75,6 +101,7 @@ export default defineConfig({
       react({ babel: { plugins: [["babel-plugin-react-compiler", reactCompilerOptions]] } }),
       tailwindcss(),
       failOnCompilerProblems(),
+      precompressedBrowserAssets(),
     ],
     // @pierre/diffs's worker loads Shiki's WebAssembly engine with a dynamic
     // import, for pools that ask for it. Only an ES module worker can split
@@ -88,6 +115,12 @@ export default defineConfig({
     // Hidden sourcemaps: the .map files sit next to the bundles, but the shipped JS has no
     // sourceMappingURL comment. The page never loads a map, so its memory doesn't change,
     // and the minified renderer's stack traces can be mapped offline.
-    build: { minify: "esbuild", sourcemap: "hidden" },
+    build: {
+      minify: "esbuild",
+      sourcemap: "hidden",
+      rollupOptions: {
+        input: { index: "src/renderer/index.html", remote: "src/renderer/remote.html" },
+      },
+    },
   },
 });

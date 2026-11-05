@@ -43,7 +43,7 @@ import {
 import { parseChord } from "./shortcuts";
 
 /** Bump it when a message between the page and the host changes shape. */
-export const PROTOCOL_VERSION = 34;
+export const PROTOCOL_VERSION = 35;
 
 /** Main sends the preload the page's port on this channel, and the preload passes it on as this message. */
 export const PORT_MESSAGE = "tondo:port";
@@ -397,6 +397,8 @@ export type ClientMessage = Versioned<
 
 /** What the host sends the page. */
 export type HostMessage = Versioned<
+  | { type: "remote-status"; status: import("./remote").RemoteStatus }
+  | { type: "remote-result"; id: string; error: string | null }
   | ({ type: "files-chosen"; id: string; error: string | null } & PickedFiles)
   | GitEvent
   | TerminalEvent
@@ -407,6 +409,8 @@ export type HostMessage = Versioned<
    */
   | {
       type: "snapshot";
+      /** Earlier live messages were omitted from a bounded browser snapshot. */
+      historyOmitted?: boolean;
       thread: OpenThread | null;
       state: ThreadState;
       draft: string;
@@ -521,6 +525,7 @@ export interface Attention {
 
 /** What the host sends main. */
 export type HostToMainMessage =
+  | { type: "remote-status"; status: import("./remote").RemoteStatus }
   /** The host is listening, so main can connect a page. */
   | { type: "ready" }
   /** Every process group the host started. Main kills them if the host dies. */
@@ -1056,6 +1061,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
         "theme",
         "palette",
         "expandThinking",
+        "remoteAccess",
         "autoPull",
         "projectAutoPull",
         "defaultModel",
@@ -1074,6 +1080,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     theme,
     palette,
     expandThinking,
+    remoteAccess,
     autoPull,
     projectAutoPull,
     defaultModel,
@@ -1090,6 +1097,7 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     theme?: ThemeSetting;
     palette?: PaletteSetting;
     expandThinking?: boolean;
+    remoteAccess?: boolean;
     autoPull?: boolean;
     projectAutoPull?: ProjectAutoPull;
     defaultModel?: DefaultModel | null;
@@ -1129,6 +1137,10 @@ function parsePatch(patch: unknown): SettingsPatch | string {
     if (!isPaletteSetting(palette))
       return `palette must be "default", "slate", "ocean" or "rose", not ${describe(palette)}`;
     parsed.palette = palette;
+  }
+  if (remoteAccess !== undefined) {
+    if (typeof remoteAccess !== "boolean") return "remoteAccess must be true or false";
+    parsed.remoteAccess = remoteAccess;
   }
   if (expandThinking !== undefined) {
     if (typeof expandThinking !== "boolean")

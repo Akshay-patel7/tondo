@@ -107,6 +107,7 @@ export function updateSettings(file: string, patch: SettingsPatch): Settings {
     if (patch.theme !== undefined) next.theme = patch.theme;
     if (patch.palette !== undefined) next.palette = patch.palette;
     if (patch.expandThinking !== undefined) next.expandThinking = patch.expandThinking;
+    if (patch.remoteAccess !== undefined) next.remoteAccess = patch.remoteAccess;
     if (patch.panelWidths !== undefined) {
       next.panelWidths = {
         ...(isObject(saved.panelWidths) ? saved.panelWidths : {}),
@@ -223,6 +224,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     // A file from before palettes has none, and keeps the look it had.
     palette = DEFAULT_SETTINGS.palette,
     expandThinking = DEFAULT_SETTINGS.expandThinking,
+    remoteAccess = DEFAULT_SETTINGS.remoteAccess,
     pool = {},
     panelWidths = {},
     shortcuts = {},
@@ -273,6 +275,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
   else {
     report(`has a palette that isn't default, slate, ocean or rose: ${JSON.stringify(palette)}`);
   }
+  if (typeof remoteAccess !== "boolean") report("has a remoteAccess that isn't true or false");
   if (typeof expandThinking !== "boolean") {
     report(`has an expandThinking that isn't true or false: ${JSON.stringify(expandThinking)}`);
   }
@@ -328,6 +331,7 @@ function parse(saved: Record<string, unknown>, report: (what: string) => void): 
     palette: chosenPalette,
     expandThinking:
       typeof expandThinking === "boolean" ? expandThinking : DEFAULT_SETTINGS.expandThinking,
+    remoteAccess: typeof remoteAccess === "boolean" ? remoteAccess : DEFAULT_SETTINGS.remoteAccess,
     pool: limits,
     panelWidths: widths,
     shortcuts: bindings,

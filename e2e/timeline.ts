@@ -21,6 +21,7 @@ export const LAST_TRANSCRIPT_ROW = TRANSCRIPT_MESSAGES - 1;
 export const FOLLOW_THRESHOLD_PX = 40;
 
 export interface TranscriptOptions {
+  settings?: Record<string, unknown>;
   script: FauxScript;
   /** How many times over the thread holds the transcript's messages. */
   copies?: number;
@@ -43,6 +44,7 @@ export async function launchOnTranscript({
   script,
   copies = 1,
   exposeGc = false,
+  settings,
 }: TranscriptOptions): Promise<TranscriptTondo> {
   const workDir = realpathSync(mkdtempSync(path.join(tmpdir(), "tondo-transcript-")));
   const removeWorkDir = () => rmSync(workDir, { recursive: true, force: true });
@@ -55,6 +57,7 @@ export async function launchOnTranscript({
     script,
     piArgs: ["--fork", session],
     exposeGc,
+    ...(settings ? { settings } : {}),
   }).catch((error: unknown) => {
     removeWorkDir();
     throw error;

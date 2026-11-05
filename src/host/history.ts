@@ -28,6 +28,14 @@ interface Entry {
   readonly bytes: number;
 }
 
+function isTranscriptEntry(entry: Entry): boolean {
+  return (
+    (entry.type === "message" && entry.role !== "system") ||
+    entry.type === "custom_message" ||
+    entry.type === "branch_summary"
+  );
+}
+
 function record(value: unknown): value is RecordValue {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -80,6 +88,7 @@ export class SessionHistory {
     file: string,
     sessionId: string,
     signal?: AbortSignal,
+    omittedLiveMessages = 0,
   ): Promise<SessionHistory> {
     const handle = await open(file, "r");
     try {
@@ -182,16 +191,19 @@ export class SessionHistory {
       const keptId = compaction && compactions.get(compaction.id);
       const keptAt = keptId ? branch.findIndex((entry) => entry.id === keptId) : 0;
       if (keptAt === -1) throw new Error("The saved compaction points outside its branch.");
+      // A browser can omit part of the live context too. Its omission count is
+      // fixed at its snapshot baseline, so appending messages cannot shift this boundary.
+      let archivedEnd = Math.max(0, keptAt);
+      let skipped = 0;
+      while (skipped < omittedLiveMessages && archivedEnd < branch.length) {
+        if (isTranscriptEntry(branch[archivedEnd]!)) skipped++;
+        archivedEnd++;
+      }
       const prompts = branch
-        .slice(0, Math.max(0, keptAt))
+        .slice(0, archivedEnd)
         .filter((entry) => entry.role === "user")
         .map((entry) => entry.id);
-      const messages = branch.filter(
-        (entry) =>
-          (entry.type === "message" && entry.role !== "system") ||
-          entry.type === "custom_message" ||
-          entry.type === "branch_summary",
-      );
+      const messages = branch.filter(isTranscriptEntry);
       return new SessionHistory(file, sessionId, messages, prompts);
     } finally {
       await handle.close();

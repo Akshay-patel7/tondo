@@ -47,6 +47,8 @@ export interface HostOptions {
 }
 
 export interface Host {
+  /** Local pairing status; never exposed by the browser transport. */
+  readonly remoteStatus: import("../shared/remote").RemoteStatus;
   /** Hands `page` a port to the host now, or once the host is ready. */
   connect(page: WebContents): void;
   /** Puts a thread on screen, as when you click its notification. */
@@ -80,6 +82,7 @@ export function startHost(options: HostOptions): Host {
   let restartTimer: NodeJS.Timeout | undefined;
   let stopping: Promise<void> | undefined;
   let quitting = false;
+  let remoteStatus: import("../shared/remote").RemoteStatus = { state: "off" };
 
   const connectPage = () => {
     if (!child || !ready || !page || page.isDestroyed()) return;
@@ -113,7 +116,9 @@ export function startHost(options: HostOptions): Host {
       console.error(`Tondo Host hit a ${type} at ${location}:\n${report}`);
     });
     current.on("message", (message: HostToMainMessage) => {
-      if (message.type === "ready") {
+      if (message.type === "remote-status") {
+        remoteStatus = message.status;
+      } else if (message.type === "ready") {
         ready = true;
         restarts = 0;
         connectPage();
@@ -183,6 +188,7 @@ export function startHost(options: HostOptions): Host {
     });
     current.once("exit", (code) => {
       child = undefined;
+      remoteStatus = { state: "off" };
       ready = false;
       const stopped = stopProcessGroups(processGroups).catch((error: unknown) => {
         console.error("Couldn't stop the process groups the host left:", error);
@@ -199,6 +205,9 @@ export function startHost(options: HostOptions): Host {
 
   fork();
   return {
+    get remoteStatus() {
+      return remoteStatus;
+    },
     connect(webContents) {
       page = webContents;
       connectPage();

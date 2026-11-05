@@ -2,6 +2,7 @@
 // go Back in the header or press Escape, and every change saves as you make it.
 import {
   CircleAlert,
+  Smartphone,
   GitPullRequestArrow,
   Cpu,
   Keyboard,
@@ -25,6 +26,7 @@ import { closeSettings, takeSettingsOpener, useSettingsPage, type SettingsSectio
 import { ThreadSettings } from "./ThreadSettings";
 import { ProjectScriptsSettings } from "./ProjectScriptsSettings";
 import { RepositorySettings } from "./RepositorySettings";
+import { RemoteAccessSettings } from "./RemoteAccessSettings";
 
 const SECTIONS: readonly SettingsSection[] = [
   "appearance",
@@ -34,6 +36,7 @@ const SECTIONS: readonly SettingsSection[] = [
   "scripts",
   "repositories",
   "shortcuts",
+  "remote",
 ];
 
 const SECTION_INFO: Readonly<
@@ -42,6 +45,12 @@ const SECTION_INFO: Readonly<
     { readonly title: string; readonly icon: LucideIcon; readonly description: string }
   >
 > = {
+  remote: {
+    title: "Remote access",
+    icon: Smartphone,
+    description:
+      "Your existing threads, from your phone. Private, optional and powered by your Mac.",
+  },
   appearance: {
     title: "Appearance",
     icon: Sun,
@@ -222,6 +231,8 @@ export function SettingsPage() {
 
 function Section({ section }: { section: SettingsSection }) {
   switch (section) {
+    case "remote":
+      return <RemoteAccessSettings />;
     case "appearance":
       return <AppearanceSettings />;
     case "pi":
