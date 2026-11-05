@@ -322,7 +322,7 @@ export function RemoteComposer({
 
 export function RemoteFooter({ children }: { children: ReactNode }) {
   return (
-    <footer className="remote-footer max-h-[55dvh] shrink-0 overflow-y-auto border-t border-border bg-background px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <footer className="remote-footer max-h-[calc(var(--remote-height,100dvh)-4rem)] shrink-0 overflow-y-auto border-t border-border bg-background px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {children}
     </footer>
   );

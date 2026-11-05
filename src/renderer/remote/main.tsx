@@ -14,12 +14,15 @@ function scheme(): void {
 media.addEventListener("change", scheme);
 scheme();
 function viewport(): void {
+  const visual = window.visualViewport;
   document.documentElement.style.setProperty(
     "--remote-height",
-    `${window.visualViewport?.height ?? window.innerHeight}px`,
+    `${visual?.height ?? window.innerHeight}px`,
   );
+  document.documentElement.style.setProperty("--remote-top", `${visual?.offsetTop ?? 0}px`);
 }
 window.visualViewport?.addEventListener("resize", viewport);
+window.visualViewport?.addEventListener("scroll", viewport);
 window.addEventListener("resize", viewport);
 viewport();
 startRemoteConnection();

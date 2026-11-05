@@ -251,6 +251,38 @@ for (const engine of [chromium, webkit]) {
       }
       await phone.screenshot({ path: test.info().outputPath(`remote-chat-${colorScheme}.png`) });
     }
+    await message.focus();
+    // Desktop WebKit cannot open the iPhone keyboard. Simulate both pieces of
+    // its visual viewport contract, including the pan that Safari makes on focus.
+    await phone.evaluate(() => {
+      const visual = window.visualViewport!;
+      Object.defineProperties(visual, {
+        height: { configurable: true, value: 350 },
+        offsetTop: { configurable: true, value: 140 },
+      });
+      visual.dispatchEvent(new Event("resize"));
+      visual.dispatchEvent(new Event("scroll"));
+    });
+    const shell = await phone.locator(".remote-shell").boundingBox();
+    const sendBox = await phone.getByRole("button", { name: "Send message" }).boundingBox();
+    const inputBox = await message.boundingBox();
+    expect(shell!.y).toBe(140);
+    expect(shell!.height).toBe(350);
+    expect(inputBox!.y).toBeGreaterThan(140);
+    expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(490);
+    await phone.screenshot({
+      path: test.info().outputPath("remote-keyboard-viewport.png"),
+      clip: { x: 0, y: 140, width: 430, height: 350 },
+    });
+    await message.fill("Private phone draft after keyboard input");
+    await phone.evaluate(() => {
+      const visual = window.visualViewport!;
+      Reflect.deleteProperty(visual, "height");
+      Reflect.deleteProperty(visual, "offsetTop");
+      visual.dispatchEvent(new Event("resize"));
+      visual.dispatchEvent(new Event("scroll"));
+    });
+    await expect(phone.locator(".remote-shell")).toHaveCSS("top", "0px");
     await phone.evaluate(() => {
       Storage.prototype.setItem = () => {
         throw new Error("Storage quota exceeded");
