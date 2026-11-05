@@ -460,7 +460,7 @@ test("a busy port fails safely and rapid toggles leave no remote listener behind
   }
 });
 
-test("toggle survives cold restart, sessions are revoked, and remote extension answers resolve on both devices", async () => {
+test("pairing survives cold restart, disabling revokes devices, and remote extension answers resolve on both devices", async () => {
   const profileDir = path.join(workDir, "profile");
   mkdirSync(profileDir);
   const project = path.join(workDir, "project");
@@ -507,8 +507,16 @@ test("toggle survives cold restart, sessions are revoked, and remote extension a
   await expect(code).toHaveValue(/\S{32}/);
   expect(await code.inputValue()).not.toBe(firstCode);
   await phone.reload();
+  await expect(phone.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
+  await expect(phone.getByRole("textbox", { name: "Pairing code" })).toBeHidden();
+  const toggle = region.getByRole("switch", { name: "Remote access", exact: true });
+  await toggle.click();
+  await expect(code).toBeHidden();
+  await toggle.click();
+  await expect(code).toHaveValue(/\S{32}/);
+  await phone.reload();
   await expect(phone.getByRole("textbox", { name: "Pairing code" })).toBeVisible();
-  await region.getByRole("switch", { name: "Remote access", exact: true }).click();
+  await toggle.click();
   await tondo.close();
   tondo = await launchTondo({ profileDir });
   region = await settings(tondo.page);

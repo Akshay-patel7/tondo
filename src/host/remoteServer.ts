@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
+import { RemotePairings } from "./remotePairings";
 import { parseClientMessage, PROTOCOL_VERSION as v } from "../shared/protocol";
 import {
   REMOTE_FRAME_BYTES,
@@ -15,7 +16,9 @@ import {
   type RemoteToHost,
 } from "../shared/remote";
 
-const SESSION_MS = 12 * 60 * 60 * 1000;
+// Browsers cap persistent cookies at 400 days. Refresh on authenticated visits;
+// the Mac keeps the device authorized until remote access is explicitly disabled.
+const COOKIE_SECONDS = 400 * 24 * 60 * 60;
 const COOKIE = "tondo_remote";
 const CSP =
   "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -58,14 +61,31 @@ export function requestOrigin(request: IncomingMessage): string | null {
   }
 }
 
+function sessionToken(request: IncomingMessage): string | undefined {
+  return request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${COOKIE}=`))
+    ?.slice(COOKIE.length + 1);
+}
+
+function setCookie(response: ServerResponse, token: string, origin: string): void {
+  response.setHeader(
+    "Set-Cookie",
+    `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_SECONDS}${origin.startsWith("https:") ? "; Secure" : ""}`,
+  );
+}
+
 /** A loopback-only, paired gateway running on its own worker event loop. */
 export async function startRemoteServer(options: {
   root: string;
   post: (message: RemoteToHost) => void;
   port?: number;
+  pairingsFile?: string;
 }) {
   const code = randomBytes(24).toString("base64url");
-  const sessions = new Map<string, { expires: number; seen: Set<string> }>();
+  const pairings = await RemotePairings.open(options.pairingsFile);
+  const sessions = new Map<string, { seen: Set<string> }>();
   const clients = new Map<string, WebSocket>();
   const wss = new WebSocketServer({
     noServer: true,
@@ -77,14 +97,14 @@ export async function startRemoteServer(options: {
   let closing = false;
 
   function session(request: IncomingMessage) {
-    const now = Date.now();
-    for (const [key, value] of sessions) if (value.expires <= now) sessions.delete(key);
-    const key = request.headers.cookie
-      ?.split(";")
-      .map((part) => part.trim())
-      .find((part) => part.startsWith(`${COOKIE}=`))
-      ?.slice(COOKIE.length + 1);
-    return key ? sessions.get(key) : undefined;
+    const token = sessionToken(request);
+    if (!token || !pairings.has(token)) return undefined;
+    let paired = sessions.get(token);
+    if (!paired) {
+      paired = { seen: new Set() };
+      sessions.set(token, paired);
+    }
+    return paired;
   }
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -125,21 +145,19 @@ export async function startRemoteServer(options: {
         !timingSafeEqual(Buffer.from(entered), Buffer.from(code))
       )
         return reject(response, 401, "That pairing code isn't correct.");
-      if (sessions.size >= 16)
-        return reject(response, 429, "Too many paired browsers. Toggle remote access off and on.");
       const token = randomBytes(32).toString("base64url");
-      sessions.set(token, { expires: now + SESSION_MS, seen: new Set() });
-      response.setHeader(
-        "Set-Cookie",
-        `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_MS / 1000}${origin.startsWith("https:") ? "; Secure" : ""}`,
-      );
+      if (!(await pairings.remember(token)))
+        return reject(response, 429, "Too many paired browsers. Toggle remote access off and on.");
+      setCookie(response, token, origin);
       response.writeHead(204);
       response.end();
       return;
     }
     if (request.url === "/session" && request.method === "GET") {
+      const paired = Boolean(session(request));
+      if (paired) setCookie(response, sessionToken(request)!, origin);
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ paired: Boolean(session(request)) }));
+      response.end(JSON.stringify({ paired }));
       return;
     }
     if (request.method !== "GET" && request.method !== "HEAD")
@@ -209,7 +227,7 @@ export async function startRemoteServer(options: {
       let window = Date.now();
       let alive = true;
       const heartbeat = setInterval(() => {
-        if (!alive || paired.expires <= Date.now()) {
+        if (!alive) {
           ws.terminate();
           return;
         }
@@ -232,8 +250,8 @@ export async function startRemoteServer(options: {
           window = Date.now();
           count = 0;
         }
-        if (binary || ++count > 30 || paired.expires <= Date.now()) {
-          ws.close(1008, "Session expired or too many requests");
+        if (binary || ++count > 30) {
+          ws.close(1008, "Too many requests");
           return;
         }
         let envelope: { id?: unknown; message?: unknown };
@@ -278,9 +296,13 @@ export async function startRemoteServer(options: {
           );
           return;
         }
-        // A bounded replay ledger: stop accepting rather than forget an accepted action.
+        // A bounded replay ledger: stop accepting rather than forget an accepted
+        // action. This transport limit must not revoke remembered device pairing.
         if (paired.seen.size >= 4096) {
-          ws.close(1008, "Pair again to start a new session");
+          ws.close(
+            1013,
+            "Remote action limit reached. Restart Tondo to continue; this device stays paired.",
+          );
           return;
         }
         paired.seen.add(envelope.id);
