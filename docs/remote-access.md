@@ -34,18 +34,18 @@ The existing budgets in `docs/plan.md` are unchanged. Include the gateway worker
 
 ### Measured acceptance — 2026-11-05
 
-Apple M5, 24 GB, macOS 26.6.2, built-in 2× 120 Hz display. Three samples per case, using unrounded medians for the gates. The complete performance suite passed all 25 tests. The final six remote cases also passed after loading the browser's real static assets and its automatic saved-history index (327 prompts), without running another renderer on the Mac.
+Apple M5, 24 GB, macOS 26.6.2, built-in 2× 120 Hz display. Three samples per case, using unrounded medians for the gates. The complete performance suite passed all 25 tests, including the six remote cases with the browser's real static assets and automatic saved-history index (327 prompts) loaded, without running another renderer on the Mac.
 
 | Scenario | Measured median | Unchanged limit |
 |---|---:|---:|
-| Remote disabled, startup footprint | 264.65 MiB | 279.4 MiB |
-| Enabled, unused footprint | 273.04 MiB | 279.4 MiB |
-| Connected phone, startup footprint | 274.40 MiB | 279.4 MiB |
-| Active phone, before / after streaming | 273.79 / 360.01 MiB | 279.4 / 510.4 MiB |
-| Slow phone, before / after streaming | 273.55 / 366.55 MiB | 279.4 / 510.4 MiB |
+| Remote disabled, startup footprint | 263.96 MiB | 279.4 MiB |
+| Enabled, unused footprint | 275.60 MiB | 279.4 MiB |
+| Connected phone, startup footprint | 274.46 MiB | 279.4 MiB |
+| Active phone, before / after streaming | 277.96 / 369.27 MiB | 279.4 / 510.4 MiB |
+| Slow phone, before / after streaming | 273.82 / 366.43 MiB | 279.4 / 510.4 MiB |
 | Active and slow phone, frame p95 / p99 | 10.1 / 10.3 ms | 16.7 / 33 ms |
 | Active and slow phone, input p95 | 32 ms | 32 ms |
-| Desktop thread switch while phone watches | 22.7 ms | 100 ms |
+| Desktop thread switch while phone watches | 23.5 ms | 100 ms |
 | Renderer tasks ≥100 ms | 0 | 0 |
 
 Verification also passed 1,222 unit tests, all 233 unpackaged end-to-end tests, three consecutive six-case mobile passes, and 14 packaged mobile/window-security tests plus the packaged sandbox smoke. Pairing, thread lists, chat, diffs, saved history and Settings screenshots were inspected in light/dark where applicable. All 325 generated gzip files decompressed exactly to their finalized originals.
