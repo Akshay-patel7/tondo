@@ -6,8 +6,12 @@ import type { HostToRemote } from "../shared/remote";
 
 const port = parentPort;
 if (!port) throw new Error("The remote gateway must run in a worker");
-const config = workerData as { root: string };
-void startRemoteServer({ root: config.root, post: (message) => port.postMessage(message) }).then(
+const config = workerData as { root: string; pairingsFile: string };
+void startRemoteServer({
+  root: config.root,
+  pairingsFile: config.pairingsFile,
+  post: (message) => port.postMessage(message),
+}).then(
   (server) => {
     port.on("message", (message: HostToRemote | { type: "collect-garbage" }) => {
       if (message.type !== "collect-garbage") {

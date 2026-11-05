@@ -14,6 +14,12 @@ describe("remote settings protocol", () => {
       ok: false,
     });
   });
+  it.each(["set-model", "set-thinking-level"])(
+    "grants remote %s on the selected thread",
+    (type) => {
+      expect(remoteRequestAllowed({ type } as ClientMessage)).toBe(true);
+    },
+  );
   it.each([
     "set-settings",
     "trust",

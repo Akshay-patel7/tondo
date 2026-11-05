@@ -1,6 +1,7 @@
-import { ArrowLeft, ArrowUp, FileDiff, Plus, Square } from "lucide-react";
+import { ArrowLeft, ArrowUp, FileDiff, Pin, Plus, Square } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import type { SidebarProject } from "../../shared/protocol";
+import type { ModelOption, PiSession, SidebarProject, ThinkingLevel } from "../../shared/protocol";
+import { THINKING_LABELS } from "../../shared/settings";
 import { Button } from "./button";
 import { Input } from "./input";
 import { Textarea } from "./textarea";
@@ -158,7 +159,16 @@ export function RemoteThreadList({
                   className="flex min-h-16 w-full items-center gap-3 border-b border-border px-4 py-3 text-left outline-none last:border-0 hover:bg-muted focus-visible:focus-ring disabled:opacity-50"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{thread.title}</p>
+                    <div className="flex min-w-0 items-center gap-2">
+                      {thread.pinned ? (
+                        <Pin
+                          className="size-3.5 shrink-0 text-muted-foreground"
+                          role="img"
+                          aria-label="Pinned thread"
+                        />
+                      ) : null}
+                      <p className="truncate text-sm font-medium">{thread.title}</p>
+                    </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {thread.archived ? "Archived · " : ""}
                       {thread.activity}
@@ -180,6 +190,68 @@ export function RemoteThreadList({
   );
 }
 
+function modelKey(option: { provider: string; id: string }): string {
+  return JSON.stringify([option.provider, option.id]);
+}
+
+export function RemoteSessionControls({
+  session,
+  disabled,
+  model,
+  thinking,
+}: {
+  session: PiSession;
+  disabled: boolean;
+  model: (option: ModelOption) => void;
+  thinking: (level: ThinkingLevel) => void;
+}) {
+  const current = session.model ? modelKey(session.model) : "";
+  const listed = session.models.some((option) => modelKey(option) === current);
+  const selectClass =
+    "h-11 w-full min-w-0 rounded-md border border-input bg-background px-2 text-base text-foreground outline-none focus-visible:focus-ring disabled:opacity-50";
+  return (
+    <div className="flex min-w-0 gap-2">
+      <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-muted-foreground">
+        Model
+        <select
+          className={selectClass}
+          value={current}
+          disabled={disabled || session.models.length === 0}
+          onChange={(event) => {
+            const option = session.models.find((item) => modelKey(item) === event.target.value);
+            if (option) model(option);
+          }}
+        >
+          {!listed ? <option value={current}>{session.model?.id ?? "No model"}</option> : null}
+          {session.models.map((option) => (
+            <option key={modelKey(option)} value={modelKey(option)}>
+              {option.name} · {option.provider}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex w-32 shrink-0 flex-col gap-1 text-xs text-muted-foreground">
+        Thinking
+        <select
+          className={selectClass}
+          value={session.thinkingLevel}
+          disabled={disabled || session.thinkingLevels.length < 2}
+          onChange={(event) => {
+            const level = session.thinkingLevels.find((item) => item === event.target.value);
+            if (level) thinking(level);
+          }}
+        >
+          {session.thinkingLevels.map((level) => (
+            <option key={level} value={level}>
+              {level === "off" ? "Off" : THINKING_LABELS[level].replace(" thinking", "")}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 export function RemoteComposer({
   text,
   setText,
@@ -188,7 +260,9 @@ export function RemoteComposer({
   disabled,
   busy,
   running,
+  controls,
 }: {
+  controls?: ReactNode;
   text: string;
   setText: (text: string) => void;
   send: () => void;
@@ -205,6 +279,7 @@ export function RemoteComposer({
         send();
       }}
     >
+      {controls}
       <label htmlFor="remote-message" className="sr-only">
         Message
       </label>
@@ -247,7 +322,7 @@ export function RemoteComposer({
 
 export function RemoteFooter({ children }: { children: ReactNode }) {
   return (
-    <footer className="remote-footer max-h-[55dvh] shrink-0 overflow-y-auto border-t border-border bg-background px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <footer className="remote-footer max-h-[calc(var(--remote-height,100dvh)-4rem)] shrink-0 overflow-y-auto border-t border-border bg-background px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {children}
     </footer>
   );

@@ -10,11 +10,12 @@ export interface RemoteService {
 export function startRemoteService(options: {
   entry: string;
   root: string;
+  pairingsFile: string;
   status: (status: RemoteStatus) => void;
   message: (message: RemoteToHost) => void;
 }): RemoteService {
   const worker = new Worker(options.entry, {
-    workerData: { root: options.root },
+    workerData: { root: options.root, pairingsFile: options.pairingsFile },
     // Electron's --js-flags is not a Node Worker CLI argument. V8's exposed-gc
     // flag is already process-wide when the perf harness enabled it on the host.
     execArgv: [],

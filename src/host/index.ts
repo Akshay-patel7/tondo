@@ -3,6 +3,7 @@
 // page load. The host sends each new port what the page shows, and after that
 // only what changes.
 import path from "node:path";
+import { rm } from "node:fs/promises";
 import type { MessagePortMain } from "electron";
 import {
   parseClientMessage,
@@ -104,6 +105,7 @@ function start(): void {
     piGroups = pgids;
     reportGroups();
   });
+  const remotePairingsFile = path.join(config.userData, "remote-pairings.json");
   let remoteService: RemoteService | undefined;
   let remoteGeneration = 0;
   let remoteChanges: Promise<void> = Promise.resolve();
@@ -123,6 +125,9 @@ function start(): void {
           await previous.close();
           workspace.closeRemote();
         }
+        // Process revocation even when a newer toggle is queued. Otherwise a
+        // quick off/on could accidentally keep previously authorized devices.
+        if (!enabled) await rm(remotePairingsFile, { force: true });
         if (generation !== remoteGeneration) return;
         if (!enabled) {
           remoteStatus({ state: "off" });
@@ -139,6 +144,7 @@ function start(): void {
         service = startRemoteService({
           entry: path.join(__dirname, "remote.js"),
           root: path.resolve(__dirname, "../renderer"),
+          pairingsFile: remotePairingsFile,
           message: (message) => clients.handle(message),
           status: (status) => {
             if (generation !== remoteGeneration) return;

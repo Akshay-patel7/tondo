@@ -76,9 +76,9 @@ export function RemoteAccessSettings() {
         </>
       ) : null}
       <Footnote>
-        Turning this off disconnects every browser. Restarting Tondo or turning remote access off
-        and on changes the pairing code and revokes paired sessions. Your separate Tailscale Serve
-        route is left untouched.
+        Paired browsers stay authorized across Tondo restarts, until you turn remote access off.
+        Turning it off disconnects and forgets every browser. Clearing browser cookies also requires
+        pairing again. Your separate Tailscale Serve route is left untouched.
       </Footnote>
     </>
   );

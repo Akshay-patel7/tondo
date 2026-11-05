@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { WebSocket } from "ws";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION as v } from "../shared/protocol";
 import { REMOTE_FRAME_BYTES, type RemoteToHost } from "../shared/remote";
 import { startRemoteServer } from "./remoteServer";
@@ -29,6 +29,7 @@ beforeEach(async () => {
   server = await startRemoteServer({
     root,
     port: 0,
+    pairingsFile: path.join(root, "pairings.json"),
     post: (message) => {
       posted.push(message);
       events.emit(message.type, message);
@@ -158,6 +159,37 @@ describe("paired loopback gateway", () => {
     expect(secure.headers["set-cookie"]?.[0]).toContain("; Secure");
   });
 
+  it("keeps devices paired across gateway restarts and renews persistent cookies", async () => {
+    const paired = await cookie();
+    const oldCode = server.code;
+    await server.close();
+    server = await startRemoteServer({
+      root,
+      port: 0,
+      pairingsFile: path.join(root, "pairings.json"),
+      post: () => {},
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    expect(server.code).not.toBe(oldCode);
+    const response = await fetch(`${base}/session`, { headers: { Cookie: paired } });
+    expect(await response.json()).toEqual({ paired: true });
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=34560000");
+    expect((await pair(oldCode)).status).toBe(401);
+    await server.close();
+    rmSync(path.join(root, "pairings.json"));
+    server = await startRemoteServer({
+      root,
+      port: 0,
+      pairingsFile: path.join(root, "pairings.json"),
+      post: () => {},
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    expect(await (await fetch(`${base}/session`, { headers: { Cookie: paired } })).json()).toEqual({
+      paired: false,
+    });
+    expect(await rejectedUpgrade({ Origin: base, Cookie: paired })).toBe(403);
+  });
+
   it("rejects malformed and oversized pairing bodies and rate-limits guessing", async () => {
     expect(
       (
@@ -195,6 +227,36 @@ describe("paired loopback gateway", () => {
     expect(
       posted.filter((entry) => entry.type === "request" && entry.id === "same-action"),
     ).toHaveLength(1);
+  });
+
+  it("keeps device pairing when the bounded replay ledger requires a gateway restart", async () => {
+    const paired = await cookie();
+    const { ws } = await connect(paired);
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 100));
+    try {
+      const filled = new Promise<void>((resolve) => {
+        let count = 0;
+        const record = () => {
+          if (++count === 4096) {
+            events.off("request", record);
+            resolve();
+          }
+        };
+        events.on("request", record);
+      });
+      for (let id = 0; id < 4096; id++)
+        ws.send(JSON.stringify({ id: `request-${id}`, message: { v, type: "ping", id } }));
+      await filled;
+      const closed = once(ws, "close");
+      ws.send(JSON.stringify({ id: "limit", message: { v, type: "ping", id: 4096 } }));
+      expect((await closed)[0]).toBe(1013);
+      expect(
+        await (await fetch(`${base}/session`, { headers: { Cookie: paired } })).json(),
+      ).toEqual({ paired: true });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it.each([null, [], { id: "bad", message: { v: 0, type: "ping", id: 1 } }])(

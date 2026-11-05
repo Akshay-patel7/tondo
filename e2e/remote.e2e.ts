@@ -125,6 +125,11 @@ for (const engine of [chromium, webkit]) {
     await expect(desktop.getByText("First shared reply.", { exact: true })).toBeVisible();
     const firstId = await threadRows(desktop).first().getAttribute("data-thread-id");
     expect(firstId).toBeTruthy();
+    await desktop.locator(`button[data-thread-id="${firstId}"]`).click({ button: "right" });
+    await desktop
+      .getByRole("menu", { name: "Thread actions" })
+      .getByRole("menuitem", { name: "Pin", exact: true })
+      .click();
     const previousComposer = await composer(desktop).elementHandle();
     await desktop.keyboard.press("ControlOrMeta+n");
     await desktop.waitForFunction((element) => !element?.isConnected, previousComposer);
@@ -170,8 +175,23 @@ for (const engine of [chromium, webkit]) {
       if (message.type() === "error") pageErrors.push(message.text());
     });
     await pair(phone, pairingCode);
+    await expect(
+      phone
+        .locator(`button[data-thread-id="${firstId}"]`)
+        .getByRole("img", { name: "Pinned thread" }),
+    ).toBeVisible();
     await phone.screenshot({ path: test.info().outputPath("remote-threads-light.png") });
     await phone.locator(`button[data-thread-id="${firstId}"]`).click();
+    const model = phone.getByRole("combobox", { name: "Model", exact: true });
+    const thinking = phone.getByRole("combobox", { name: "Thinking", exact: true });
+    await expect(model).toBeEnabled();
+    await model.selectOption({ label: "Faux 2 · faux" });
+    await expect(model).toHaveValue(JSON.stringify(["faux", "faux-2"]));
+    await expect(thinking).toBeDisabled();
+    await model.selectOption({ label: "Faux 1 · faux" });
+    await expect(thinking).toBeEnabled();
+    await thinking.selectOption("high");
+    await expect(thinking).toHaveValue("high");
     const message = phone.getByRole("textbox", { name: "Message", exact: true });
     await expect(phone.getByRole("button", { name: "Send message" })).toBeDisabled();
     await message.fill("Sent from my iPhone");
@@ -198,6 +218,12 @@ for (const engine of [chromium, webkit]) {
     await expect(desktop.getByText("Sent from my iPhone", { exact: true })).toBeHidden();
     await desktop.locator(`button[data-thread-id="${firstId}"]`).click();
     await expect(desktop.getByText("Second shared reply.", { exact: true })).toBeVisible();
+    await expect(desktop.getByRole("combobox", { name: "Model", exact: true })).toContainText(
+      "Faux 1",
+    );
+    await expect(
+      desktop.getByRole("combobox", { name: "Thinking level", exact: true }),
+    ).toContainText("High");
     await composer(desktop).fill("Desktop draft in the same thread");
     await message.fill("Private phone draft");
     await phone.reload();
@@ -225,6 +251,38 @@ for (const engine of [chromium, webkit]) {
       }
       await phone.screenshot({ path: test.info().outputPath(`remote-chat-${colorScheme}.png`) });
     }
+    await message.focus();
+    // Desktop WebKit cannot open the iPhone keyboard. Simulate both pieces of
+    // its visual viewport contract, including the pan that Safari makes on focus.
+    await phone.evaluate(() => {
+      const visual = window.visualViewport!;
+      Object.defineProperties(visual, {
+        height: { configurable: true, value: 350 },
+        offsetTop: { configurable: true, value: 140 },
+      });
+      visual.dispatchEvent(new Event("resize"));
+      visual.dispatchEvent(new Event("scroll"));
+    });
+    const shell = await phone.locator(".remote-shell").boundingBox();
+    const sendBox = await phone.getByRole("button", { name: "Send message" }).boundingBox();
+    const inputBox = await message.boundingBox();
+    expect(shell!.y).toBe(140);
+    expect(shell!.height).toBe(350);
+    expect(inputBox!.y).toBeGreaterThan(140);
+    expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(490);
+    await phone.screenshot({
+      path: test.info().outputPath("remote-keyboard-viewport.png"),
+      clip: { x: 0, y: 140, width: 430, height: 350 },
+    });
+    await message.fill("Private phone draft after keyboard input");
+    await phone.evaluate(() => {
+      const visual = window.visualViewport!;
+      Reflect.deleteProperty(visual, "height");
+      Reflect.deleteProperty(visual, "offsetTop");
+      visual.dispatchEvent(new Event("resize"));
+      visual.dispatchEvent(new Event("scroll"));
+    });
+    await expect(phone.locator(".remote-shell")).toHaveCSS("top", "0px");
     await phone.evaluate(() => {
       Storage.prototype.setItem = () => {
         throw new Error("Storage quota exceeded");
@@ -460,7 +518,7 @@ test("a busy port fails safely and rapid toggles leave no remote listener behind
   }
 });
 
-test("toggle survives cold restart, sessions are revoked, and remote extension answers resolve on both devices", async () => {
+test("pairing survives cold restart, disabling revokes devices, and remote extension answers resolve on both devices", async () => {
   const profileDir = path.join(workDir, "profile");
   mkdirSync(profileDir);
   const project = path.join(workDir, "project");
@@ -507,8 +565,16 @@ test("toggle survives cold restart, sessions are revoked, and remote extension a
   await expect(code).toHaveValue(/\S{32}/);
   expect(await code.inputValue()).not.toBe(firstCode);
   await phone.reload();
+  await expect(phone.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
+  await expect(phone.getByRole("textbox", { name: "Pairing code" })).toBeHidden();
+  const toggle = region.getByRole("switch", { name: "Remote access", exact: true });
+  await toggle.click();
+  await expect(code).toBeHidden();
+  await toggle.click();
+  await expect(code).toHaveValue(/\S{32}/);
+  await phone.reload();
   await expect(phone.getByRole("textbox", { name: "Pairing code" })).toBeVisible();
-  await region.getByRole("switch", { name: "Remote access", exact: true }).click();
+  await toggle.click();
   await tondo.close();
   tondo = await launchTondo({ profileDir });
   region = await settings(tondo.page);

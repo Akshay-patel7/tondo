@@ -34,6 +34,8 @@ function harness(ack = true) {
           remoteSnapshot: () => state,
           observeRemote: () => unobserve,
           stop: vi.fn(),
+          setModel: vi.fn(),
+          setThinkingLevel: vi.fn(),
           answer: vi.fn(),
           sessionFile: null,
         } as unknown as LiveThread);
@@ -115,6 +117,36 @@ it("rejects commands for a thread not selected on this device and returns failed
   expect(h.options.prompt).not.toHaveBeenCalled();
   h.options.prompt.mockRejectedValueOnce(new Error("pi stopped"));
   expect((await h.request("phone", { ...message, threadId: "one" })).error).toBe("pi stopped");
+});
+
+it("changes only the selected thread model/thinking and reports pi validation errors", async () => {
+  const h = harness();
+  h.connect("phone");
+  await h.request("phone", { v, type: "open-thread", threadId: "one" });
+  const model = {
+    v,
+    type: "set-model",
+    threadId: "one",
+    provider: "faux",
+    modelId: "faux-2",
+  } as const;
+  expect((await h.request("phone", { ...model, threadId: "two" })).error).toContain(
+    "Open that thread",
+  );
+  const thread = h.threads.get("one")!;
+  expect(thread.setModel).not.toHaveBeenCalled();
+  expect((await h.request("phone", model)).error).toBeNull();
+  expect(thread.setModel).toHaveBeenCalledWith("faux", "faux-2");
+  expect(
+    (await h.request("phone", { v, type: "set-thinking-level", threadId: "one", level: "high" }))
+      .error,
+  ).toBeNull();
+  expect(thread.setThinkingLevel).toHaveBeenCalledWith("high");
+  vi.mocked(thread.setThinkingLevel).mockRejectedValueOnce(new Error("Unsupported level"));
+  expect(
+    (await h.request("phone", { v, type: "set-thinking-level", threadId: "one", level: "xhigh" }))
+      .error,
+  ).toBe("Unsupported level");
 });
 
 it("counts remote viewing and leaving as recent use for the shared pi pool", async () => {
