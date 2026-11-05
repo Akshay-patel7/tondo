@@ -130,8 +130,12 @@ async function capture(page: Page, name: string) {
 
 async function shellCommand(page: Page, command: string) {
   const input = page.locator(".xterm-helper-textarea");
+  // The view mounts before its shell is ready. Wait for the prompt and actual
+  // input echo rather than letting Enter race the terminal's startup/reattach.
+  await expect(output(page)).toContainText("$");
   await input.focus();
   await input.pressSequentially(command);
+  await expect(output(page)).toContainText(command);
   await input.press("Enter");
 }
 
