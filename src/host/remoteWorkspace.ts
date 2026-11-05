@@ -287,6 +287,12 @@ export class RemoteWorkspace {
       case "prompt":
         await this.options.prompt(message);
         break;
+      case "set-model":
+        await thread.setModel(message.provider, message.modelId);
+        break;
+      case "set-thinking-level":
+        await thread.setThinkingLevel(message.level);
+        break;
       case "stop":
         await thread.stop();
         break;

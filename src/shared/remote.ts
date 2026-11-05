@@ -27,6 +27,8 @@ const REMOTE_REQUESTS = new Set<ClientMessage["type"]>([
   "new-thread",
   "prompt",
   "stop",
+  "set-model",
+  "set-thinking-level",
   "answer",
   "history-index",
   "history-preview",

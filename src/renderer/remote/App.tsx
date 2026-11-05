@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, type FormEvent } from "react";
-import { PROTOCOL_VERSION as v } from "../../shared/protocol";
+import { PROTOCOL_VERSION as v, type ClientMessage } from "../../shared/protocol";
 import { useHost } from "../connection";
 import { Button } from "../ui/button";
 import { Banners } from "../banners/Banners";
@@ -15,6 +15,7 @@ import {
   RemoteHeader,
   RemoteNotice,
   RemotePairForm,
+  RemoteSessionControls,
   RemoteThreadList,
 } from "../ui/remote";
 import {
@@ -169,6 +170,22 @@ function RemoteThread({ connected }: { connected: boolean }) {
     (drafts) => drafts.get(key) ?? EMPTY_REMOTE_DRAFT,
   );
   const ready = thread?.pi.state === "ready";
+  const session = thread?.pi.state === "ready" ? thread.pi.session : undefined;
+  const [updatingSession, setUpdatingSession] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
+  async function changeSession(
+    message: Extract<ClientMessage, { type: "set-model" | "set-thinking-level" }>,
+  ): Promise<void> {
+    setUpdatingSession(true);
+    setSessionError(null);
+    try {
+      await remoteRequest(message);
+    } catch (reason) {
+      setSessionError(reason instanceof Error ? reason.message : String(reason));
+    }
+    setUpdatingSession(false);
+  }
 
   async function send(): Promise<void> {
     if (!thread) return;
@@ -205,6 +222,7 @@ function RemoteThread({ connected }: { connected: boolean }) {
           </RemoteNotice>
         ) : null}
         {error ? <RemoteNotice error>{error}</RemoteNotice> : null}
+        {sessionError ? <RemoteNotice error>{sessionError}</RemoteNotice> : null}
         {thread?.askingTrust ? (
           <RemoteNotice>Approve this project on your Mac before sending messages.</RemoteNotice>
         ) : null}
@@ -221,6 +239,31 @@ function RemoteThread({ connected }: { connected: boolean }) {
         <DialogPanel />
         {!asking ? (
           <RemoteComposer
+            controls={
+              session && thread ? (
+                <RemoteSessionControls
+                  session={session}
+                  disabled={!connected || updatingSession}
+                  model={(option) => {
+                    void changeSession({
+                      v,
+                      type: "set-model",
+                      threadId: thread.id,
+                      provider: option.provider,
+                      modelId: option.id,
+                    });
+                  }}
+                  thinking={(level) => {
+                    void changeSession({
+                      v,
+                      type: "set-thinking-level",
+                      threadId: thread.id,
+                      level,
+                    });
+                  }}
+                />
+              ) : null
+            }
             text={text}
             setText={(value) => editRemoteDraft(key, value)}
             send={() => {

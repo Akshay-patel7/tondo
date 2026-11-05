@@ -125,6 +125,11 @@ for (const engine of [chromium, webkit]) {
     await expect(desktop.getByText("First shared reply.", { exact: true })).toBeVisible();
     const firstId = await threadRows(desktop).first().getAttribute("data-thread-id");
     expect(firstId).toBeTruthy();
+    await desktop.locator(`button[data-thread-id="${firstId}"]`).click({ button: "right" });
+    await desktop
+      .getByRole("menu", { name: "Thread actions" })
+      .getByRole("menuitem", { name: "Pin", exact: true })
+      .click();
     const previousComposer = await composer(desktop).elementHandle();
     await desktop.keyboard.press("ControlOrMeta+n");
     await desktop.waitForFunction((element) => !element?.isConnected, previousComposer);
@@ -170,8 +175,23 @@ for (const engine of [chromium, webkit]) {
       if (message.type() === "error") pageErrors.push(message.text());
     });
     await pair(phone, pairingCode);
+    await expect(
+      phone
+        .locator(`button[data-thread-id="${firstId}"]`)
+        .getByRole("img", { name: "Pinned thread" }),
+    ).toBeVisible();
     await phone.screenshot({ path: test.info().outputPath("remote-threads-light.png") });
     await phone.locator(`button[data-thread-id="${firstId}"]`).click();
+    const model = phone.getByRole("combobox", { name: "Model", exact: true });
+    const thinking = phone.getByRole("combobox", { name: "Thinking", exact: true });
+    await expect(model).toBeEnabled();
+    await model.selectOption({ label: "Faux 2 · faux" });
+    await expect(model).toHaveValue(JSON.stringify(["faux", "faux-2"]));
+    await expect(thinking).toBeDisabled();
+    await model.selectOption({ label: "Faux 1 · faux" });
+    await expect(thinking).toBeEnabled();
+    await thinking.selectOption("high");
+    await expect(thinking).toHaveValue("high");
     const message = phone.getByRole("textbox", { name: "Message", exact: true });
     await expect(phone.getByRole("button", { name: "Send message" })).toBeDisabled();
     await message.fill("Sent from my iPhone");
@@ -198,6 +218,12 @@ for (const engine of [chromium, webkit]) {
     await expect(desktop.getByText("Sent from my iPhone", { exact: true })).toBeHidden();
     await desktop.locator(`button[data-thread-id="${firstId}"]`).click();
     await expect(desktop.getByText("Second shared reply.", { exact: true })).toBeVisible();
+    await expect(desktop.getByRole("combobox", { name: "Model", exact: true })).toContainText(
+      "Faux 1",
+    );
+    await expect(
+      desktop.getByRole("combobox", { name: "Thinking level", exact: true }),
+    ).toContainText("High");
     await composer(desktop).fill("Desktop draft in the same thread");
     await message.fill("Private phone draft");
     await phone.reload();
