@@ -59,6 +59,43 @@ afterEach(async () => {
 });
 
 describe("saved history", () => {
+  it("indexes messages omitted from an uncompacted browser snapshot without shifting on append", async () => {
+    const entries = [
+      user("u0", null),
+      assistant("a0", "u0"),
+      user("u1", "a0"),
+      assistant("a1", "u1"),
+      user("u2", "a1"),
+      assistant("a2", "u2"),
+    ];
+    await seed(entries);
+    expect((await SessionHistory.read(file, "session")).index.prompts).toEqual([]);
+    expect((await SessionHistory.read(file, "session", undefined, 2)).index.prompts).toEqual([
+      "u0",
+    ]);
+    await seed([...entries, user("u3", "a2"), assistant("a3", "u3")]);
+    const appended = await SessionHistory.read(file, "session", undefined, 2);
+    expect(appended.index.prompts).toEqual(["u0"]);
+    expect((await appended.page("u0")).messages).toHaveLength(8);
+  });
+
+  it("combines earlier compaction history with omitted live browser messages", async () => {
+    await seed([
+      user("u0", null),
+      assistant("a0", "u0"),
+      user("u1", "a0"),
+      assistant("a1", "u1"),
+      user("u2", "a1"),
+      assistant("a2", "u2"),
+      compact("c", "a2", "u1"),
+    ]);
+    expect((await SessionHistory.read(file, "session")).index.prompts).toEqual(["u0"]);
+    expect((await SessionHistory.read(file, "session", undefined, 2)).index.prompts).toEqual([
+      "u0",
+      "u1",
+    ]);
+  });
+
   it("indexes summarized prompts even when only one prompt remains in model context", async () => {
     await seed([
       user("u0", null, "Old request"),

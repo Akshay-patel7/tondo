@@ -1,0 +1,35 @@
+/* Only the browser entry loads this sheet; desktop geometry is unchanged. */
+html[data-remote] {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+.remote-shell {
+  height: min(var(--remote-height, 100dvh), 100dvh);
+  padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+}
+
+html[data-remote] input,
+html[data-remote] textarea,
+html[data-remote] select {
+  font-size: 16px;
+}
+
+html[data-remote] button,
+html[data-remote] [role="option"] {
+  touch-action: manipulation;
+}
+
+html[data-remote] button,
+html[data-remote] [role="option"] {
+  min-height: 44px;
+}
+
+html[data-remote] [aria-label="Turn changes"] {
+  width: 100% !important;
+  flex: 1;
+}
+
+html[data-remote] [aria-label="Resize changes"] {
+  display: none;
+}

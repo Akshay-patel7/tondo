@@ -51,7 +51,7 @@ These rules come from studying how T3 Code stays fast:
 - Batch streamed text before it reaches the UI instead of re-rendering on every token.
 - Keep heavy work such as diffing off the UI thread.
 - Keep pi processes out of the UI process.
-- Send the UI only the state of the thread on screen.
+- Send each UI only the state of the thread it is viewing.
 - No animations that repaint continuously.
 
 ## Setup and settings
@@ -60,7 +60,7 @@ Tondo shows a problem with pi where it happens. If it can't find pi, or finds on
 
 A new thread opens its composer immediately but stays out of the sidebar until you type a message, attach an image or run a project script. Unsent drafts stay with their threads across navigation and restart.
 
-Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has seven sections:
+Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/settings`, or with the gear in the sidebar. Escape goes back. It has eight sections:
 
 - **Appearance:** System, Light or Dark, with Default, Slate, Ocean or Rose colors. Each palette has light and dark versions. Expand thinking sections opens every section by default, including past replies. It starts off, and individual sections can still be toggled.
 - **pi:** the version and path in use. Choose a pi, go back to the one on your PATH, open pi's settings files, or review and apply pi and package updates.
@@ -69,6 +69,7 @@ Settings opens with ⌘, (Ctrl+, on Linux), from the command palette, with `/set
 - **Project scripts:** per-project names and shell commands, such as Build app and `pnpm build`. Run them from the thread header in its displayed checkout.
 - **Repositories:** automatically pull clean default branches, with a global switch and per-project overrides. Starts off.
 - **Shortcuts:** rebind or turn off the app shortcuts, with conflicts refused. The composer and dialog keys are fixed, because they follow pi's terminal UI.
+- **Remote access:** an optional, private browser companion for your iPhone through Tailscale. Starts off. Turning it off closes the gateway and disconnects paired browsers.
 
 Tondo saves these in `settings.json` in its app data folder.
 
@@ -79,6 +80,12 @@ For a custom pi installation, Tondo honors `PI_SELF_UPDATE_COMMAND` before the g
 Updating requires all threads to be idle and all integrated terminals to be closed. Tondo stops idle pi processes, installs the reviewed version or Git commit, and resumes the visible thread on its saved session. Other threads resume when opened. Drafts remain editable, but sending and model changes wait for the update to finish. Package declarations and resource filters stay unchanged. Git packages with local edits or files that pi would clean are refused, except for `node_modules`, whose dependencies pi reinstalls. Third-party package installs can run their install scripts. If pi's own package manager cannot safely target its installation, Tondo shows that it needs a manual update.
 
 Everything works from the keyboard. Tab moves between the sidebar, the transcript, the composer and the panels. In the sidebar and the Git menu, the arrow keys, Home and End move, and Shift+F10 opens a row's menu. Escape closes a panel and puts focus back where it was. Every control has a name for screen readers.
+
+## Remote access
+
+Enable **Settings → Remote access** to control the same Mac-hosted threads from an iPhone-friendly browser. Connect both devices to Tailscale, privately publish Tondo's loopback server with Tailscale Serve, then enter the pairing code shown in Settings. Tondo never changes your existing Tailscale configuration. [Connection instructions and security details](docs/remote-access.md).
+
+The browser shares existing agents, but has independent navigation and local drafts. Text prompts, streamed replies, stopping, extension questions, saved history and diffs are available. Desktop traffic keeps its MessagePort; the opt-in network gateway runs on an isolated worker thread, and slow browsers have bounded queues. Your Mac must remain awake, online and running Tondo. This is remote control of your agents, not a cloud copy. Native file/report previews, attachments, terminals, app settings, sign-in and Git mutations remain desktop-only in this first version.
 
 ## Project scripts
 

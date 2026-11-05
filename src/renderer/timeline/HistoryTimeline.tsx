@@ -9,11 +9,11 @@ import { Timeline } from "./Timeline";
 import { timelineRows } from "./turns";
 
 /** Ordinary threads keep the existing hot path and never scan saved history. */
-export function HistoryTimeline() {
+export function HistoryTimeline({ browseSaved = false }: { browseSaved?: boolean }) {
   const messages = useThread((thread) => thread.messages);
   const compacted = useMemo(
-    () => messages.some((message) => message.role === "compactionSummary"),
-    [messages],
+    () => browseSaved || messages.some((message) => message.role === "compactionSummary"),
+    [messages, browseSaved],
   );
   const [retry, setRetry] = useState(0);
   return compacted ? (

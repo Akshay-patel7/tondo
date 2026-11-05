@@ -184,7 +184,10 @@ if (!app.requestSingleInstanceLock()) {
       // Tests check that pi's process groups are gone. A packaged app has no such door.
       if (!app.isPackaged) {
         Object.assign(globalThis, {
-          tondoTest: { processGroups: () => started.processGroups },
+          tondoTest: {
+            processGroups: () => started.processGroups,
+            remoteStatus: () => started.remoteStatus,
+          },
         });
       }
       // perf launches Tondo with gc() exposed and collects the host's garbage too.

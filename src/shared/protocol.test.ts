@@ -605,8 +605,8 @@ describe("parseClientMessage", () => {
     );
   });
 
-  it("speaks version 34, which adds automatic pull settings", () => {
-    expect(PROTOCOL_VERSION).toBe(34);
+  it("speaks version 35, which adds private remote access", () => {
+    expect(PROTOCOL_VERSION).toBe(35);
   });
 
   it("rejects extra fields when marking a thread unread", () => {

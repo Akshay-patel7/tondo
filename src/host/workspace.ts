@@ -5,6 +5,8 @@
 // drafted. A thread runs a pi only while you use it, and the pool stops the
 // ones you left.
 import { randomUUID } from "node:crypto";
+import type { RemoteStatus } from "../shared/remote";
+import type { RemoteWorkspace } from "./remoteWorkspace";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { Git } from "./git";
@@ -71,6 +73,7 @@ export interface WorkspaceOptions {
   readonly poolOverride: Partial<PoolLimits>;
   /** Sends a message to the page, if one is connected. */
   readonly send: (message: HostMessage) => void;
+  readonly setRemoteAccess?: (enabled: boolean) => void;
   /** Asks main to show the folder dialog for a project or the worktree setting. */
   readonly chooseFolder: (purpose: "project" | "worktree") => void;
   /** Asks main to show the file dialog for pi. Main answers through piChosen. */
@@ -93,6 +96,10 @@ export class Workspace {
   private readonly poolOverride: Partial<PoolLimits>;
   private limits: PoolLimits;
   private readonly send: (message: HostMessage) => void;
+  private readonly setRemoteAccess: (enabled: boolean) => void;
+  private remoteEnabled: boolean | undefined;
+  private remoteStatus: RemoteStatus = { state: "off" };
+  private remote: RemoteWorkspace | undefined;
   private readonly chooseFolder: WorkspaceOptions["chooseFolder"];
   private readonly choosePi: () => void;
   private readonly chooseFiles: (id: string) => void;
@@ -152,6 +159,7 @@ export class Workspace {
     this.poolOverride = options.poolOverride;
     this.limits = { ...POOL_LIMITS, ...options.poolOverride };
     this.send = options.send;
+    this.setRemoteAccess = options.setRemoteAccess ?? (() => {});
     this.chooseFolder = options.chooseFolder;
     this.choosePi = options.choosePi;
     this.chooseFiles = options.chooseFiles;
@@ -193,6 +201,62 @@ export class Workspace {
     }
     this.setLimits(this.poolLimits(settings));
     this.applyTheme(settings.theme, settings.palette);
+    this.applyRemoteSetting(settings.remoteAccess);
+  }
+
+  private applyRemoteSetting(enabled: boolean): void {
+    if (enabled === this.remoteEnabled) return;
+    this.remoteEnabled = enabled;
+    if (!enabled) this.closeRemote();
+    this.setRemoteAccess(enabled);
+  }
+
+  reportRemote(status: RemoteStatus): void {
+    this.remoteStatus = status;
+    this.send({ v, type: "remote-status", status });
+  }
+
+  async connectRemote(
+    post: (message: import("../shared/remote").HostToRemote) => void,
+  ): Promise<RemoteWorkspace> {
+    const { RemoteWorkspace } = await import("./remoteWorkspace");
+    if (!this.remoteEnabled) throw new Error("Remote access is disabled");
+    this.closeRemote();
+    this.remote = new RemoteWorkspace(
+      {
+        thread: (id) => {
+          if (this.piUpdating || this.gitMutation)
+            throw new Error("Wait for the current maintenance action.");
+          this.row(id);
+          return this.live.get(id) ?? this.startThread(id);
+        },
+        newThread: (projectId) => {
+          this.project(projectId);
+          if (this.piUpdating || this.gitMutation)
+            throw new Error("Wait for the current maintenance action.");
+          const id = randomUUID();
+          this.store.addThread({ id, projectId, sessionFile: null, createdAt: Date.now() }, false);
+          return id;
+        },
+        describe: (thread) => this.describe(thread),
+        sidebar: () => this.sidebar(),
+        prompt: async (message) => {
+          if (this.piUpdating || this.gitMutation)
+            throw new Error("Wait for the current maintenance action.");
+          await this.running(message.threadId).prompt(message.text, message.streamingBehavior);
+          this.store.revealThread(message.threadId);
+          this.sendSidebar();
+        },
+        checkPool: () => this.checkPool(),
+      },
+      post,
+    );
+    return this.remote;
+  }
+
+  closeRemote(): void {
+    this.remote?.close();
+    this.remote = undefined;
   }
 
   /** Tells main the theme, unless main has it already. */
@@ -254,6 +318,7 @@ export class Workspace {
 
   /** Sends a new page everything it shows. */
   greet(): void {
+    this.send({ v, type: "remote-status", status: this.remoteStatus });
     this.send({ v, type: "ui", sidebarHidden: this.store.ui().sidebarHidden });
     this.sendSettings(null);
     this.piUpdates.report();
@@ -705,6 +770,7 @@ export class Workspace {
     this.setLimits(this.poolLimits(after));
     // settings.json may have changed outside Tondo since main last heard the theme.
     this.applyTheme(after.theme, after.palette);
+    this.applyRemoteSetting(after.remoteAccess);
     if (after.piPath !== before.piPath) await this.rediscoverPi();
     if (patch.autoPull !== undefined || patch.projectAutoPull !== undefined) {
       this.autoPullChecks.clear();
@@ -731,6 +797,7 @@ export class Workspace {
       theme,
       palette,
       expandThinking,
+      remoteAccess,
       defaultModel,
       defaultThinkingLevel,
       pool,
@@ -751,6 +818,7 @@ export class Workspace {
         theme,
         palette,
         expandThinking,
+        remoteAccess,
         defaultModel,
         defaultThinkingLevel,
         pool,
@@ -1011,6 +1079,7 @@ export class Workspace {
     return {
       events: (events) => {
         const thread = current();
+        if (thread) this.remote?.events(thread.id, events);
         if (thread?.visible) {
           this.send({ v, type: "events", threadId: thread.id, events });
           if (
@@ -1030,6 +1099,7 @@ export class Workspace {
           this.store.setSessionFile(thread.id, file);
         }
         this.noteActivity(thread);
+        this.remote?.changed(thread, true);
         if (thread.visible) this.sendSnapshot();
         this.scheduleSidebar();
         this.checkPool();
@@ -1038,6 +1108,7 @@ export class Workspace {
         const thread = current();
         if (!thread) return;
         this.noteActivity(thread);
+        this.remote?.changed(thread);
         if (thread.visible) this.send({ v, type: "status", thread: this.describe(thread) });
         this.scheduleSidebar();
         this.checkPool();
@@ -1056,6 +1127,7 @@ export class Workspace {
       uiChanged: (dialogs) => {
         const thread = current();
         if (!thread) return;
+        this.remote?.uiChanged(thread);
         if (thread.visible)
           this.send({ v, type: "extension-ui", threadId: thread.id, ui: thread.ui });
         if (!dialogs) return;
@@ -1584,7 +1656,8 @@ export class Workspace {
         thread.state.running ||
         thread.waiting ||
         thread.preparing ||
-        thread.checkpoints.busy)
+        thread.checkpoints.busy ||
+        thread.remotelyVisible)
     ) {
       return;
     }
@@ -1627,7 +1700,12 @@ export class Workspace {
     const now = Date.now();
     const members = [...this.live.values()]
       .filter(({ status }) => status.state === "starting" || status.state === "ready")
-      .map(({ id, busy, visible, lastUsed }) => ({ id, busy, visible, lastUsed }));
+      .map(({ id, busy, visible, remotelyVisible, lastUsed }) => ({
+        id,
+        busy,
+        visible: visible || remotelyVisible,
+        lastUsed,
+      }));
     const { stop, nextCheckAt } = choosePiToStop(members, now, this.limits);
     for (const id of stop) {
       const thread = this.live.get(id);
@@ -1689,6 +1767,7 @@ export class Workspace {
   /** Stops a thread's pi and reads its session file again for the sidebar. */
   private async letGo(thread: LiveThread): Promise<void> {
     if (this.live.get(thread.id) !== thread) return;
+    this.remote?.closed(thread);
     this.live.delete(thread.id);
     this.activities.delete(thread.id);
     const closing = (async () => {
@@ -1802,6 +1881,7 @@ export class Workspace {
     if (json === this.lastSidebar) return;
     this.lastSidebar = json;
     this.send({ v, type: "sidebar", projects });
+    this.remote?.sidebar(projects);
   }
 
   private sidebar(): SidebarProject[] {

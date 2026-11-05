@@ -102,6 +102,33 @@ function confirm(id: string, title: string): PiRecord {
   return { type: "extension_ui_request", id, method: "confirm", title, message: "Sure?" };
 }
 
+describe("remote observers", () => {
+  it("flushes an existing device before a new baseline and keeps events while desktop-hidden", async () => {
+    await thread.open();
+    thread.show();
+    const unobserve = thread.observeRemote();
+    listener.events.mockClear();
+    emit({ type: "queue_update", steering: ["first"], followUp: [] });
+    thread.remoteSnapshot();
+    expect(listener.events).toHaveBeenCalledWith([
+      expect.objectContaining({ type: "queue_update" }),
+    ]);
+    thread.hide();
+    expect(thread.visible).toBe(false);
+    expect(thread.remotelyVisible).toBe(true);
+    listener.events.mockClear();
+    emit({ type: "queue_update", steering: ["second"], followUp: [] });
+    thread.snapshot();
+    expect(listener.events).toHaveBeenCalledWith([
+      expect.objectContaining({ steering: ["second"] }),
+    ]);
+    unobserve();
+    unobserve();
+    expect(thread.remotelyVisible).toBe(false);
+    await thread.close();
+  });
+});
+
 describe("open", () => {
   it("starts pi in the project on the thread's session and reports the loaded thread once", async () => {
     await thread.open();

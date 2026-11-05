@@ -30,6 +30,30 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+describe("remote access", () => {
+  it("defaults off, persists both values and preserves unrelated settings", () => {
+    writeFileSync(file, JSON.stringify({ later: 7, theme: "dark" }));
+    expect(readSettings(file).remoteAccess).toBe(false);
+    updateSettings(file, { remoteAccess: true });
+    expect(readSettings(file).remoteAccess).toBe(true);
+    updateSettings(file, { remoteAccess: false });
+    expect(readSettings(file).remoteAccess).toBe(false);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ later: 7, theme: "dark" });
+  });
+
+  it.each(["true", null, 1, {}])("fails safely for an invalid remoteAccess: %j", (remoteAccess) => {
+    writeFileSync(file, JSON.stringify({ remoteAccess, theme: "dark" }));
+    expect(() => readSettings(file)).toThrow(/remoteAccess/);
+    expect(readSettingsLeniently(file)).toMatchObject({
+      settings: { remoteAccess: false, theme: "dark" },
+      problem: expect.any(String),
+    });
+    writeFileSync(file, "{}");
+    expect(() => updateSettings(file, { remoteAccess } as never)).toThrow();
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+});
+
 describe("automatic pull", () => {
   it("defaults off and merges only named project overrides without losing unrelated keys", () => {
     writeFileSync(file, JSON.stringify({ later: 7, theme: "dark" }));
@@ -156,6 +180,7 @@ describe("readSettings", () => {
       theme: "system",
       palette: "default",
       expandThinking: false,
+      remoteAccess: false,
       panelWidths: { sidebar: 256, changes: 432 },
       pool: { maxLive: 4, idleMinutes: 10 },
       shortcuts: {},
@@ -189,6 +214,7 @@ describe("readSettings", () => {
       theme: "dark",
       palette: "ocean",
       expandThinking: true,
+      remoteAccess: false,
       panelWidths: { sidebar: 256, changes: 432 },
       pool: { maxLive: 12, idleMinutes: 240 },
       shortcuts: { palette: "mod+shift+p", settings: null },
@@ -315,6 +341,7 @@ describe("readSettingsLeniently", () => {
         theme: "system",
         palette: "default",
         expandThinking: false,
+        remoteAccess: false,
         panelWidths: { sidebar: 256, changes: 432 },
         pool: { maxLive: 4, idleMinutes: 30 },
         shortcuts: { settings: "mod+j" },
