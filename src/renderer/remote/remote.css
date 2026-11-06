@@ -14,11 +14,30 @@ html[data-remote] #root {
 }
 
 .remote-shell {
+  container-type: size;
   position: absolute;
   inset-inline: 0;
   top: var(--remote-top, 0px);
   height: min(var(--remote-height, 100dvh), 100dvh);
   padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+}
+
+/* The keyboard changes the visual viewport, not necessarily media-query
+   height. Query the bounded shell so even landscape/offline editing fits. */
+@container (max-height: 450px) {
+  .remote-footer {
+    padding-top: 6px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+  }
+
+  .remote-footer form {
+    gap: 4px;
+  }
+
+  #remote-message {
+    min-height: 44px;
+    max-height: min(80px, calc(var(--remote-height) * 0.2));
+  }
 }
 
 html[data-remote] input,
@@ -35,6 +54,13 @@ html[data-remote] [role="option"] {
 html[data-remote] button,
 html[data-remote] [role="option"] {
   min-height: 44px;
+}
+
+/* Streamdown owns its icon buttons; give those finger-sized widths too,
+   without widening short inline Markdown links. */
+html[data-remote] button:has(> svg),
+html[data-remote] button[title] {
+  min-width: 44px;
 }
 
 html[data-remote] [aria-label="Turn changes"] {

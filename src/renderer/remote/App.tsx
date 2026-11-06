@@ -1,7 +1,6 @@
-import { lazy, Suspense, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
 import { PROTOCOL_VERSION as v, type ClientMessage } from "../../shared/protocol";
 import { useHost } from "../connection";
-import { Button } from "../ui/button";
 import { Banners } from "../banners/Banners";
 import { DialogPanel } from "../extensionUi/DialogPanel";
 import { useExtensionUi } from "../extensionUi/store";
@@ -16,15 +15,19 @@ import {
   RemoteNotice,
   RemotePairForm,
   RemoteSessionControls,
+  RemoteStatus,
   RemoteThreadList,
 } from "../ui/remote";
 import {
+  createRemoteThread,
   pairRemote,
   remoteRequest,
   retryRemoteConnection,
   selectRemoteThread,
   useRemoteConnection,
 } from "./connection";
+
+import { showRemoteThreads, useRemoteLocation } from "./navigation";
 
 import {
   beginRemoteSend,
@@ -45,12 +48,29 @@ export function RemoteApp() {
   const thread = useHost((host) => host.thread);
   const projects = useHost((host) => host.projects);
   const errors = useHost((host) => host.errors);
-  const [list, setList] = useState(false);
+  const selectedId = useRemoteLocation((location) => location.threadId);
+  const list = selectedId === null;
   const [code, setCode] = useState("");
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const diffs = useDiffPanel();
   const connected = connection.state === "connected";
+  const offline = !connected && connection.state !== "pairing";
+  const notice = error ?? connection.error ?? errors.at(-1) ?? null;
+  const selectedTitle = projects
+    .flatMap((project) => project.threads)
+    .find((item) => item.id === selectedId)?.title;
+  let title = "Your threads";
+  if (connection.state === "pairing") title = "Connect to your Mac";
+  else if (!list)
+    title = thread?.id === selectedId ? thread.title : (selectedTitle ?? "Opening thread…");
+  let openingMessage = "This thread could not be opened. Choose another thread and try again.";
+  if (offline) openingMessage = "This thread will open when your Mac reconnects.";
+  else if (connection.openingThreadId) openingMessage = "Opening thread…";
+
+  useEffect(() => {
+    if (selectedId !== thread?.id) useDiffPanel.setState(false, true);
+  }, [selectedId, thread?.id]);
 
   async function pair(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -76,84 +96,69 @@ export function RemoteApp() {
   return (
     <RemoteFrame>
       <RemoteHeader
-        title={
-          connection.state === "pairing"
-            ? "Connect to your Mac"
-            : list || !thread
-              ? "Your threads"
-              : thread.title
-        }
+        title={title}
         back={
-          thread && !list
+          !list
             ? () => {
-                setList(true);
+                showRemoteThreads();
                 useDiffPanel.setState(false, true);
               }
             : undefined
         }
-        changes={thread && !list && connected ? changes : undefined}
+        changes={
+          thread?.id === selectedId && !list && connected && !connection.openingThreadId
+            ? changes
+            : undefined
+        }
       />
-      {!connected && connection.state !== "pairing" ? (
-        <RemoteNotice>
-          {connection.state === "connecting"
-            ? "Connecting to your Mac…"
-            : "Offline · your agents keep running on your Mac"}
-          {connection.state === "offline" ? (
-            <Button variant="outline" className="ml-2" onClick={retryRemoteConnection}>
-              Reconnect
-            </Button>
-          ) : null}
-        </RemoteNotice>
-      ) : null}
-      {connection.error || error || errors.at(-1) ? (
-        <RemoteNotice error>
-          {error ?? connection.error ?? errors.at(-1)}
-          <Button
-            variant="ghost"
-            className="ml-2"
-            aria-label="Dismiss error"
-            onClick={() => {
-              setError(null);
-              useRemoteConnection.setState({ error: null });
-              useHost.setState({ errors: [] });
-            }}
-          >
-            Dismiss
-          </Button>
-        </RemoteNotice>
-      ) : null}
-      {connection.state === "pairing" ? (
-        <RemotePairForm
-          code={code}
-          setCode={setCode}
-          submit={(event) => {
-            void pair(event);
-          }}
-          busy={pairing}
-        />
-      ) : list || !thread ? (
-        <RemoteThreadList
-          projects={projects}
-          disabled={!connected}
-          choose={(id) => {
-            setList(false);
+      {offline || notice ? (
+        <RemoteStatus
+          offline={offline}
+          connecting={connection.state === "connecting"}
+          error={notice}
+          reconnect={retryRemoteConnection}
+          dismiss={() => {
             setError(null);
-            selectRemoteThread(id);
-          }}
-          create={(projectId) => {
-            void remoteRequest({ v, type: "new-thread", projectId }).then(
-              () => setList(false),
-              (reason: unknown) => setError(String(reason)),
-            );
+            useRemoteConnection.setState({ error: null });
+            useHost.setState({ errors: [] });
           }}
         />
-      ) : diffs ? (
-        <Suspense fallback={<RemoteNotice>Loading changes…</RemoteNotice>}>
-          <DiffPanel />
-        </Suspense>
-      ) : (
-        <RemoteThread key={thread.id} connected={connected} />
-      )}
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {connection.state === "pairing" ? (
+          <RemotePairForm
+            code={code}
+            setCode={setCode}
+            submit={(event) => {
+              void pair(event);
+            }}
+            busy={pairing}
+          />
+        ) : list ? (
+          <RemoteThreadList
+            projects={projects}
+            disabled={!connected || connection.creating}
+            busy={connection.creating}
+            choose={(id) => {
+              setError(null);
+              selectRemoteThread(id);
+            }}
+            create={(projectId) => {
+              void createRemoteThread(projectId).catch((reason: unknown) =>
+                setError(String(reason)),
+              );
+            }}
+          />
+        ) : !thread || thread.id !== selectedId || connection.openingThreadId ? (
+          <RemoteNotice>{openingMessage}</RemoteNotice>
+        ) : diffs ? (
+          <Suspense fallback={<RemoteNotice>Loading changes…</RemoteNotice>}>
+            <DiffPanel />
+          </Suspense>
+        ) : (
+          <RemoteThread key={thread.id} connected={connected} />
+        )}
+      </div>
     </RemoteFrame>
   );
 }
