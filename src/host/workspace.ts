@@ -235,7 +235,10 @@ export class Workspace {
           if (this.piUpdating || this.gitMutation)
             throw new Error("Wait for the current maintenance action.");
           const id = randomUUID();
-          this.store.addThread({ id, projectId, sessionFile: null, createdAt: Date.now() }, false);
+          // Phone drafts stay on the device, so they cannot reveal a hidden
+          // thread through the desktop draft path. Keep remote-created threads
+          // reachable even before their first prompt.
+          this.store.addThread({ id, projectId, sessionFile: null, createdAt: Date.now() });
           return id;
         },
         describe: (thread) => this.describe(thread),

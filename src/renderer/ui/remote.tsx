@@ -1,10 +1,19 @@
-import { ArrowLeft, ArrowUp, FileDiff, Pin, Plus, Square } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
+import { ArrowLeft, ArrowUp, FileDiff, Info, Pin, Plus, Square } from "lucide-react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import type { ModelOption, PiSession, SidebarProject, ThinkingLevel } from "../../shared/protocol";
 import { THINKING_LABELS } from "../../shared/settings";
 import { Button } from "./button";
 import { Input } from "./input";
 import { Textarea } from "./textarea";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPopup,
+  DialogTitle,
+} from "./dialog";
 
 export function RemoteFrame({ children }: { children: ReactNode }) {
   return (
@@ -46,6 +55,71 @@ export function RemoteHeader({
         </Button>
       ) : null}
     </header>
+  );
+}
+
+/** One fixed-height notice: retry attempts must not move the phone's tap targets. */
+export function RemoteStatus({
+  offline,
+  connecting,
+  error,
+  reconnect,
+  dismiss,
+}: {
+  offline: boolean;
+  connecting: boolean;
+  error: string | null;
+  reconnect: () => void;
+  dismiss: () => void;
+}) {
+  const [details, setDetails] = useState(false);
+  return (
+    <section
+      role={offline ? "status" : "alert"}
+      className={`flex h-14 shrink-0 items-center gap-2 overflow-hidden px-3 ${offline ? "bg-muted text-muted-foreground" : "bg-destructive/10 text-destructive"}`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">
+          {offline ? "Offline · your agents keep running" : "Couldn’t complete that action"}
+        </p>
+        <p className="truncate text-xs">{error ?? "Reconnecting to your Mac…"}</p>
+      </div>
+      {offline ? (
+        <Button variant="outline" disabled={connecting} onClick={reconnect} aria-busy={connecting}>
+          Reconnect
+        </Button>
+      ) : null}
+      {error ? (
+        <Dialog open={details} onOpenChange={setDetails}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11 shrink-0"
+            aria-label="Error details"
+            onClick={() => setDetails(true)}
+          >
+            <Info />
+          </Button>
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>{offline ? "Connection details" : "Action failed"}</DialogTitle>
+              <DialogDescription className="max-h-[50dvh] overflow-y-auto break-words whitespace-pre-wrap">
+                {error}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose
+                render={<Button variant="outline" />}
+                onClick={dismiss}
+                aria-label="Dismiss error"
+              >
+                Dismiss
+              </DialogClose>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
+    </section>
   );
 }
 
@@ -117,14 +191,16 @@ export function RemoteThreadList({
   choose,
   create,
   disabled,
+  busy,
 }: {
   projects: readonly SidebarProject[];
   choose: (id: string) => void;
   create: (projectId: number) => void;
   disabled: boolean;
+  busy: boolean;
 }) {
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
+    <main aria-busy={busy} className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div className="mx-auto flex max-w-2xl flex-col gap-6">
         {projects.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -154,7 +230,7 @@ export function RemoteThreadList({
                   key={thread.id}
                   data-thread-id={thread.id}
                   type="button"
-                  disabled={disabled}
+                  disabled={busy}
                   onClick={() => choose(thread.id)}
                   className="flex min-h-16 w-full items-center gap-3 border-b border-border px-4 py-3 text-left outline-none last:border-0 hover:bg-muted focus-visible:focus-ring disabled:opacity-50"
                 >
@@ -283,46 +359,48 @@ export function RemoteComposer({
       <label htmlFor="remote-message" className="sr-only">
         Message
       </label>
-      <Textarea
-        id="remote-message"
-        placeholder={running ? "Steer the agent…" : "Message Tondo…"}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        rows={3}
-        className="max-h-36 min-h-20 resize-none text-base"
-      />
-      <div className="flex items-center gap-3">
-        <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-          {busy ? "Waiting for your Mac…" : "Draft stays on this device · text only"}
-        </p>
-        {running ? (
+      <div className="flex items-end gap-2">
+        <Textarea
+          id="remote-message"
+          placeholder={running ? "Steer the agent…" : "Message Tondo…"}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          rows={3}
+          className="max-h-36 min-h-16 min-w-0 flex-1 resize-none text-base"
+        />
+        <div className="flex shrink-0 flex-col gap-2">
+          {running ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="size-11"
+              disabled={disabled}
+              onClick={stop}
+              aria-label="Stop agent"
+            >
+              <Square />
+            </Button>
+          ) : null}
           <Button
-            type="button"
-            variant="ghost"
+            type="submit"
             className="size-11"
-            disabled={disabled}
-            onClick={stop}
-            aria-label="Stop agent"
+            disabled={disabled || busy || !text.trim()}
+            aria-label="Send message"
           >
-            <Square />
+            <ArrowUp />
           </Button>
-        ) : null}
-        <Button
-          type="submit"
-          className="size-11"
-          disabled={disabled || busy || !text.trim()}
-          aria-label="Send message"
-        >
-          <ArrowUp />
-        </Button>
+        </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        {busy ? "Waiting for your Mac…" : "Draft stays on this device · text only"}
+      </p>
     </form>
   );
 }
 
 export function RemoteFooter({ children }: { children: ReactNode }) {
   return (
-    <footer className="remote-footer max-h-[calc(var(--remote-height,100dvh)-4rem)] shrink-0 overflow-y-auto border-t border-border bg-background px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <footer className="remote-footer min-h-0 max-h-[65%] shrink overflow-y-auto overscroll-y-contain border-t border-border bg-background px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {children}
     </footer>
   );

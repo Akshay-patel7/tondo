@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { loadRemoteDraft, remoteDraftKey } from "./draft";
 import { forgetThread, rememberedThread, rememberThread } from "./storage";
+import {
+  showRemoteThread,
+  showRemoteThreads,
+  startRemoteNavigation,
+  useRemoteLocation,
+} from "./navigation";
+import { RemoteBackoff } from "./reconnect";
 import { REMOTE_REQUEST_BYTES } from "../../shared/remote";
 import { PROTOCOL_VERSION as v, type ClientMessage, type HostMessage } from "../../shared/protocol";
 import { attachBrowserTransport, receiveBrowserMessage, useHost } from "../connection";
@@ -9,11 +16,20 @@ export const useRemoteConnection = create<{
   state: "pairing" | "connecting" | "connected" | "offline";
   error: string | null;
   historyOmitted: boolean;
-}>(() => ({ state: "connecting", error: null, historyOmitted: false }));
+  openingThreadId: string | null;
+  creating: boolean;
+}>(() => ({
+  state: "connecting",
+  error: null,
+  historyOmitted: false,
+  openingThreadId: null,
+  creating: false,
+}));
 let socket: WebSocket | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
-let retry = 0;
+const backoff = new RemoteBackoff();
 let generation = 0;
+let selection = 0;
 const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
 
 export function remoteRequest(message: ClientMessage): Promise<void> {
@@ -37,8 +53,37 @@ export function remoteRequest(message: ClientMessage): Promise<void> {
 }
 
 export function selectRemoteThread(threadId: string): void {
-  rememberThread(threadId);
-  void remoteRequest({ v, type: "open-thread", threadId }).catch(showError);
+  showRemoteThread(threadId);
+  openThread(threadId);
+}
+
+function openThread(threadId: string): void {
+  const attempt = ++selection;
+  useRemoteConnection.setState({ openingThreadId: threadId });
+  // Selecting a destination is safe offline; only send it after reconnecting.
+  if (useRemoteConnection.getState().state !== "connected") return;
+  void remoteRequest({ v, type: "open-thread", threadId })
+    .catch((error: unknown) => {
+      if (attempt === selection && useRemoteLocation.getState().threadId === threadId)
+        showError(error);
+    })
+    .finally(() => {
+      if (attempt === selection) useRemoteConnection.setState({ openingThreadId: null });
+    });
+}
+
+export async function createRemoteThread(projectId: number): Promise<void> {
+  if (useRemoteConnection.getState().creating) return;
+  useRemoteConnection.setState({ creating: true });
+  const previous = useHost.getState().thread?.id;
+  try {
+    await remoteRequest({ v, type: "new-thread", projectId });
+    const thread = useHost.getState().thread;
+    if (!thread || thread.id === previous) throw new Error("The new thread could not be opened.");
+    showRemoteThread(thread.id);
+  } finally {
+    useRemoteConnection.setState({ creating: false });
+  }
 }
 
 function showError(error: unknown): void {
@@ -46,6 +91,9 @@ function showError(error: unknown): void {
 }
 
 function disconnected(): void {
+  backoff.disconnected(performance.now());
+  selection++;
+  useRemoteConnection.setState({ openingThreadId: null });
   useHost.setState({ connection: "reconnecting" });
   for (const request of pending.values())
     request.reject(
@@ -93,8 +141,6 @@ async function connectRemote(): Promise<void> {
     let reopening = true;
     ws.addEventListener("open", () => {
       if (socket !== ws) return;
-      retry = 0;
-      useRemoteConnection.setState({ state: "connected", error: null });
       attachBrowserTransport({
         postMessage: (message) => {
           void remoteRequest(message).catch(showError);
@@ -112,19 +158,28 @@ async function connectRemote(): Promise<void> {
         else request?.resolve();
         return;
       }
-      if (message.v === v && message.type === "snapshot" && message.thread)
+      if (message.v === v && message.type === "snapshot" && message.thread) {
         loadRemoteDraft(remoteDraftKey(message.thread.id));
+        rememberThread(message.thread.id);
+      }
       receiveBrowserMessage(message);
       if (message.type === "snapshot" && message.v === v)
         useRemoteConnection.setState({ historyOmitted: message.historyOmitted ?? false });
-      if (message.type === "sidebar" && reopening) {
+      if (message.v === v && message.type === "sidebar" && reopening) {
         reopening = false;
-        const id = rememberedThread();
-        if (
-          id &&
-          message.projects.some((project) => project.threads.some((thread) => thread.id === id))
-        )
-          selectRemoteThread(id);
+        backoff.connected(performance.now());
+        useRemoteConnection.setState({ state: "connected", error: null });
+        const id = useRemoteLocation.getState().threadId ?? rememberedThread();
+        if (id) {
+          if (
+            message.projects.some((project) => project.threads.some((thread) => thread.id === id))
+          )
+            openThread(id);
+          else {
+            forgetThread();
+            showRemoteThreads();
+          }
+        }
       }
     });
     ws.addEventListener("error", () => ws.close());
@@ -135,6 +190,7 @@ async function connectRemote(): Promise<void> {
       if (event.code === 1013) {
         // Do not repeatedly request a large snapshot from an overloaded Mac or connection.
         forgetThread();
+        showRemoteThreads();
         useHost.setState({ thread: null });
         useRemoteConnection.setState({
           state: "offline",
@@ -167,12 +223,9 @@ async function connectRemote(): Promise<void> {
 
 function scheduleReconnect(): void {
   if (document.visibilityState === "hidden" || !navigator.onLine) return;
-  timer = setTimeout(
-    () => {
-      void connectRemote();
-    },
-    Math.min(500 * 2 ** retry++, 10_000),
-  );
+  timer = setTimeout(() => {
+    void connectRemote();
+  }, backoff.delay(performance.now()));
 }
 
 export function retryRemoteConnection(): void {
@@ -180,6 +233,7 @@ export function retryRemoteConnection(): void {
 }
 
 export function startRemoteConnection(): void {
+  startRemoteNavigation(openThread);
   document.addEventListener("visibilitychange", () => {
     generation++;
     clearTimeout(timer);
