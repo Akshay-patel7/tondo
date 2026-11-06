@@ -23,7 +23,12 @@ const { Arch, Platform, build } = electronBuilder;
 type PlatformName = "mac" | "linux";
 type ArchName = "arm64" | "x64";
 type Variant = "release" | "e2e";
-type SigningMode = "developer-id" | "ad-hoc";
+type SigningMode = "developer-id" | "local" | "ad-hoc";
+
+// A self-signed code-signing identity in the login keychain. Ad hoc signatures
+// change with every build, so macOS privacy grants (App Management, Full Disk
+// Access) never match the next build. This identity keeps them across rebuilds.
+const LOCAL_IDENTITY = "Tondo Local Signing";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const TARGETS: Record<PlatformName, readonly string[]> = {
@@ -135,7 +140,8 @@ function macSigningMode(): SigningMode {
   const identities = execFileSync("security", ["find-identity", "-v", "-p", "codesigning"], {
     encoding: "utf8",
   });
-  return identities.includes('"Developer ID Application:') ? "developer-id" : "ad-hoc";
+  if (identities.includes('"Developer ID Application:')) return "developer-id";
+  return identities.includes(`"${LOCAL_IDENTITY}"`) ? "local" : "ad-hoc";
 }
 
 // The env names app-builder-lib 26.15.3 reads in MacTargetHelper.getNotarizeOptions.
@@ -247,7 +253,9 @@ const config: Configuration = {
     hardenedRuntime: true,
     entitlements: "build/entitlements.mac.plist",
     entitlementsInherit: "build/entitlements.mac.plist",
-    // electron-builder finds the Developer ID itself; otherwise sign ad hoc so arm64 runs.
+    // electron-builder finds the Developer ID itself; otherwise sign with the local
+    // identity, or ad hoc so arm64 runs.
+    ...(signingMode === "local" ? { identity: LOCAL_IDENTITY } : {}),
     ...(signingMode === "ad-hoc" ? { identity: "-" } : {}),
     notarize,
     // ${arch} expands per architecture, so one run keeps only that arch's node-pty prebuild.
@@ -286,7 +294,7 @@ console.log(
 );
 if (signingMode !== undefined) {
   console.log(
-    `macOS signing: ${signingMode === "ad-hoc" ? "ad hoc (identity -), hardened runtime" : "Developer ID"}, notarization ${notarize ? "on" : "off"}.`,
+    `macOS signing: ${macSigningLabel(signingMode)}, notarization ${notarize ? "on" : "off"}.`,
   );
 }
 
@@ -296,6 +304,19 @@ await build({
   config,
   publish,
 });
+
+function macSigningLabel(mode: SigningMode): string {
+  switch (mode) {
+    case "developer-id":
+      return "Developer ID";
+    case "local":
+      return `${LOCAL_IDENTITY} (self-signed), hardened runtime`;
+    case "ad-hoc":
+      return "ad hoc (identity -), hardened runtime";
+    default:
+      return assertNever(mode);
+  }
+}
 
 function fuseLabel(state: FuseState | undefined): string {
   switch (state) {
