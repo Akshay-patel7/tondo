@@ -250,20 +250,34 @@ export class RemoteWorkspace {
   private sendSnapshot(clientId: string, peer: Peer, state: ThreadState): void {
     const thread = peer.thread;
     if (!thread) return;
-    const omitted = Math.max(0, state.messages.length - REMOTE_RECENT_MESSAGES);
-    // pi's leading compaction summary is synthetic: it isn't a saved message entry.
-    peer.omittedMessages =
-      omitted - (omitted > 0 && state.messages[0]?.role === "compactionSummary" ? 1 : 0);
-    this.send(clientId, {
+    const snapshot = (count: number): HostMessage => ({
       v,
       type: "snapshot",
-      historyOmitted: omitted > 0,
+      historyOmitted: count < state.messages.length,
       thread: this.options.describe(thread),
-      state: { ...state, messages: state.messages.slice(-REMOTE_RECENT_MESSAGES) },
+      state: { ...state, messages: count > 0 ? state.messages.slice(-count) : [] },
       draft: "",
       images: [],
       ui: thread.ui,
     });
+    // Large tool output or images can push the recent messages past the frame
+    // budget. Send the most recent ones that fit rather than disconnecting: a
+    // phone that remembers this thread would otherwise reconnect into the same
+    // failure. The rest stay reachable through saved history.
+    let fits = 0;
+    let tooBig = Math.min(state.messages.length, REMOTE_RECENT_MESSAGES) + 1;
+    if (remotePayloadBytes(snapshot(tooBig - 1)) !== null) fits = tooBig - 1;
+    else
+      while (tooBig - fits > 1) {
+        const middle = Math.floor((fits + tooBig) / 2);
+        if (remotePayloadBytes(snapshot(middle)) === null) tooBig = middle;
+        else fits = middle;
+      }
+    const omitted = state.messages.length - fits;
+    // pi's leading compaction summary is synthetic: it isn't a saved message entry.
+    peer.omittedMessages =
+      omitted - (omitted > 0 && state.messages[0]?.role === "compactionSummary" ? 1 : 0);
+    this.send(clientId, snapshot(fits));
   }
 
   private async request(clientId: string, peer: Peer, message: ClientMessage): Promise<void> {

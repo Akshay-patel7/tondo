@@ -5,6 +5,10 @@ export const REMOTE_FRAME_BYTES = 8 * 1024 * 1024;
 export const REMOTE_REQUEST_BYTES = 64 * 1024;
 export const REMOTE_MAX_CLIENTS = 4;
 export const REMOTE_RECENT_MESSAGES = 64;
+/** Closes a socket that should not reconnect to the same thread. WebKit, so iOS
+ * Safari, drops close codes 1012-1014 and reports 1005 with no reason, so this
+ * uses the application range that every browser keeps. */
+export const REMOTE_CLOSE_UNAVAILABLE = 4013;
 
 /** Pairing information goes only to the local Electron page, never to a remote peer. */
 export type RemoteStatus =

@@ -7,7 +7,7 @@ import path from "node:path";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION as v } from "../shared/protocol";
-import { REMOTE_FRAME_BYTES, type RemoteToHost } from "../shared/remote";
+import { REMOTE_CLOSE_UNAVAILABLE, REMOTE_FRAME_BYTES, type RemoteToHost } from "../shared/remote";
 import { startRemoteServer } from "./remoteServer";
 
 let root: string;
@@ -250,7 +250,7 @@ describe("paired loopback gateway", () => {
       await filled;
       const closed = once(ws, "close");
       ws.send(JSON.stringify({ id: "limit", message: { v, type: "ping", id: 4096 } }));
-      expect((await closed)[0]).toBe(1013);
+      expect((await closed)[0]).toBe(REMOTE_CLOSE_UNAVAILABLE);
       expect(
         await (await fetch(`${base}/session`, { headers: { Cookie: paired } })).json(),
       ).toEqual({ paired: true });
@@ -303,6 +303,6 @@ describe("paired loopback gateway", () => {
       clientId,
       message: { v, type: "error", message: "x".repeat(REMOTE_FRAME_BYTES) },
     });
-    expect((await closed)[0]).toBe(1013);
+    expect((await closed)[0]).toBe(REMOTE_CLOSE_UNAVAILABLE);
   });
 });

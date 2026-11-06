@@ -8,7 +8,7 @@ import {
   useRemoteLocation,
 } from "./navigation";
 import { RemoteBackoff } from "./reconnect";
-import { REMOTE_REQUEST_BYTES } from "../../shared/remote";
+import { REMOTE_CLOSE_UNAVAILABLE, REMOTE_REQUEST_BYTES } from "../../shared/remote";
 import { PROTOCOL_VERSION as v, type ClientMessage, type HostMessage } from "../../shared/protocol";
 import { attachBrowserTransport, receiveBrowserMessage, useHost } from "../connection";
 
@@ -187,7 +187,7 @@ async function connectRemote(): Promise<void> {
       if (socket !== ws) return;
       socket = undefined;
       disconnected();
-      if (event.code === 1013) {
+      if (event.code === REMOTE_CLOSE_UNAVAILABLE) {
         // Do not repeatedly request a large snapshot from an overloaded Mac or connection.
         forgetThread();
         showRemoteThreads();

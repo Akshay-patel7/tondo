@@ -102,6 +102,40 @@ it("does not start pi when listing threads and bounds initial history to the lat
   expect(frame).toMatchObject({ message: { historyOmitted: true } });
 });
 
+it.each([
+  { large: 600_000, sent: 2 },
+  { large: 2_000_000, sent: 0 },
+])(
+  "sends the recent messages that fit instead of disconnecting a thread with large output ($large)",
+  async ({ large, sent }) => {
+    const h = harness();
+    const state = threadFromMessages(
+      Array.from(
+        { length: 100 },
+        (_, i) =>
+          ({
+            role: "user",
+            content: i < 97 ? `message ${i}` : "x".repeat(large),
+            timestamp: i,
+          }) as PiMessage,
+      ),
+    );
+    Object.assign(h.options.thread("big"), { remoteSnapshot: () => state });
+    h.connect("phone");
+    expect(
+      (await h.request("phone", { v, type: "open-thread", threadId: "big" })).error,
+    ).toBeNull();
+    expect(h.outgoing.some((message) => message.type === "close")).toBe(false);
+    const frame = h.outgoing.findLast(
+      (entry) => entry.type === "message" && entry.message.type === "snapshot",
+    );
+    const snapshot =
+      frame?.type === "message" && frame.message.type === "snapshot" && frame.message;
+    expect(snapshot && snapshot.state.messages).toEqual(state.messages.slice(100 - sent, 100));
+    expect(snapshot).toMatchObject({ historyOmitted: true, thread: { id: "big" } });
+  },
+);
+
 it("rejects commands for a thread not selected on this device and returns failed prompt receipts", async () => {
   const h = harness();
   h.connect("phone");

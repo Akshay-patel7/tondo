@@ -478,6 +478,68 @@ test("touch browsing loads saved messages outside the bounded live snapshot with
   );
 });
 
+test("Safari opens and reopens a thread whose recent output exceeds the remote frame budget", async () => {
+  const project = path.join(workDir, "project");
+  mkdirSync(project);
+  const profileDir = path.join(workDir, "profile");
+  mkdirSync(profileDir);
+  const folder = sessionFolder(process.env.TONDO_E2E_EXECUTABLE ? workDir : profileDir, project);
+  mkdirSync(folder, { recursive: true });
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const session = SessionManager.inMemory(project);
+  // The recent messages together exceed the conservative frame estimate, which
+  // used to close the socket on every open. WebKit then reported close code 1005,
+  // so a phone that remembered the thread reconnected into the same failure.
+  for (let i = 0; i < 30; i++) {
+    session.appendMessage({
+      role: "user",
+      content: `Large request ${i}`,
+      timestamp: Date.now() - 60_000 + i,
+    });
+    session.appendMessage(reply(`Large answer ${i} ${"y".repeat(80_000)}`));
+  }
+  session.appendMessage({ role: "user", content: "Final small request", timestamp: Date.now() });
+  session.appendMessage(reply("FINAL_SMALL_ANSWER"));
+  writeFileSync(
+    path.join(folder, `${session.getSessionId()}.jsonl`),
+    [session.getHeader(), ...session.getEntries()]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+  );
+  tondo = await launchWithPi({
+    workDir,
+    profileDir,
+    settings: { remoteAccess: true },
+    script: { responses: [] },
+    ...(process.env.TONDO_E2E_EXECUTABLE
+      ? { env: { PI_CODING_AGENT_DIR: path.join(workDir, "pi-agent") } }
+      : {}),
+  });
+  await addProject(tondo, project);
+  await waitForPi(tondo.page);
+  const saved = threadRows(tondo.page).filter({ hasText: "Large request 0" });
+  await expect(saved).toBeVisible();
+  const id = await saved.getAttribute("data-thread-id");
+  const region = await settings(tondo.page);
+  const code = region.getByRole("textbox", { name: "Pairing code" });
+  await expect(code).toHaveValue(/\S{32}/);
+  browser = await webkit.launch();
+  const phone = await (await browser.newContext({ ...devices["iPhone 13"] })).newPage();
+  const sockets: string[] = [];
+  phone.on("websocket", (socket) => sockets.push(socket.url()));
+  await pair(phone, await code.inputValue());
+  await phone.locator(`button[data-thread-id="${id}"]`).tap();
+  await expect(phone.getByText("FINAL_SMALL_ANSWER", { exact: true })).toBeVisible();
+  await expect(phone.getByRole("status").filter({ hasText: "Offline" })).toHaveCount(0);
+  await expect(phone.getByRole("button", { name: "Send message" })).toBeVisible();
+  expect(sockets).toHaveLength(1);
+  // Reopening the remembered thread after a reload must also connect.
+  await phone.reload();
+  await expect(phone.getByText("FINAL_SMALL_ANSWER", { exact: true })).toBeVisible();
+  await expect(phone.getByRole("status").filter({ hasText: "Offline" })).toHaveCount(0);
+  expect(sockets).toHaveLength(2);
+});
+
 test("a busy port fails safely and rapid toggles leave no remote listener behind", async () => {
   const occupied = createServer();
   await new Promise<void>((resolve, reject) => {

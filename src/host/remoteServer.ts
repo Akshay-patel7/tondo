@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { RemotePairings } from "./remotePairings";
 import { parseClientMessage, PROTOCOL_VERSION as v } from "../shared/protocol";
 import {
+  REMOTE_CLOSE_UNAVAILABLE,
   REMOTE_FRAME_BYTES,
   REMOTE_MAX_CLIENTS,
   REMOTE_PORT,
@@ -300,7 +301,7 @@ export async function startRemoteServer(options: {
         // action. This transport limit must not revoke remembered device pairing.
         if (paired.seen.size >= 4096) {
           ws.close(
-            1013,
+            REMOTE_CLOSE_UNAVAILABLE,
             "Remote action limit reached. Restart Tondo to continue; this device stays paired.",
           );
           return;
@@ -324,12 +325,12 @@ export async function startRemoteServer(options: {
       const ws = clients.get(message.clientId);
       if (!ws) return;
       if (message.type === "close") {
-        ws.close(1013, message.reason.slice(0, 100));
+        ws.close(REMOTE_CLOSE_UNAVAILABLE, message.reason.slice(0, 100));
         return;
       }
       const data = JSON.stringify(message.message);
       if (Buffer.byteLength(data) > REMOTE_FRAME_BYTES || ws.bufferedAmount > 1024 * 1024) {
-        ws.close(1013, "Remote output is too large; reopen the thread");
+        ws.close(REMOTE_CLOSE_UNAVAILABLE, "Remote output is too large; reopen the thread");
         return;
       }
       if (ws.readyState !== WebSocket.OPEN) return;
