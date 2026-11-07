@@ -42,6 +42,8 @@ const REMOTE_REQUESTS = new Set<ClientMessage["type"]>([
   "ping",
 ]);
 
+export const REMOTE_LOCAL_ONLY = "This action is available only in Tondo on your Mac.";
+
 /** Network clients get a deliberately smaller capability set than the desktop. */
 export function remoteRequestAllowed(message: ClientMessage): boolean {
   if (!REMOTE_REQUESTS.has(message.type)) return false;

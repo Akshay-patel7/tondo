@@ -22,6 +22,7 @@ const BASE = `http://127.0.0.1:${REMOTE_PORT}`;
 const SEED = "A long mobile thread title that must not push navigation controls off the screen";
 const CONTENT = [
   ...Array.from({ length: 12 }, (_, i) => `Paragraph ${i}. A mobile reply with **Markdown**.`),
+  "Details are in [the notes](notes.md).",
   "```typescript\nconst longLine = '" + "example".repeat(100) + "';\n```",
   "| Field | Value |\n|---|---|\n| Name | " + "LongUnbrokenValue".repeat(80) + " |",
   "MOBILE_REPLY_END",
@@ -345,6 +346,25 @@ test("short-lived sockets retain retry backoff until a stable connection", async
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible({
     timeout: 15_000,
   });
+  expectCleanConsole();
+});
+
+test("a local file link says it opens on the Mac without hanging or dropping the connection", async () => {
+  const page = await start(webkit);
+  const sockets: string[] = [];
+  page.on("websocket", (socket) => sockets.push(socket.url()));
+  await page.getByText("the notes", { exact: true }).tap();
+  const dialog = page.getByRole("dialog", { name: "File preview" });
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "This action is available only in Tondo on your Mac.",
+  );
+  await expect(dialog.getByText("Loading file…")).toHaveCount(0);
+  await expect(page.locator(".remote-shell > [role=alert]")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("local-file-link.png") });
+  await dialog.getByRole("button", { name: "Close", exact: true }).tap();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+  expect(sockets).toEqual([]);
   expectCleanConsole();
 });
 

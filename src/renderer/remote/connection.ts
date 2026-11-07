@@ -8,7 +8,12 @@ import {
   useRemoteLocation,
 } from "./navigation";
 import { RemoteBackoff } from "./reconnect";
-import { REMOTE_CLOSE_UNAVAILABLE, REMOTE_REQUEST_BYTES } from "../../shared/remote";
+import {
+  REMOTE_CLOSE_UNAVAILABLE,
+  REMOTE_LOCAL_ONLY,
+  REMOTE_REQUEST_BYTES,
+  remoteRequestAllowed,
+} from "../../shared/remote";
 import { PROTOCOL_VERSION as v, type ClientMessage, type HostMessage } from "../../shared/protocol";
 import { attachBrowserTransport, receiveBrowserMessage, useHost } from "../connection";
 
@@ -31,6 +36,18 @@ const backoff = new RemoteBackoff();
 let generation = 0;
 let selection = 0;
 const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+
+/** Requests the page makes by itself, such as loading saved history or changes. */
+function requestFromPage(message: ClientMessage): void {
+  if (!remoteRequestAllowed(message)) {
+    // These wait for a reply. Fail them now rather than leave their dialog loading.
+    if (message.type === "preview-file" || message.type === "choose-files")
+      throw new Error(REMOTE_LOCAL_ONLY);
+    showError(new Error(REMOTE_LOCAL_ONLY));
+    return;
+  }
+  void remoteRequest(message).catch(showError);
+}
 
 export function remoteRequest(message: ClientMessage): Promise<void> {
   const current = socket;
@@ -141,12 +158,7 @@ async function connectRemote(): Promise<void> {
     let reopening = true;
     ws.addEventListener("open", () => {
       if (socket !== ws) return;
-      attachBrowserTransport({
-        postMessage: (message) => {
-          void remoteRequest(message).catch(showError);
-        },
-        close: () => {},
-      });
+      attachBrowserTransport({ postMessage: requestFromPage, close: () => {} });
     });
     ws.addEventListener("message", ({ data }) => {
       if (socket !== ws) return;

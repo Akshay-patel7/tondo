@@ -9,6 +9,7 @@ import { parseClientMessage, PROTOCOL_VERSION as v } from "../shared/protocol";
 import {
   REMOTE_CLOSE_UNAVAILABLE,
   REMOTE_FRAME_BYTES,
+  REMOTE_LOCAL_ONLY,
   REMOTE_MAX_CLIENTS,
   REMOTE_PORT,
   REMOTE_REQUEST_BYTES,
@@ -281,7 +282,7 @@ export async function startRemoteServer(options: {
               v,
               type: "remote-result",
               id: envelope.id,
-              error: "This action is available only in Tondo on your Mac.",
+              error: REMOTE_LOCAL_ONLY,
             }),
           );
           return;
