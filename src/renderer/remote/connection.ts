@@ -36,9 +36,19 @@ const backoff = new RemoteBackoff();
 let generation = 0;
 let selection = 0;
 const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+const CONNECTION_LOST =
+  "Connection lost before confirmation. Check the thread before sending again; nothing will be replayed automatically.";
+/** Reads the page repeats by itself after reconnecting. */
+const READS = new Set<ClientMessage["type"]>([
+  "history-index",
+  "history-preview",
+  "history-page",
+  "list-checkpoints",
+  "read-checkpoint",
+]);
 
 /** Requests the page makes by itself, such as loading saved history or changes. */
-function requestFromPage(message: ClientMessage): void {
+export function requestFromPage(message: ClientMessage): void {
   if (!remoteRequestAllowed(message)) {
     // These wait for a reply. Fail them now rather than leave their dialog loading.
     if (message.type === "preview-file" || message.type === "choose-files")
@@ -46,7 +56,15 @@ function requestFromPage(message: ClientMessage): void {
     showError(new Error(REMOTE_LOCAL_ONLY));
     return;
   }
-  void remoteRequest(message).catch(showError);
+  const threadId = "threadId" in message ? message.threadId : undefined;
+  void remoteRequest(message).catch((error: unknown) => {
+    // The offline notice already covers a read the page repeats after reconnecting.
+    if (error instanceof Error && error.message === CONNECTION_LOST && READS.has(message.type))
+      return;
+    // A failure for a thread you have since left describes nothing on screen.
+    if (threadId !== undefined && threadId !== useRemoteLocation.getState().threadId) return;
+    showError(error);
+  });
 }
 
 export function remoteRequest(message: ClientMessage): Promise<void> {
@@ -112,12 +130,7 @@ function disconnected(): void {
   selection++;
   useRemoteConnection.setState({ openingThreadId: null });
   useHost.setState({ connection: "reconnecting" });
-  for (const request of pending.values())
-    request.reject(
-      new Error(
-        "Connection lost before confirmation. Check the thread before sending again; nothing will be replayed automatically.",
-      ),
-    );
+  for (const request of pending.values()) request.reject(new Error(CONNECTION_LOST));
   pending.clear();
 }
 

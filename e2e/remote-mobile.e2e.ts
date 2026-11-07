@@ -368,6 +368,50 @@ test("a local file link says it opens on the Mac without hanging or dropping the
   expectCleanConsole();
 });
 
+test("losing the connection during a read shows why, not a warning about sending", async () => {
+  const page = await start(webkit);
+  let proxy: WebSocketRoute | undefined;
+  const reads = new Set<string>();
+  let held = 0;
+  await page.routeWebSocket("**/socket", (route) => {
+    proxy = route;
+    const server = route.connectToServer();
+    route.onMessage((data) => {
+      const { id, message } = JSON.parse(data.toString()) as {
+        id: string;
+        message: { type: string };
+      };
+      if (message.type === "list-checkpoints") reads.add(id);
+      server.send(data);
+    });
+    server.onMessage((data) => {
+      const message = JSON.parse(data.toString()) as { type: string; id?: string };
+      // Hold the confirmation so the read is still pending when the connection drops.
+      if (message.type === "remote-result" && reads.has(message.id!)) held++;
+      else route.send(data);
+    });
+  });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+  await page.getByRole("button", { name: "View changes", exact: true }).tap();
+  await expect.poll(() => held).toBe(1);
+  const waiting: Route[] = [];
+  await page.route("**/session", (route) => {
+    waiting.push(route);
+  });
+  proxy!.close({ code: 1011, reason: "Temporary thread connection failure" });
+  // While the reconnect waits, the notice gives the real reason.
+  await expect.poll(() => waiting.length).toBe(1);
+  const status = page.locator(".remote-shell > section[role=status]");
+  await expect(status).toContainText("Temporary thread connection failure");
+  await expect(status).not.toContainText("Connection lost before confirmation");
+  await waiting[0]!.continue();
+  await page.unroute("**/session");
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+  await expect(status).toHaveCount(0);
+  expectCleanConsole();
+});
+
 test("fullscreen table controls are finger-sized and horizontally scrollable", async () => {
   const page = await start(webkit);
   await page.setViewportSize({ width: 375, height: 667 });

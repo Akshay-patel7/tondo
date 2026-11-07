@@ -22,6 +22,7 @@ import {
   createRemoteThread,
   pairRemote,
   remoteRequest,
+  requestFromPage,
   retryRemoteConnection,
   selectRemoteThread,
   useRemoteConnection,
@@ -88,9 +89,7 @@ export function RemoteApp() {
   function changes(): void {
     if (!thread) return;
     useDiffPanel.setState(true, true);
-    void remoteRequest({ v, type: "list-checkpoints", threadId: thread.id }).catch(
-      (reason: unknown) => setError(String(reason)),
-    );
+    requestFromPage({ v, type: "list-checkpoints", threadId: thread.id });
   }
 
   return (
